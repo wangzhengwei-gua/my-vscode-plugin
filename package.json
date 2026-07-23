@@ -1,0 +1,90 @@
+{
+    "name": "my-vscode-plugin",
+    "displayName": "My VSCode Plugin",
+    "description": "我的第一个 VSCode 插件",
+    "version": "0.0.4",
+    "publisher": "wangzhengwei",
+    "icon": "images/icon.png",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/your-username/my-vscode-plugin.git"
+    },
+    "engines": {
+        "vscode": "^1.80.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "main": "./src/extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "myPlugin.helloWorld",
+                "title": "Hello World"
+            },
+            {
+                "command": "myPlugin.showTime",
+                "title": "Show Current Time"
+            },
+            {
+                "command": "myPlugin.openChart",
+                "title": "Open Trend Chart"
+            },
+            {
+                "command": "myPlugin.refreshData",
+                "title": "Refresh Lottery Data"
+            }
+        ],
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "lottery-explorer",
+                    "title": "彩票走势图",
+                    "icon": "images/icon.svg"
+                }
+            ]
+        },
+        "views": {
+            "lottery-explorer": [
+                {
+                    "id": "lotteryMenu",
+                    "name": "功能菜单"
+                }
+            ]
+        },
+        "menus": {
+            "view/item/context": [],
+            "view/title": [
+                {
+                    "command": "myPlugin.refreshData",
+                    "when": "view == lotteryMenu",
+                    "group": "navigation"
+                }
+            ]
+        },
+        "keybindings": [
+            {
+                "command": "myPlugin.helloWorld",
+                "key": "ctrl+alt+h",
+                "mac": "cmd+alt+h"
+            }
+        ]
+    },
+    "scripts": {
+        "lint": "eslint .",
+        "pretest": "npm run lint",
+        "test": "node ./test/runTest.js"
+    },
+    "devDependencies": {
+        "@types/glob": "^8.1.0",
+        "@types/mocha": "^10.0.1",
+        "@types/vscode": "^1.80.0",
+        "@vscode/test-electron": "^2.3.2",
+        "@vscode/vsce": "^2.19.0",
+        "eslint": "^8.41.0",
+        "glob": "^8.1.0",
+        "mocha": "^10.2.0",
+        "typescript": "^5.1.3"
+    }
+}

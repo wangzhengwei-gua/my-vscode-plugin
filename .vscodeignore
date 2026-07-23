@@ -1,0 +1,13 @@
+node_modules/**
+out/**
+.vscode/**
+.vscode-test/**
+*.vsix
+.DS_Store
+Thumbs.db
+*.log
+.env
+.env.*
+data/**
+_vsix_tmp*
+scripts/pack.js

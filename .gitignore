@@ -1,0 +1,15 @@
+node_modules/
+out/
+data/
+.vscode/
+.vscode-test/
+*.vsix
+_vsix_tmp*
+.DS_Store
+Thumbs.db
+*.log
+.env
+.env.*
+.idea/
+__pycache__/
+*.pyc
