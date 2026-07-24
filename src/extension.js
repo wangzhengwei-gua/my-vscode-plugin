@@ -308,6 +308,70 @@ function activate(context) {
     });
     context.subscriptions.push(transDisposable);
 
+    // 智能推荐命令（基于转移统计 TOP3 概率）
+    let smartPickDisposable = vscode.commands.registerCommand('myPlugin.smartPick', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎯 排列三', value: 'pl3' },
+                { label: '🎰 排列五', value: 'pl5' },
+                { label: '🎲 大乐透', value: 'dlt' },
+                { label: '🔴 双色球', value: 'ssq' }
+            ],
+            { placeHolder: '选择彩种' }
+        );
+        if (!pick) return;
+
+        const limitPick = await vscode.window.showQuickPick(
+            [
+                { label: '100 期', value: 100 },
+                { label: '200 期', value: 200 },
+                { label: '500 期', value: 500 },
+                { label: '全部', value: 0 }
+            ],
+            { placeHolder: '基于多少期历史数据推荐' }
+        );
+        if (!limitPick) return;
+        const limit = limitPick.value;
+
+        let data;
+        try {
+            const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+            if (!cfg) return;
+            const history = loadLotteryData(cfg);
+            if (history.length < 2) {
+                vscode.window.showWarningMessage('数据不足，请先刷新数据');
+                return;
+            }
+            const sliced = limit > 0 ? history.slice(-limit) : history;
+            const rows = sliced.map(h => {
+                const positions = cfg.positions.map(p => p.pick(h));
+                return { period: h.period, date: h.date, positions };
+            });
+            data = {
+                key: cfg.key,
+                name: cfg.name,
+                emoji: cfg.emoji,
+                positionLabels: cfg.positions.map(p => p.label),
+                positionMax: cfg.positions.map(p => p.max),
+                rows: rows,
+                limit: limit,
+                total: history.length
+            };
+        } catch (e) {
+            vscode.window.showErrorMessage('读取数据失败: ' + e.message);
+            return;
+        }
+
+        const panel = vscode.window.createWebviewPanel(
+            'smartPick',
+            '智能推荐 - ' + data.name,
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getSmartPickHtml(data);
+    });
+    context.subscriptions.push(smartPickDisposable);
+
     // ===== 自动爬取数据 =====
     // 1. 插件启动时自动爬取（静默，不弹通知，除非失败）
     autoRefresh(500, true);
@@ -373,6 +437,7 @@ class LotteryTreeDataProvider {
                 this.createItem('📊 打开走势图', 'myPlugin.openChart', '📊'),
                 this.createItem('🔄 刷新彩票数据', 'myPlugin.refreshData', '🔄'),
                 this.createItem('🔁 转移统计', 'myPlugin.showTrans', '🔁'),
+                this.createItem('🤖 智能推荐', 'myPlugin.smartPick', '🤖'),
                 this.createItem('🕐 显示当前时间', 'myPlugin.showTime', '🕐'),
                 this.createItem('👋 Hello World', 'myPlugin.helloWorld', '👋')
             ];
@@ -420,6 +485,421 @@ function getNonce() {
 /**
  * 转移统计 Webview HTML（独立面板）
  */
+/**
+ * 智能推荐 Webview HTML
+ * 算法 1：基于转移统计 TOP3 概率（概率相同时取最近一期）
+ * 算法 2：基于趋势分析 —— 取最近若干期同位号码序列，识别趋势（递增/递减/持平/波动），
+ *         在历史中搜索匹配该趋势的片段，统计下一期号码分布作为推荐
+ */
+function getSmartPickHtml(d) {
+    const dataJson = JSON.stringify(d);
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>智能推荐 - ${d.name}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
+h2 { color: #8ec5ff; margin-bottom: 8px; }
+.desc { color: #aaa; margin-bottom: 16px; line-height: 1.6; }
+.limit-badge { display: inline-block; background: #0e639c; color: #fff; padding: 2px 10px; border-radius: 3px; font-size: 12px; font-weight: 500; margin-bottom: 4px; }
+.recommend-section { margin-bottom: 24px; padding: 16px; background: rgba(46,204,113,0.08); border: 1px solid rgba(46,204,113,0.25); border-radius: 8px; }
+.recommend-title { color: #2ecc71; font-size: 16px; font-weight: 600; margin-bottom: 12px; }
+.recommend-num { display: inline-block; width: 40px; height: 40px; line-height: 38px; text-align: center; background: #e74c3c; color: #fff; border-radius: 50%; font-weight: bold; font-size: 18px; margin: 0 4px; }
+.pos-section { margin-bottom: 16px; padding: 12px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; }
+.pos-title { color: #feca57; font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+.pick-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.pick-label { color: #888; min-width: 60px; font-size: 12px; }
+.pick-num { display: inline-block; min-width: 28px; height: 28px; line-height: 26px; text-align: center; border: 2px solid #444; border-radius: 50%; color: #aaa; font-size: 13px; cursor: pointer; user-select: none; background: #1a1a1a; padding: 0 4px; }
+.pick-num:hover { border-color: #888; color: #fff; }
+.pick-num.selected { background: #e74c3c; color: #fff; border-color: #e74c3c; font-weight: bold; }
+.pick-num.top1 { background: #e74c3c; color: #fff; border-color: #e74c3c; font-weight: bold; }
+.pick-num.top2 { background: #e67e22; color: #fff; border-color: #e67e22; }
+.pick-num.top3 { background: #f39c12; color: #fff; border-color: #f39c12; }
+.pct { color: #888; font-size: 11px; margin-left: 4px; }
+.detail-row { font-size: 11px; color: #666; margin-top: 4px; padding-left: 68px; }
+.summary-box { margin-top: 16px; padding: 12px; background: #1a2540; border: 1px solid #2a4a7a; border-radius: 6px; }
+.summary-box b { color: #fff; }
+.copy-btn { background: #0e639c; color: #fff; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; margin-top: 8px; }
+.copy-btn:hover { background: #1177bb; }
+
+/* 趋势分析样式 */
+.trend-section { margin-bottom: 24px; padding: 16px; background: rgba(155,89,182,0.08); border: 1px solid rgba(155,89,182,0.3); border-radius: 8px; }
+.trend-title { color: #9b59b6; font-size: 16px; font-weight: 600; margin-bottom: 12px; }
+.trend-seq { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+.trend-seq-num { display: inline-block; width: 30px; height: 30px; line-height: 28px; text-align: center; background: #2d2d30; color: #ccc; border-radius: 50%; font-size: 13px; border: 1px solid #555; }
+.trend-arrow { color: #888; font-size: 16px; }
+.trend-type { display: inline-block; padding: 3px 10px; border-radius: 3px; font-size: 12px; font-weight: 600; margin-left: 8px; }
+.trend-type.up { background: rgba(46,204,113,0.2); color: #2ecc71; }
+.trend-type.down { background: rgba(231,76,60,0.2); color: #e74c3c; }
+.trend-type.flat { background: rgba(149,165,166,0.2); color: #95a5a6; }
+.trend-type.mixed { background: rgba(241,196,15,0.2); color: #f1c40f; }
+.trend-pos-block { margin-bottom: 14px; padding: 10px; background: rgba(255,255,255,0.03); border: 1px solid rgba(155,89,182,0.15); border-radius: 6px; }
+.trend-pos-title { color: #feca57; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.trend-rec-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.trend-rec-label { color: #888; font-size: 12px; min-width: 80px; }
+.trend-rec-num { display: inline-block; min-width: 28px; height: 28px; line-height: 26px; text-align: center; border-radius: 50%; font-size: 13px; font-weight: bold; margin: 0 2px; padding: 0 4px; }
+.trend-rec-num.t1 { background: #9b59b6; color: #fff; }
+.trend-rec-num.t2 { background: #8e44ad; color: #fff; }
+.trend-rec-num.t3 { background: #7d3c98; color: #fff; }
+.trend-match-info { color: #666; font-size: 11px; margin-left: 8px; }
+</style>
+</head>
+<body>
+<h2>🤖 ${d.name} 智能推荐</h2>
+<div class="desc" id="desc"></div>
+<div id="content"></div>
+<div id="trend_content"></div>
+<script>
+const DATA = ${dataJson};
+const LIMIT_LABEL = DATA.limit === 0 ? '全部' : DATA.limit + ' 期';
+
+(function() {
+    const rows = DATA.rows;
+    const latest = rows[rows.length - 1];
+    const posLabels = DATA.positionLabels;
+    const posCount = posLabels.length;
+
+    let desc = '<span class="limit-badge">基于 ' + LIMIT_LABEL + ' 历史 (' + rows.length + ' 期)</span><br>';
+    desc += '当前最新一期：<b>' + latest.period + '</b>（' + latest.date + '）号码：';
+    latest.positions.forEach((n, i) => {
+        desc += '<span class="recommend-num" style="width:28px;height:28px;line-height:26px;font-size:14px;">' + n + '</span>';
+        if (i < latest.positions.length - 1) desc += ' ';
+    });
+    desc += '<br>根据<b>转移统计 TOP3 概率</b>推荐下一期号码，概率相同时取最近一期为准。';
+    desc += '<br>同时提供<b>趋势分析推荐</b>：基于近期同位号码的递增/递减/持平/波动趋势，从历史匹配趋势中统计下一期号码。';
+    document.getElementById('desc').innerHTML = desc;
+
+    function buildTransition(pos) {
+        const max = DATA.positionMax[pos];
+        const trans = Array.from({length: max + 1}, () => new Array(max + 1).fill(0));
+        for (let i = 0; i < rows.length - 1; i++) {
+            const prev = rows[i].positions[pos];
+            const nxt = rows[i + 1].positions[pos];
+            if (prev >= 0 && prev <= max && nxt >= 0 && nxt <= max) trans[prev][nxt]++;
+        }
+        return trans;
+    }
+
+    const recommendations = [];
+    let html = '<div class="recommend-section">';
+    html += '<div class="recommend-title">🎯 推荐号码（取每位 TOP1）</div>';
+    html += '<div style="margin-bottom:8px;">';
+
+    for (let pos = 0; pos < posCount; pos++) {
+        const curNum = latest.positions[pos];
+        const max = DATA.positionMax[pos];
+        const trans = buildTransition(pos);
+        const row = trans[curNum] || new Array(max + 1).fill(0);
+        const total = row.reduce((a, b) => a + b, 0);
+
+        const candidates = [];
+        for (let n = 0; n <= max; n++) {
+            if (row[n] > 0) {
+                let lastIdx = -1;
+                for (let i = rows.length - 2; i >= 0; i--) {
+                    if (rows[i].positions[pos] === curNum && rows[i + 1].positions[pos] === n) {
+                        lastIdx = i;
+                        break;
+                    }
+                }
+                candidates.push({ n: n, cnt: row[n], pct: row[n] / total, lastIdx: lastIdx });
+            }
+        }
+
+        // 排序：次数降序，次数相同按 lastIdx 降序（越近越优先）
+        candidates.sort((a, b) => {
+            if (b.cnt !== a.cnt) return b.cnt - a.cnt;
+            return b.lastIdx - a.lastIdx;
+        });
+
+        const top3 = candidates.slice(0, 3);
+        const top1 = top3[0];
+        recommendations.push({ pos: pos, label: posLabels[pos], curNum: curNum, top3: top3, total: total });
+
+        if (top1) {
+            html += '<span class="recommend-num">' + top1.n + '</span>';
+        }
+    }
+    html += '</div>';
+    html += '<div style="color:#888;font-size:12px;">以上为每位转移统计概率最高的号码</div>';
+    html += '</div>';
+
+    // 每位详情
+    for (const rec of recommendations) {
+        html += '<div class="pos-section">';
+        html += '<div class="pos-title">' + rec.label + '位（当前=' + rec.curNum + '，历史出现 ' + rec.total + ' 次）</div>';
+        html += '<div class="pick-row">';
+        html += '<span class="pick-label">TOP3 推荐：</span>';
+        rec.top3.forEach((c, idx) => {
+            const cls = idx === 0 ? 'top1' : idx === 1 ? 'top2' : 'top3';
+            html += '<span class="pick-num ' + cls + '" data-pos="' + rec.pos + '" data-n="' + c.n + '">' + c.n + '</span>';
+            html += '<span class="pct">' + (c.pct * 100).toFixed(1) + '%</span>';
+        });
+        html += '</div>';
+        // 概率并列提示
+        if (rec.top3.length > 1 && rec.top3[0].cnt === rec.top3[1].cnt) {
+            html += '<div class="detail-row">⚠️ TOP1 概率并列，已按最近一期选取</div>';
+        }
+        // 手动选号
+        html += '<div class="pick-row">';
+        html += '<span class="pick-label">手动选号：</span>';
+        const posMax = DATA.positionMax[rec.pos];
+        for (let n = 0; n <= posMax; n++) {
+            const inTop3 = rec.top3.findIndex(c => c.n === n);
+            const cls = inTop3 === 0 ? 'top1' : inTop3 === 1 ? 'top2' : inTop3 === 2 ? 'top3' : '';
+            html += '<span class="pick-num ' + cls + '" data-pos="' + rec.pos + '" data-n="' + n + '">' + n + '</span>';
+        }
+        html += '</div>';
+        html += '</div>';
+    }
+
+    // 复制区
+    html += '<div class="summary-box">';
+    html += '<div style="color:#8ec5ff;font-size:13px;margin-bottom:6px;">📋 复制推荐结果</div>';
+    html += '<div id="copyText" style="color:#fff;margin-bottom:8px;"></div>';
+    html += '<button class="copy-btn" onclick="copyResult()">📋 一键复制</button>';
+    html += '</div>';
+
+    document.getElementById('content').innerHTML = html;
+
+    // 手动选号
+    document.querySelectorAll('.pick-num').forEach(el => {
+        el.addEventListener('click', () => {
+            el.classList.toggle('selected');
+            updateCopyText();
+        });
+    });
+
+    function updateCopyText() {
+        const byPos = {};
+        document.querySelectorAll('.pick-num.selected').forEach(el => {
+            const p = el.dataset.pos;
+            if (!byPos[p]) byPos[p] = [];
+            byPos[p].push(parseInt(el.dataset.n));
+        });
+        const parts = [];
+        for (let i = 0; i < posCount; i++) {
+            const nums = (byPos[i] || []).sort((a, b) => a - b);
+            parts.push(posLabels[i] + '位：' + (nums.length ? nums.join(' ') : '-'));
+        }
+        document.getElementById('copyText').innerHTML = '已选 → <b>' + parts.join(' | ') + '</b>';
+    }
+
+    window.copyResult = function() {
+        const text = document.getElementById('copyText').innerText || '(空)';
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(text).then(() => alert('已复制：\\n' + text));
+        } else {
+            alert('复制：\\n' + text);
+        }
+    };
+
+    // 默认选中所有 TOP1
+    document.querySelectorAll('.pick-num.top1').forEach(el => el.classList.add('selected'));
+    updateCopyText();
+
+    // ===== 算法 2：趋势分析 =====
+    const TREND_LEN = 4; // 取最近 4 期作为趋势序列
+
+    /**
+     * 识别趋势类型
+     * @param {number[]} seq - 号码序列
+     * @returns {{type:'up'|'down'|'flat'|'mixed', label:string, cls:string, diffs:number[]}}
+     */
+    function classifyTrend(seq) {
+        if (seq.length < 2) return { type: 'flat', label: '数据不足', cls: 'flat', diffs: [] };
+        const diffs = [];
+        let upCnt = 0, downCnt = 0, flatCnt = 0;
+        for (let i = 1; i < seq.length; i++) {
+            const d = seq[i] - seq[i - 1];
+            diffs.push(d);
+            if (d > 0) upCnt++;
+            else if (d < 0) downCnt++;
+            else flatCnt++;
+        }
+        if (upCnt === diffs.length) return { type: 'up', label: '持续递增', cls: 'up', diffs };
+        if (downCnt === diffs.length) return { type: 'down', label: '持续递减', cls: 'down', diffs };
+        if (flatCnt === diffs.length) return { type: 'flat', label: '持续持平', cls: 'flat', diffs };
+        // 判断主要方向
+        if (upCnt > downCnt && upCnt >= flatCnt) return { type: 'up', label: '增长为主', cls: 'up', diffs };
+        if (downCnt > upCnt && downCnt >= flatCnt) return { type: 'down', label: '下降为主', cls: 'down', diffs };
+        return { type: 'mixed', label: '波动', cls: 'mixed', diffs };
+    }
+
+    /**
+     * 在历史数据中搜索与给定趋势匹配的片段
+     * 匹配规则：趋势方向序列相同（递增/递减/持平的 pattern 一致）
+     * @param {number} pos - 位置索引
+     * @param {number[]} recentSeq - 最近几期的号码序列
+     * @returns {Array<{idx:number, nextNum:number, period:string}>}
+     */
+    function findTrendMatches(pos, recentSeq) {
+        const seqLen = recentSeq.length;
+        const matches = [];
+        if (seqLen < 2 || rows.length < seqLen + 1) return matches;
+
+        // 计算目标趋势方向序列：+1 递增, -1 递减, 0 持平
+        const targetDir = [];
+        for (let i = 1; i < seqLen; i++) {
+            const d = recentSeq[i] - recentSeq[i - 1];
+            targetDir.push(d > 0 ? 1 : d < 0 ? -1 : 0);
+        }
+
+        // 在历史中搜索相同方向 pattern
+        for (let i = 0; i <= rows.length - seqLen - 1; i++) {
+            let match = true;
+            const checkSeq = [];
+            for (let j = 0; j < seqLen; j++) {
+                checkSeq.push(rows[i + j].positions[pos]);
+            }
+            for (let j = 1; j < seqLen; j++) {
+                const d = checkSeq[j] - checkSeq[j - 1];
+                const dir = d > 0 ? 1 : d < 0 ? -1 : 0;
+                if (dir !== targetDir[j - 1]) { match = false; break; }
+            }
+            if (match) {
+                const nextRow = rows[i + seqLen];
+                if (nextRow) {
+                    matches.push({
+                        idx: i + seqLen,
+                        nextNum: nextRow.positions[pos],
+                        period: nextRow.period,
+                        seq: checkSeq
+                    });
+                }
+            }
+        }
+        return matches;
+    }
+
+    let trendHtml = '<div class="trend-section">';
+    trendHtml += '<div class="trend-title">📈 趋势分析推荐（最近 ' + TREND_LEN + ' 期同位趋势）</div>';
+    trendHtml += '<div style="color:#aaa;font-size:12px;margin-bottom:12px;">';
+    trendHtml += '取最近 ' + TREND_LEN + ' 期每位号码序列，识别递增/递减/持平/波动趋势，';
+    trendHtml += '在历史中搜索<b>相同趋势方向</b>的片段，统计其下一期号码分布。';
+    trendHtml += '</div>';
+
+    const trendRecommendations = [];
+
+    for (let pos = 0; pos < posCount; pos++) {
+        const max = DATA.positionMax[pos];
+        // 取最近 TREND_LEN 期的同位号码
+        const recentSeq = [];
+        const startIdx = Math.max(0, rows.length - TREND_LEN);
+        for (let i = startIdx; i < rows.length; i++) {
+            recentSeq.push(rows[i].positions[pos]);
+        }
+
+        if (recentSeq.length < 2) continue;
+
+        const trend = classifyTrend(recentSeq);
+        const matches = findTrendMatches(pos, recentSeq);
+
+        // 统计下一期号码分布
+        const dist = new Array(max + 1).fill(0);
+        matches.forEach(m => {
+            if (m.nextNum >= 0 && m.nextNum <= max) dist[m.nextNum]++;
+        });
+        const total = matches.length;
+
+        // TOP3
+        const candidates = [];
+        for (let n = 0; n <= max; n++) {
+            if (dist[n] > 0) candidates.push({ n, cnt: dist[n], pct: dist[n] / total });
+        }
+        candidates.sort((a, b) => {
+            if (b.cnt !== a.cnt) return b.cnt - a.cnt;
+            // 概率相同时取最近一次出现的
+            let aLast = -1, bLast = -1;
+            for (let i = matches.length - 1; i >= 0; i--) {
+                if (aLast < 0 && matches[i].nextNum === a.n) aLast = i;
+                if (bLast < 0 && matches[i].nextNum === b.n) bLast = i;
+                if (aLast >= 0 && bLast >= 0) break;
+            }
+            return bLast - aLast;
+        });
+        const top3 = candidates.slice(0, 3);
+        trendRecommendations.push({ pos, label: posLabels[pos], recentSeq, trend, top3, total });
+
+        // 渲染
+        trendHtml += '<div class="trend-pos-block">';
+        trendHtml += '<div class="trend-pos-title">' + posLabels[pos] + '位</div>';
+
+        // 趋势序列
+        trendHtml += '<div class="trend-seq">';
+        trendHtml += '<span class="trend-rec-label">近期走势：</span>';
+        recentSeq.forEach((n, i) => {
+            if (i > 0) {
+                const d = recentSeq[i] - recentSeq[i - 1];
+                const arrow = d > 0 ? '↑' : d < 0 ? '↓' : '→';
+                const color = d > 0 ? '#2ecc71' : d < 0 ? '#e74c3c' : '#95a5a6';
+                trendHtml += '<span class="trend-arrow" style="color:' + color + '">' + arrow + '</span>';
+            }
+            trendHtml += '<span class="trend-seq-num">' + n + '</span>';
+        });
+        trendHtml += '<span class="trend-type ' + trend.cls + '">' + trend.label + '</span>';
+        trendHtml += '</div>';
+
+        // 推荐号码
+        trendHtml += '<div class="trend-rec-row">';
+        trendHtml += '<span class="trend-rec-label">趋势推荐：</span>';
+        if (top3.length === 0) {
+            trendHtml += '<span style="color:#666;">无匹配趋势</span>';
+        } else {
+            top3.forEach((c, idx) => {
+                const cls = idx === 0 ? 't1' : idx === 1 ? 't2' : 't3';
+                trendHtml += '<span class="trend-rec-num ' + cls + '">' + c.n + '</span>';
+                trendHtml += '<span class="trend-match-info">' + (c.pct * 100).toFixed(1) + '%</span>';
+            });
+            trendHtml += '<span class="trend-match-info">（匹配 ' + total + ' 次）</span>';
+        }
+        trendHtml += '</div>';
+        trendHtml += '</div>';
+    }
+
+    // 趋势推荐号码汇总
+    trendHtml += '<div style="margin-top:8px;padding:10px;background:rgba(155,89,182,0.1);border-radius:6px;">';
+    trendHtml += '<span style="color:#9b59b6;font-weight:600;">趋势推荐号码：</span>';
+    trendRecommendations.forEach(rec => {
+        const t1 = rec.top3[0];
+        if (t1) {
+            trendHtml += '<span class="trend-rec-num t1">' + t1.n + '</span>';
+        }
+    });
+    trendHtml += '</div>';
+
+    // 混合推荐（转移统计 + 趋势分析）
+    trendHtml += '<div style="margin-top:12px;padding:10px;background:rgba(0,230,118,0.08);border:1px solid rgba(0,230,118,0.2);border-radius:6px;">';
+    trendHtml += '<span style="color:#2ecc71;font-weight:600;">综合推荐（转移统计∩趋势分析）：</span><br>';
+    trendHtml += '<span style="color:#888;font-size:12px;">两位算法推荐号码的交集为高置信度推荐</span><br>';
+    trendRecommendations.forEach((rec, i) => {
+        const transTop1 = recommendations[i] && recommendations[i].top3[0];
+        const trendTop1 = rec.top3[0];
+        if (transTop1 && trendTop1) {
+            const intersect = transTop1.n === trendTop1.n;
+            trendHtml += '<span style="color:#aaa;font-size:12px;">' + rec.label + '位：</span>';
+            trendHtml += '<span class="trend-rec-num t1" style="' + (intersect ? 'box-shadow:0 0 8px #2ecc71;' : '') + '">' + transTop1.n + '</span>';
+            if (!intersect) {
+                trendHtml += '<span style="color:#666;font-size:11px;">→ 趋势: ' + trendTop1.n + '</span>';
+            } else {
+                trendHtml += '<span style="color:#2ecc71;font-size:11px;">★一致</span>';
+            }
+            if (i < trendRecommendations.length - 1) trendHtml += ' | ';
+        }
+    });
+    trendHtml += '</div>';
+
+    trendHtml += '</div>';
+
+    document.getElementById('trend_content').innerHTML = trendHtml;
+})();
+</script>
+</body>
+</html>`;
+}
+
 function getTransHtml(d) {
     const dataJson = JSON.stringify(d);
     return `<!DOCTYPE html>
