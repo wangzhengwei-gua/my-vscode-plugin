@@ -84,12 +84,15 @@ function calcStats(cfg, h) {
     const span = Math.max(...nums) - Math.min(...nums);
     let odd = 0, even = 0;
     nums.forEach(n => n % 2 === 1 ? odd++ : even++);
+    let big = 0, small = 0;
+    nums.forEach((n, i) => cfg.bigFn(n, i) ? big++ : small++);
     const road = [0, 0, 0];
     nums.forEach(n => road[cfg.roadFn(n)]++);
     return {
         sumTail,
         span,
         oddEven: odd + ':' + even,
+        bigSmall: big + ':' + small,
         road012: road[0] + ':' + road[1] + ':' + road[2]
     };
 }
@@ -242,6 +245,69 @@ function activate(context) {
     });
     context.subscriptions.push(refreshDisposable);
 
+    // 前后期数字转移统计命令（排列三/五）
+    let transDisposable = vscode.commands.registerCommand('myPlugin.showTrans', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎯 排列三', value: 'pl3' },
+                { label: '🎰 排列五', value: 'pl5' }
+            ],
+            { placeHolder: '选择彩种' }
+        );
+        if (!pick) return;
+
+        const limitPick = await vscode.window.showQuickPick(
+            [
+                { label: '50 期', value: 50 },
+                { label: '100 期', value: 100 },
+                { label: '200 期', value: 200 },
+                { label: '500 期', value: 500 },
+                { label: '全部', value: 0 }
+            ],
+            { placeHolder: '选择统计的历史期数' }
+        );
+        if (!limitPick) return;
+        const limit = limitPick.value;
+
+        let data;
+        try {
+            const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+            if (!cfg) return;
+            const history = loadLotteryData(cfg);
+            if (history.length < 2) {
+                vscode.window.showWarningMessage('数据不足，请先刷新数据');
+                return;
+            }
+            // 按期数切片
+            const sliced = limit > 0 ? history.slice(-limit) : history;
+            const rows = sliced.map(h => {
+                const positions = cfg.positions.map(p => p.pick(h));
+                return { period: h.period, date: h.date, positions };
+            });
+            data = {
+                key: cfg.key,
+                name: cfg.name,
+                emoji: cfg.emoji,
+                positionLabels: cfg.positions.map(p => p.label),
+                rows: rows,
+                limit: limit,
+                total: history.length
+            };
+        } catch (e) {
+            vscode.window.showErrorMessage('读取数据失败: ' + e.message);
+            return;
+        }
+
+        const panel = vscode.window.createWebviewPanel(
+            'transStats',
+            '转移统计 - ' + data.name,
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getTransHtml(data);
+    });
+    context.subscriptions.push(transDisposable);
+
     // ===== 自动爬取数据 =====
     // 1. 插件启动时自动爬取（静默，不弹通知，除非失败）
     autoRefresh(500, true);
@@ -306,6 +372,7 @@ class LotteryTreeDataProvider {
             return [
                 this.createItem('📊 打开走势图', 'myPlugin.openChart', '📊'),
                 this.createItem('🔄 刷新彩票数据', 'myPlugin.refreshData', '🔄'),
+                this.createItem('🔁 转移统计', 'myPlugin.showTrans', '🔁'),
                 this.createItem('🕐 显示当前时间', 'myPlugin.showTime', '🕐'),
                 this.createItem('👋 Hello World', 'myPlugin.helloWorld', '👋')
             ];
@@ -350,6 +417,170 @@ function getNonce() {
  * 横向：期号 | 段1(0~max1) | 段2(0~max2) | ... | 和尾 | 跨度 | 奇偶比 | 012路
  * 底部：模拟选号（1~5 注，每注独立选 位号）
  */
+/**
+ * 转移统计 Webview HTML（独立面板）
+ */
+function getTransHtml(d) {
+    const dataJson = JSON.stringify(d);
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>转移统计 - ${d.name}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
+h2 { color: #8ec5ff; margin-bottom: 8px; }
+.desc { color: #aaa; margin-bottom: 16px; line-height: 1.6; }
+.limit-badge { display: inline-block; background: #0e639c; color: #fff; padding: 2px 10px; border-radius: 3px; font-size: 12px; font-weight: 500; margin-bottom: 4px; }
+.section { margin-bottom: 20px; padding: 12px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; }
+.section-title { color: #feca57; font-size: 14px; font-weight: 600; margin-bottom: 10px; }
+.bars { display: flex; gap: 6px; align-items: flex-end; margin-bottom: 10px; padding: 10px 6px; background: rgba(0,0,0,0.25); border-radius: 8px; }
+.bar-cell { flex: 1; display: flex; flex-direction: column; align-items: center; min-width: 32px; }
+.bar-cnt { font-size: 12px; color: #aaa; margin-bottom: 4px; min-height: 16px; }
+.bar-wrap { width: 100%; height: 80px; display: flex; align-items: flex-end; justify-content: center; }
+.bar { width: 65%; background: #3498db; border-radius: 3px 3px 0 0; min-height: 2px; transition: height 0.3s ease; }
+.bar.top { background: #e74c3c; }
+.bar-num { font-size: 12px; color: #888; margin-top: 4px; }
+.bar-num.top { color: #e74c3c; font-weight: bold; }
+.top3 { font-size: 12px; color: #2ecc71; padding: 8px 12px; background: rgba(46,204,113,0.1); border-radius: 6px; }
+.empty { color: #666; padding: 8px 0; }
+.trans-detail { margin-top: 10px; }
+.trans-detail summary { cursor: pointer; color: #8ec5ff; font-size: 12px; padding: 6px 0; }
+.detail-scroll { overflow-x: auto; margin-top: 8px; max-height: 300px; overflow-y: auto; border: 1px solid #333; border-radius: 4px; }
+.detail-table { border-collapse: collapse; font-size: 12px; width: 100%; min-width: 600px; }
+.detail-table th, .detail-table td { border: 1px solid #333; padding: 4px 8px; text-align: center; white-space: nowrap; }
+.detail-table th { background: #2d2d30; color: #8ec5ff; position: sticky; top: 0; z-index: 1; }
+.detail-table tr.hit { background: rgba(231,76,60,0.15); }
+.detail-table tr:hover { background: rgba(255,255,255,0.05); }
+
+.cur-num { display: inline-block; width: 28px; height: 28px; line-height: 26px; text-align: center; background: #e74c3c; color: #fff; border-radius: 50%; font-weight: bold; margin: 0 2px; }
+</style>
+</head>
+<body>
+<h2>🔁 ${d.name} 前后期数字转移统计</h2>
+<div class="desc" id="desc"></div>
+<div id="content"></div>
+<script>
+const DATA = ${dataJson};
+const LIMIT_LABEL = DATA.limit === 0 ? '全部' : DATA.limit + ' 期';
+const ACTUAL_COUNT = DATA.rows.length;
+const TOTAL_COUNT = DATA.total;
+
+(function() {
+    const rows = DATA.rows;
+    const latest = rows[rows.length - 1];
+    const posLabels = DATA.positionLabels;
+
+    let desc = '<span class="limit-badge">统计范围：' + LIMIT_LABEL + '</span>（实际 ' + ACTUAL_COUNT + ' 期 / 共 ' + TOTAL_COUNT + ' 期）<br>';
+    desc += '当前最新一期：<b>' + latest.period + '</b>（' + latest.date + '）号码：';
+    latest.positions.forEach((n, i) => {
+        desc += '<span class="cur-num">' + n + '</span>';
+        if (i < latest.positions.length - 1) desc += ' ';
+    });
+    desc += '<br>以下统计在所选期数中，每位出现相同数字时，<b>下一期同位</b>出现的数字分布。';
+    document.getElementById('desc').innerHTML = desc;
+
+    // 转移统计
+    function buildTransition(pos) {
+        const trans = Array.from({length: 10}, () => new Array(10).fill(0));
+        for (let i = 0; i < rows.length - 1; i++) {
+            const prev = rows[i].positions[pos];
+            const nxt = rows[i + 1].positions[pos];
+            if (prev >= 0 && prev <= 9 && nxt >= 0 && nxt <= 9) trans[prev][nxt]++;
+        }
+        return trans;
+    }
+
+    let html = '';
+    for (let pos = 0; pos < posLabels.length; pos++) {
+        const curNum = latest.positions[pos];
+        const trans = buildTransition(pos);
+        const row = trans[curNum] || new Array(10).fill(0);
+        const total = row.reduce((a, b) => a + b, 0);
+
+        html += '<div class="section">';
+        html += '<div class="section-title">' + posLabels[pos] + '位（当前=' + curNum + '，历史出现 ' + total + ' 次）</div>';
+
+        if (total === 0) {
+            html += '<div class="empty">无历史数据</div>';
+        } else {
+            html += '<div class="bars">';
+            const maxCnt = Math.max.apply(null, row);
+            for (let n = 0; n <= 9; n++) {
+                const cnt = row[n];
+                const pct = (cnt / total * 100);
+                const isTop = cnt === maxCnt && cnt > 0;
+                const barH = (cnt / maxCnt * 100);
+                html += '<div class="bar-cell' + (isTop ? ' top' : '') + '" title="下期=' + n + '：' + cnt + ' 次（' + pct.toFixed(1) + '%）">';
+                html += '<div class="bar-cnt">' + (cnt > 0 ? cnt : '') + '</div>';
+                html += '<div class="bar-wrap"><div class="bar' + (isTop ? ' top' : '') + '" style="height:' + barH + '%"></div></div>';
+                html += '<div class="bar-num' + (isTop ? ' top' : '') + '">' + n + '</div>';
+                html += '</div>';
+            }
+            html += '</div>';
+            // TOP3
+            const top3 = [];
+            for (let n = 0; n <= 9; n++) {
+                if (row[n] > 0) top3.push({ n: n, cnt: row[n] });
+            }
+            top3.sort((a, b) => b.cnt - a.cnt);
+            const top3Str = top3.slice(0, 3).map(x => x.n + '（' + x.cnt + '次 ' + (x.cnt/total*100).toFixed(1) + '%）').join('　');
+            html += '<div class="top3">下期' + posLabels[pos] + '位 TOP3：' + (top3Str || '无') + '</div>';
+
+            // 逐期明细：列出所有"该位=当前数字"的期次及其下一期号码
+            const details = [];
+            for (let i = rows.length - 2; i >= 0; i--) {
+                const cur = rows[i];
+                const nxt = rows[i + 1];
+                if (cur.positions[pos] === curNum) {
+                    details.push({
+                        curPeriod: cur.period,
+                        curDate: cur.date,
+                        curNums: cur.positions,
+                        nxtPeriod: nxt.period,
+                        nxtDate: nxt.date,
+                        nxtNums: nxt.positions,
+                        nxtVal: nxt.positions[pos]
+                    });
+                }
+            }
+            if (details.length > 0) {
+                html += '<details class="trans-detail" open>';
+                html += '<summary>📋 逐期明细（共 ' + details.length + ' 期，按时间倒序）</summary>';
+                html += '<div class="detail-scroll"><table class="detail-table">';
+                html += '<thead><tr><th>当期期号</th><th>日期</th><th>当期号码</th><th>' + posLabels[pos] + '位</th><th>下期期号</th><th>日期</th><th>下期号码</th><th>下期' + posLabels[pos] + '位</th></tr></thead>';
+                html += '<tbody>';
+                details.forEach(d => {
+                    const isTop = (function() {
+                        const maxNxt = Math.max.apply(null, row);
+                        return d.nxtVal === maxNxt && d.nxtVal > 0;
+                    })();
+                    const hitCls = isTop ? ' class="hit"' : '';
+                    html += '<tr' + hitCls + '>';
+                    html += '<td>' + d.curPeriod + '</td>';
+                    html += '<td>' + d.curDate + '</td>';
+                    html += '<td>' + d.curNums.join(' ') + '</td>';
+                    html += '<td><b style="color:#e74c3c">' + d.curNums[pos] + '</b></td>';
+                    html += '<td>' + d.nxtPeriod + '</td>';
+                    html += '<td>' + d.nxtDate + '</td>';
+                    html += '<td>' + d.nxtNums.join(' ') + '</td>';
+                    html += '<td><b style="color:#feca57">' + d.nxtVal + '</b></td>';
+                    html += '</tr>';
+                });
+                html += '</tbody></table></div>';
+                html += '</details>';
+            }
+        }
+        html += '</div>';
+    }
+    document.getElementById('content').innerHTML = html;
+})();
+</script>
+</body>
+</html>`;
+}
+
 function getTrendHtml(allData, webview) {
     const dataJson = JSON.stringify(allData);
     // 外部 JS 文件 URI（用 asWebviewUri 转成 Webview 可访问的 URL）
@@ -468,6 +699,31 @@ table.trend td.predict-cell-inner { padding: 1px; }
     box-shadow: 0 4px 12px rgba(0,0,0,0.4);
     font-family: "Consolas", "Microsoft YaHei", monospace;
 }
+
+/* 前后期数字转移统计面板 */
+.trans-panel {
+    margin-top: 12px; padding: 12px;
+    background: #1a1a2e; border: 1px solid #2a4a7a; border-radius: 6px;
+}
+.trans-title { color: #8ec5ff; font-size: 13px; margin-bottom: 6px; }
+.trans-desc { color: #aaa; font-size: 11px; margin-bottom: 12px; line-height: 1.5; }
+.trans-section {
+    margin-bottom: 16px; padding: 10px;
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+}
+.trans-section-title { color: #feca57; font-size: 12px; font-weight: 500; margin-bottom: 8px; }
+.trans-empty { color: #666; font-size: 11px; padding: 4px 0; }
+.trans-bars { display: flex; gap: 4px; align-items: flex-end; margin-bottom: 8px; padding: 8px 4px; background: rgba(0,0,0,0.2); border-radius: 6px; }
+.trans-bar-cell { flex: 1; display: flex; flex-direction: column; align-items: center; min-width: 28px; }
+.trans-bar-cnt { font-size: 11px; color: #aaa; margin-bottom: 2px; min-height: 14px; }
+.trans-bar-wrap { width: 100%; height: 60px; display: flex; align-items: flex-end; justify-content: center; }
+.trans-bar { width: 60%; background: #3498db; border-radius: 3px 3px 0 0; min-height: 2px; transition: height 0.3s ease; }
+.trans-bar.top { background: #e74c3c; }
+.trans-bar-num { font-size: 11px; color: #888; margin-top: 2px; }
+.trans-bar-num.top { color: #e74c3c; font-weight: bold; }
+.trans-top { font-size: 11px; color: #2ecc71; padding: 6px 10px; background: rgba(46,204,113,0.1); border-radius: 4px; }
+
 
 /* 模拟选号下拉框表格（排列三/五） */
 .note-table { width: 100%; border-collapse: collapse; margin-bottom: 6px; background: #1e1e1e; }

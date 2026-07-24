@@ -60,6 +60,7 @@
         headHtml += '<th class="stat" style="text-align:center;">和尾</th>';
         headHtml += '<th class="stat" style="text-align:center;">跨度</th>';
         headHtml += '<th class="stat" style="text-align:center;">奇偶比</th>';
+        headHtml += '<th class="stat" style="text-align:center;">大小比</th>';
         headHtml += '<th class="stat" style="text-align:center;">012路</th>';
         headHtml += '</tr>';
         headHtml += '<tr><th class="period"></th>';
@@ -69,7 +70,7 @@
                 headHtml += '<th' + sep + ' style="text-align:center;">' + n + '</th>';
             }
         });
-        headHtml += '<th class="stat"></th><th class="stat"></th><th class="stat"></th><th class="stat"></th></tr>';
+        headHtml += '<th class="stat"></th><th class="stat"></th><th class="stat"></th><th class="stat"></th><th class="stat"></th></tr>';
         thead.innerHTML = headHtml;
         tbl.appendChild(thead);
 
@@ -93,6 +94,7 @@
             trHtml += '<td class="stat">' + row.sumTail + '</td>';
             trHtml += '<td class="stat">' + row.span + '</td>';
             trHtml += '<td class="stat">' + row.oddEven + '</td>';
+            trHtml += '<td class="stat">' + row.bigSmall + '</td>';
             trHtml += '<td class="stat">' + row.road012 + '</td>';
             trHtml += '</tr>';
             tbodyHtml += trHtml;
@@ -173,6 +175,9 @@
             console.log('WARNING: limitSelect not found for', d.key);
         }
 
+        // 排列三/五：渲染前后期数字转移统计
+        renderTransPanel(d.key);
+
         return panel;
     }
 
@@ -226,6 +231,7 @@
             trHtml += '<td class="stat">' + row.sumTail + '</td>';
             trHtml += '<td class="stat">' + row.span + '</td>';
             trHtml += '<td class="stat">' + row.oddEven + '</td>';
+            trHtml += '<td class="stat">' + row.bigSmall + '</td>';
             trHtml += '<td class="stat">' + row.road012 + '</td>';
             trHtml += '</tr>';
             tbodyHtml += trHtml;
@@ -248,6 +254,7 @@
         }
         updatePredictSummary(key);
         drawAllLines(key);
+        renderTransPanel(key);
     }
 
     function buildPredictBar(d) {
@@ -275,7 +282,7 @@
                 html += '<td class="predict-cell-inner' + sep + '"><span class="predict-num" data-gi="' + gi + '" data-n="' + n + '" data-prow="' + rowIdx + '">' + n + '</span></td>';
             }
         });
-        html += '<td class="stat"></td><td class="stat"></td><td class="stat"></td><td class="stat"></td>';
+        html += '<td class="stat"></td><td class="stat"></td><td class="stat"></td><td class="stat"></td><td class="stat"></td>';
         tr.innerHTML = html;
         tbody.appendChild(tr);
         return [tr];
@@ -456,6 +463,101 @@
             if (tr.dataset.predictRow !== '0') tr.remove();
         });
         updatePredictSummary(key);
+    }
+
+    // ===== 前后期数字转移统计（排列三/五用）=====
+    // 统计：当前期某位数字 → 下一期同位数字的分布
+    function buildTransition(rows, pos, limit) {
+        // rows 是正序（旧→新），最新在末尾
+        // 转移对: rows[i](上期) → rows[i+1](下期)
+        const trans = Array.from({ length: 10 }, () => new Array(10).fill(0));
+        const start = Math.max(0, rows.length - limit);
+        for (let i = start; i < rows.length - 1; i++) {
+            const prev = rows[i].positions[pos];
+            const nxt = rows[i + 1].positions[pos];
+            if (prev >= 0 && prev <= 9 && nxt >= 0 && nxt <= 9) trans[prev][nxt]++;
+        }
+        return trans;
+    }
+
+    // 渲染转移统计面板（放在预选行下方）
+    function renderTransPanel(key) {
+        const d = ALL_DATA.find(x => x.key === key);
+        if (!d) return;
+        const panel = document.getElementById('panel-' + key);
+        if (!panel) return;
+        // 只对排列三/五做
+        if (d.key !== 'pl3' && d.key !== 'pl5') return;
+
+        // 找到或创建转移统计容器
+        let transDiv = document.getElementById('trans-' + key);
+        if (!transDiv) {
+            transDiv = document.createElement('div');
+            transDiv.id = 'trans-' + key;
+            transDiv.className = 'trans-panel';
+            // 插到 footer 之前（预选行就在 footer 上方的表格里）
+            const footer = panel.querySelector('.predict-footer');
+            if (footer) {
+                panel.insertBefore(transDiv, footer);
+            } else {
+                panel.appendChild(transDiv);
+            }
+        }
+
+        // 取最近一期的号码作为"上期"
+        const limit = 500; // 用全部数据统计
+        const rows = d.rows;
+        if (rows.length < 2) {
+            transDiv.innerHTML = '<div class="trans-empty">数据不足，无法统计</div>';
+            return;
+        }
+        const latest = rows[rows.length - 1]; // 最新一期
+        const posLabels = d.positionLabels;
+        const posCount = posLabels.length;
+
+        let html = '<h3 class="trans-title">🔁 前后期数字转移统计</h3>';
+        html += '<div class="trans-desc">当前最新一期：' + latest.period + ' 号码 ' + latest.positions.join(' ') + '。以下统计历史上每位出现相同数字时，下一期同位出现的数字分布。</div>';
+
+        for (let pos = 0; pos < posCount; pos++) {
+            const curNum = latest.positions[pos];
+            const trans = buildTransition(rows, pos, limit);
+            // trans[curNum][n] = 历史上该位=curNum 时，下一期该位=n 的次数
+            const row = trans[curNum] || new Array(10).fill(0);
+            const total = row.reduce((a, b) => a + b, 0);
+
+            html += '<div class="trans-section">';
+            html += '<div class="trans-section-title">' + posLabels[pos] + '位（当前=' + curNum + '，历史出现 ' + total + ' 次）</div>';
+
+            if (total === 0) {
+                html += '<div class="trans-empty">无历史数据</div>';
+            } else {
+                // 柱状图
+                html += '<div class="trans-bars">';
+                for (let n = 0; n <= 9; n++) {
+                    const cnt = row[n];
+                    const pct = total > 0 ? (cnt / total * 100) : 0;
+                    const isTop = cnt > 0 && cnt === Math.max.apply(null, row);
+                    const barH = total > 0 ? Math.max(2, (cnt / total * 100)) : 0;
+                    html += '<div class="trans-bar-cell' + (isTop ? ' top' : '') + '" title="下期=' + n + '：' + cnt + ' 次（' + pct.toFixed(1) + '%）">';
+                    html += '<div class="trans-bar-cnt">' + (cnt > 0 ? cnt : '') + '</div>';
+                    html += '<div class="trans-bar-wrap"><div class="trans-bar' + (isTop ? ' top' : '') + '" style="height:' + barH + '%"></div></div>';
+                    html += '<div class="trans-bar-num' + (isTop ? ' top' : '') + '">' + n + '</div>';
+                    html += '</div>';
+                }
+                html += '</div>';
+                // TOP3
+                const top3 = [];
+                for (let n = 0; n <= 9; n++) {
+                    if (row[n] > 0) top3.push({ n: n, cnt: row[n] });
+                }
+                top3.sort((a, b) => b.cnt - a.cnt);
+                const top3Str = top3.slice(0, 3).map(x => x.n + '(' + x.cnt + ')').join(' ');
+                html += '<div class="trans-top">下期' + posLabels[pos] + '位 TOP3：' + (top3Str || '无数据') + '</div>';
+            }
+            html += '</div>';
+        }
+
+        transDiv.innerHTML = html;
     }
 
     function drawAllLines(key) {

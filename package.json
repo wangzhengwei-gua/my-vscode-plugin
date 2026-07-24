@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.0.4",
+    "version": "0.0.8",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -34,6 +34,10 @@
             {
                 "command": "myPlugin.refreshData",
                 "title": "Refresh Lottery Data"
+            },
+            {
+                "command": "myPlugin.showTrans",
+                "title": "Show Transition Stats"
             }
         ],
         "viewsContainers": {
