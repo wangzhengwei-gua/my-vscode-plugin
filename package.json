@@ -17,6 +17,15 @@
         "Other"
     ],
     "main": "./src/extension.js",
+    "activationEvents": [
+        "onCommand:myPlugin.helloWorld",
+        "onCommand:myPlugin.showTime",
+        "onCommand:myPlugin.openChart",
+        "onCommand:myPlugin.refreshData",
+        "onCommand:myPlugin.showTrans",
+        "onCommand:myPlugin.smartPick",
+        "onView:lotteryMenu"
+    ],
     "contributes": {
         "commands": [
             {

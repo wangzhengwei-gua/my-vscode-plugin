@@ -511,12 +511,12 @@ h2 { color: #8ec5ff; margin-bottom: 8px; }
 .pos-title { color: #feca57; font-size: 14px; font-weight: 600; margin-bottom: 8px; }
 .pick-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
 .pick-label { color: #888; min-width: 60px; font-size: 12px; }
-.pick-num { display: inline-block; min-width: 28px; height: 28px; line-height: 26px; text-align: center; border: 2px solid #444; border-radius: 50%; color: #aaa; font-size: 13px; cursor: pointer; user-select: none; background: #1a1a1a; padding: 0 4px; }
-.pick-num:hover { border-color: #888; color: #fff; }
-.pick-num.selected { background: #e74c3c; color: #fff; border-color: #e74c3c; font-weight: bold; }
-.pick-num.top1 { background: #e74c3c; color: #fff; border-color: #e74c3c; font-weight: bold; }
-.pick-num.top2 { background: #e67e22; color: #fff; border-color: #e67e22; }
-.pick-num.top3 { background: #f39c12; color: #fff; border-color: #f39c12; }
+.pick-num, .pick-num-display { display: inline-block; min-width: 28px; height: 28px; line-height: 26px; text-align: center; border: 2px solid #444; border-radius: 50%; color: #aaa; font-size: 13px; cursor: pointer; user-select: none; background: #1a1a1a; padding: 0 4px; }
+.pick-num:hover, .pick-num-display:hover { border-color: #888; color: #fff; }
+.pick-num.selected, .pick-num-display.selected { background: #e74c3c; color: #fff; border-color: #e74c3c; font-weight: bold; }
+.pick-num.top1, .pick-num-display.top1 { background: #e74c3c; color: #fff; border-color: #e74c3c; font-weight: bold; }
+.pick-num.top2, .pick-num-display.top2 { background: #e67e22; color: #fff; border-color: #e67e22; }
+.pick-num.top3, .pick-num-display.top3 { background: #f39c12; color: #fff; border-color: #f39c12; }
 .pct { color: #888; font-size: 11px; margin-left: 4px; }
 .detail-row { font-size: 11px; color: #666; margin-top: 4px; padding-left: 68px; }
 .summary-box { margin-top: 16px; padding: 12px; background: #1a2540; border: 1px solid #2a4a7a; border-radius: 6px; }
@@ -544,6 +544,59 @@ h2 { color: #8ec5ff; margin-bottom: 8px; }
 .trend-rec-num.t2 { background: #8e44ad; color: #fff; }
 .trend-rec-num.t3 { background: #7d3c98; color: #fff; }
 .trend-match-info { color: #666; font-size: 11px; margin-left: 8px; }
+
+/* 复式推荐样式 */
+.complex-section { margin-bottom: 24px; padding: 16px; background: rgba(52,152,219,0.08); border: 1px solid rgba(52,152,219,0.3); border-radius: 8px; }
+.complex-title { color: #3498db; font-size: 16px; font-weight: 600; margin-bottom: 12px; }
+.complex-tabs { display: flex; gap: 4px; margin-bottom: 16px; flex-wrap: wrap; }
+.complex-tab { padding: 6px 14px; background: #2d2d30; color: #aaa; border: 1px solid #444; border-radius: 4px; cursor: pointer; font-size: 12px; transition: all 0.2s; }
+.complex-tab:hover { background: #3a3a3a; color: #fff; border-color: #666; }
+.complex-tab.active { background: #0e639c; color: #fff; border-color: #0e639c; font-weight: 600; }
+.complex-picks { margin-bottom: 8px; }
+.complex-pos-block { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+.complex-pos-label { color: #feca57; font-size: 13px; font-weight: 600; min-width: 50px; }
+.complex-num { display: inline-block; min-width: 32px; height: 32px; line-height: 30px; text-align: center; border-radius: 50%; font-size: 14px; font-weight: bold; margin: 0 3px; padding: 0 4px; border: 2px solid; position: relative; }
+.complex-num sup { font-size: 9px; font-weight: normal; margin-left: 1px; }
+.complex-num.algo-pick { box-shadow: 0 0 6px rgba(255,255,255,0.15); }
+.complex-num.algo-pick::before { content: "★"; position: absolute; top: -6px; right: -2px; font-size: 10px; color: #f1c40f; text-shadow: 0 0 3px rgba(0,0,0,0.8); }
+.complex-num.filler-pick { border-style: dashed !important; opacity: 0.85; }
+.complex-num.filler-pick::after { content: "补"; position: absolute; bottom: -6px; right: -2px; font-size: 9px; background: #555; color: #fff; padding: 0 3px; border-radius: 3px; line-height: 12px; }
+.complex-num.hot-both { background: #e74c3c; color: #fff; border-color: #c0392b; box-shadow: 0 0 8px rgba(231,76,60,0.6); }
+.complex-num.hot-trans { background: #e67e22; color: #fff; border-color: #d35400; }
+.complex-num.hot-trend { background: #9b59b6; color: #fff; border-color: #8e44ad; }
+.complex-num.warm { background: rgba(241,196,15,0.2); color: #f1c40f; border-color: #f1c40f; }
+.complex-num.cold { background: rgba(52,152,219,0.2); color: #5dade2; border-color: #5dade2; }
+.complex-tag-demo { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: bold; margin: 0 2px; }
+.complex-tag-demo.algo { background: #e74c3c; color: #fff; }
+.complex-tag-demo.warm { background: rgba(241,196,15,0.2); color: #f1c40f; border: 1px dashed #f1c40f; }
+.complex-tag-demo.cold { background: rgba(52,152,219,0.2); color: #5dade2; border: 1px dashed #5dade2; }
+.complex-summary { margin: 10px 0; padding: 8px 12px; background: rgba(52,152,219,0.15); border-radius: 4px; color: #3498db; font-size: 13px; }
+.complex-summary b { color: #fff; font-size: 16px; }
+.complex-suggest { margin-top: 16px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 6px; }
+.complex-suggest-title { color: #2ecc71; font-size: 14px; font-weight: 600; margin-bottom: 10px; }
+.complex-suggest-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; padding: 6px 8px; background: rgba(46,204,113,0.06); border-radius: 4px; }
+.complex-suggest-idx { color: #888; font-size: 12px; min-width: 50px; }
+.complex-suggest-num { display: inline-block; width: 28px; height: 28px; line-height: 26px; text-align: center; background: #27ae60; color: #fff; border-radius: 50%; font-weight: bold; font-size: 13px; }
+.complex-suggest-score { color: #666; font-size: 11px; margin-left: auto; }
+
+/* 温度分布展示 */
+.complex-temp-box { margin-top: 16px; padding: 12px; background: rgba(0,0,0,0.15); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; }
+.complex-temp-title { color: #8ec5ff; font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+.complex-temp-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.complex-temp-label { color: #feca57; font-size: 12px; font-weight: 600; min-width: 50px; }
+.complex-temp-group { display: flex; align-items: center; gap: 3px; padding: 2px 6px; background: rgba(255,255,255,0.03); border-radius: 4px; }
+.complex-temp-sub { font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 3px; margin-right: 2px; }
+.complex-temp-sub.hot { background: #e74c3c; color: #fff; }
+.complex-temp-sub.warm { background: #f1c40f; color: #333; }
+.complex-temp-sub.cold { background: #3498db; color: #fff; }
+.complex-temp-num { display: inline-block; min-width: 32px; height: 24px; line-height: 22px; text-align: center; border-radius: 3px; font-size: 12px; font-weight: bold; padding: 0 3px; margin: 0 1px; }
+.complex-temp-num.hot { background: rgba(231,76,60,0.25); color: #ff6b6b; }
+.complex-temp-num.warm { background: rgba(241,196,15,0.25); color: #f1c40f; }
+.complex-temp-num.cold { background: rgba(52,152,219,0.25); color: #5dade2; }
+.complex-temp-num sub { font-size: 8px; color: #888; font-weight: normal; }
+
+.complex-copy-box { margin-top: 12px; padding: 10px; background: #1a2540; border: 1px solid #2a4a7a; border-radius: 6px; }
+.copy-btn.secondary { background: #3a3a3a; }
 </style>
 </head>
 <body>
@@ -634,7 +687,7 @@ const LIMIT_LABEL = DATA.limit === 0 ? '全部' : DATA.limit + ' 期';
         html += '<span class="pick-label">TOP3 推荐：</span>';
         rec.top3.forEach((c, idx) => {
             const cls = idx === 0 ? 'top1' : idx === 1 ? 'top2' : 'top3';
-            html += '<span class="pick-num ' + cls + '" data-pos="' + rec.pos + '" data-n="' + c.n + '">' + c.n + '</span>';
+            html += '<span class="pick-num-display ' + cls + '">' + c.n + '</span>';
             html += '<span class="pct">' + (c.pct * 100).toFixed(1) + '%</span>';
         });
         html += '</div>';
@@ -652,14 +705,17 @@ const LIMIT_LABEL = DATA.limit === 0 ? '全部' : DATA.limit + ' 期';
             html += '<span class="pick-num ' + cls + '" data-pos="' + rec.pos + '" data-n="' + n + '">' + n + '</span>';
         }
         html += '</div>';
+        html += '<div class="detail-row">提示：点击号码选中/取消，每位选中的号码会参与下方"组合预览"</div>';
         html += '</div>';
     }
 
     // 复制区
     html += '<div class="summary-box">';
     html += '<div style="color:#8ec5ff;font-size:13px;margin-bottom:6px;">📋 复制推荐结果</div>';
-    html += '<div id="copyText" style="color:#fff;margin-bottom:8px;"></div>';
+    html += '<div id="copyText" style="color:#fff;margin-bottom:8px;font-size:13px;line-height:1.8;"></div>';
+    html += '<div id="copyNote" style="color:#888;font-size:11px;margin-bottom:8px;">每位选中多个号码时，将生成所有组合（例如万位[1,6] 千位[1] = 1X1、6X1 共 2 注）</div>';
     html += '<button class="copy-btn" onclick="copyResult()">📋 一键复制</button>';
+    html += '<button class="copy-btn" style="background:#3a3a3a;margin-left:8px;" onclick="resetSelection()">🔄 重置为TOP1</button>';
     html += '</div>';
 
     document.getElementById('content').innerHTML = html;
@@ -680,20 +736,100 @@ const LIMIT_LABEL = DATA.limit === 0 ? '全部' : DATA.limit + ' 期';
             byPos[p].push(parseInt(el.dataset.n));
         });
         const parts = [];
+        let totalCombos = 1;
         for (let i = 0; i < posCount; i++) {
             const nums = (byPos[i] || []).sort((a, b) => a - b);
-            parts.push(posLabels[i] + '位：' + (nums.length ? nums.join(' ') : '-'));
+            totalCombos *= Math.max(nums.length, 1);
+            // 选中号码用明显的样式
+            parts.push('<span style="color:#feca57;">' + posLabels[i] + '位</span>：' +
+                (nums.length ?
+                    nums.map(n => '<span style="color:#fff;background:#e74c3c;padding:1px 6px;border-radius:3px;margin:0 2px;font-weight:bold;">' + n + '</span>').join(' ')
+                    : '<span style="color:#888;">-</span>'));
         }
-        document.getElementById('copyText').innerHTML = '已选 → <b>' + parts.join(' | ') + '</b>';
+        document.getElementById('copyText').innerHTML =
+            '<span style="color:#2ecc71;">已选：</span>' +
+            parts.join(' <span style="color:#555;">|</span> ') +
+            '<br><span style="color:#888;font-size:12px;">↓ 组合预览（共 <b style="color:#feca57;">' + totalCombos + '</b> 注）：</span><br>' +
+            generateCombosPreview(byPos);
+    }
+
+    // 生成所有组合预览（每位选中号码的笛卡尔积，最多展示前20注）
+    function generateCombosPreview(byPos) {
+        const picks = [];
+        for (let i = 0; i < posCount; i++) {
+            picks.push((byPos[i] || []).sort((a, b) => a - b));
+        }
+        const combos = [];
+        function rec(idx, cur) {
+            if (idx === posCount) {
+                combos.push(cur.slice());
+                return;
+            }
+            if (picks[idx].length === 0) return;
+            for (const n of picks[idx]) {
+                cur[idx] = n;
+                rec(idx + 1, cur);
+            }
+        }
+        rec(0, []);
+        if (combos.length === 0) return '<span style="color:#888;">未选择任何号码</span>';
+        const show = combos.slice(0, 20);
+        let html = '<div style="background:rgba(0,0,0,0.2);padding:6px;border-radius:4px;margin-top:4px;">';
+        show.forEach((c, i) => {
+            html += '<span style="color:#2ecc71;font-size:12px;">第' + (i + 1) + '注：</span>' +
+                c.map(n => '<span style="display:inline-block;width:24px;height:24px;line-height:22px;text-align:center;background:#27ae60;color:#fff;border-radius:50%;font-weight:bold;font-size:12px;margin:0 2px;">' + n + '</span>').join('') + '<br>';
+        });
+        if (combos.length > 20) {
+            html += '<span style="color:#888;font-size:11px;">... 还有 ' + (combos.length - 20) + ' 注未显示</span>';
+        }
+        html += '</div>';
+        return html;
     }
 
     window.copyResult = function() {
-        const text = document.getElementById('copyText').innerText || '(空)';
-        if (navigator.clipboard) {
-            navigator.clipboard.writeText(text).then(() => alert('已复制：\\n' + text));
-        } else {
-            alert('复制：\\n' + text);
+        // 生成纯文本格式用于复制
+        const byPos = {};
+        document.querySelectorAll('.pick-num.selected').forEach(el => {
+            const p = el.dataset.pos;
+            if (!byPos[p]) byPos[p] = [];
+            byPos[p].push(parseInt(el.dataset.n));
+        });
+        const picks = [];
+        let totalCombos = 1;
+        for (let i = 0; i < posCount; i++) {
+            const nums = (byPos[i] || []).sort((a, b) => a - b);
+            picks.push(nums);
+            totalCombos *= Math.max(nums.length, 1);
         }
+        let text = '【' + DATA.name + ' 智能推荐】\\n';
+        text += '每位选中：\\n';
+        for (let i = 0; i < posCount; i++) {
+            text += '  ' + posLabels[i] + '位：' + (picks[i].length ? picks[i].join(', ') : '未选') + '\\n';
+        }
+        if (totalCombos > 0 && picks.every(p => p.length > 0)) {
+            text += '\\n所有组合（共 ' + totalCombos + ' 注）：\\n';
+            const combos = [];
+            function rec(idx, cur) {
+                if (idx === posCount) { combos.push(cur.slice()); return; }
+                for (const n of picks[idx]) { cur[idx] = n; rec(idx + 1, cur); }
+            }
+            rec(0, []);
+            combos.forEach((c, i) => {
+                text += '第' + (i + 1) + '注：' + c.join(' ') + '\\n';
+            });
+        }
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(text).then(() => alert('已复制到剪贴板：\\n\\n' + text));
+        } else {
+            alert('复制内容：\\n\\n' + text);
+        }
+    };
+
+    window.resetSelection = function() {
+        // 取消所有选中，再默认选中所有 TOP1
+        document.querySelectorAll('.pick-num').forEach(el => el.classList.remove('selected'));
+        document.querySelectorAll('.pick-num.top1').forEach(el => el.classList.add('selected'));
+        updateCopyText();
     };
 
     // 默认选中所有 TOP1
@@ -894,6 +1030,287 @@ const LIMIT_LABEL = DATA.limit === 0 ? '全部' : DATA.limit + ' 期';
     trendHtml += '</div>';
 
     document.getElementById('trend_content').innerHTML = trendHtml;
+
+    // ===== 复式推荐（仅排三/排五）=====
+    // 每位选2~5个号码：热号(TOP3)优先 → 温号(频率中等) → 冷号(频率最低)补足
+    // 支持 2^N ~ 5^N 复式切换
+    if (DATA.key === 'pl3' || DATA.key === 'pl5') {
+        // 计算每位号码的全局频率
+        const globalFreq = [];
+        for (let pos = 0; pos < posCount; pos++) {
+            const max = DATA.positionMax[pos];
+            const freq = new Array(max + 1).fill(0);
+            for (const r of rows) {
+                const v = r.positions[pos];
+                if (v >= 0 && v <= max) freq[v]++;
+            }
+            globalFreq.push(freq);
+        }
+
+        // 将每位号码分为热/温/冷三类
+        // 热号：频率最高的 TOP3（算法推荐也算热号）
+        // 温号：频率中等的号码（非热也非冷）
+        // 冷号：频率最低的号码
+        const sortedByFreq = []; // 按频率降序
+        const coldNumbers = [];  // 按频率升序（冷号）
+        const warmNumbers = [];  // 温号（频率中等）
+        for (let pos = 0; pos < posCount; pos++) {
+            const max = DATA.positionMax[pos];
+            const freq = globalFreq[pos];
+            const total = freq.reduce((a, b) => a + b, 0) || 1;
+            const all = [];
+            for (let n = 0; n <= max; n++) {
+                all.push({ n, cnt: freq[n], pct: freq[n] / total });
+            }
+            // 按频率降序
+            const sorted = all.slice().sort((a, b) => b.cnt - a.cnt);
+            sortedByFreq.push(sorted);
+            // 冷号：频率升序
+            coldNumbers.push(all.slice().sort((a, b) => a.cnt - b.cnt));
+            // 温号：去掉最热3个和最冷3个，剩下的为温号
+            const hotSet = new Set(sorted.slice(0, 3).map(x => x.n));
+            const coldSet = new Set(coldNumbers[pos].slice(0, 3).map(x => x.n));
+            const warms = sorted.filter(x => !hotSet.has(x.n) && !coldSet.has(x.n));
+            warmNumbers.push(warms);
+        }
+
+        // 获取某位推荐的N个号码（热号优先 → 温号 → 冷号补足）
+        function getPicksForPos(pos, pickCount) {
+            const transTop3 = recommendations[pos] ? recommendations[pos].top3.map(c => c.n) : [];
+            const trendTop3 = trendRecommendations[pos] ? trendRecommendations[pos].top3.map(c => c.n) : [];
+            const merged = [];
+            const seen = new Set();
+            // 1. 热号：算法推荐 TOP3 去重（限制 pickCount）
+            for (const n of [...transTop3, ...trendTop3]) {
+                if (merged.length >= pickCount) break;
+                if (!seen.has(n)) { merged.push(n); seen.add(n); }
+            }
+            // 2. 不足时从温号中补
+            if (merged.length < pickCount) {
+                for (const w of warmNumbers[pos]) {
+                    if (merged.length >= pickCount) break;
+                    if (!seen.has(w.n)) { merged.push(w.n); seen.add(w.n); }
+                }
+            }
+            // 3. 还不足从冷号补
+            if (merged.length < pickCount) {
+                for (const c of coldNumbers[pos]) {
+                    if (merged.length >= pickCount) break;
+                    if (!seen.has(c.n)) { merged.push(c.n); seen.add(c.n); }
+                }
+            }
+            merged.sort((a, b) => a - b);
+            return merged;
+        }
+
+        // 计算号码分类标签
+        function getNumTag(pos, n) {
+            const inTrans = recommendations[pos] && recommendations[pos].top3.some(c => c.n === n);
+            const inTrend = trendRecommendations[pos] && trendRecommendations[pos].top3.some(c => c.n === n);
+            if (inTrans && inTrend) return { cls: 'hot-both', tag: '★', label: '双算法命中：转移统计TOP3 + 趋势分析TOP3', algo: true };
+            if (inTrans) return { cls: 'hot-trans', tag: 'T', label: '算法推荐：转移统计TOP3', algo: true };
+            if (inTrend) return { cls: 'hot-trend', tag: 'R', label: '算法推荐：趋势分析TOP3', algo: true };
+            // 温号/冷号属于补足（不是算法直接推荐）
+            const isWarm = warmNumbers[pos] && warmNumbers[pos].some(w => w.n === n);
+            if (isWarm) {
+                const w = warmNumbers[pos].find(x => x.n === n);
+                return { cls: 'warm', tag: 'W', label: '补足：温号（历史频率中等 ' + (w ? (w.pct*100).toFixed(1) + '%' : '') + '）', algo: false };
+            }
+            const c = coldNumbers[pos].find(x => x.n === n);
+            return { cls: 'cold', tag: 'C', label: '补足：冷号（历史频率最低 ' + (c ? (c.pct*100).toFixed(1) + '%' : '') + '）', algo: false };
+        }
+
+        // 综合概率得分
+        const numScores = [];
+        for (let pos = 0; pos < posCount; pos++) {
+            const max = DATA.positionMax[pos];
+            const scores = new Array(max + 1).fill(0);
+            const transTop3 = recommendations[pos] ? recommendations[pos].top3 : [];
+            const trendTop3 = trendRecommendations[pos] ? trendRecommendations[pos].top3 : [];
+            const transTotal = recommendations[pos] ? recommendations[pos].total : 1;
+            const trendTotal = trendRecommendations[pos] ? trendRecommendations[pos].total : 1;
+            transTop3.forEach(c => { scores[c.n] += (c.cnt / transTotal); });
+            trendTop3.forEach(c => { scores[c.n] += (c.cnt / trendTotal); });
+            const freq = globalFreq[pos];
+            const freqTotal = freq.reduce((a, b) => a + b, 0) || 1;
+            for (let n = 0; n <= max; n++) {
+                scores[n] += (freq[n] / freqTotal) * 0.1;
+            }
+            numScores.push(scores);
+        }
+
+        // 枚举复式组合并按得分排序
+        function enumerateCombos(picks) {
+            const combos = [];
+            function rec(pos, current) {
+                if (pos === posCount) {
+                    let score = 0;
+                    for (let i = 0; i < posCount; i++) score += numScores[i][current[i]];
+                    combos.push({ combo: current.slice(), score });
+                    return;
+                }
+                for (const n of picks[pos]) {
+                    current[pos] = n;
+                    rec(pos + 1, current);
+                }
+            }
+            rec(0, []);
+            combos.sort((a, b) => b.score - a.score);
+            return combos;
+        }
+
+        const SUGGEST_COUNT = 5;
+        const PICK_OPTIONS = [2, 3, 4, 5];
+
+        let complexHtml = '<div class="complex-section" id="complexSection">';
+        complexHtml += '<div class="complex-title">🎲 复式推荐</div>';
+        complexHtml += '<div style="color:#aaa;font-size:12px;margin-bottom:12px;">';
+        complexHtml += '每位选号策略：<b>算法热号</b>（转移统计∩趋势分析）→ <b style="color:#f1c40f">温号补足</b>（频率中等）→ <b style="color:#5dade2">冷号补足</b>（频率最低）<br>';
+        complexHtml += '标注：<span class="complex-tag-demo algo">★/T/R</span> <b style="color:#fff">算法直接推荐</b> &nbsp; <span class="complex-tag-demo warm">W</span> <b style="color:#f1c40f">温号补足</b> &nbsp; <span class="complex-tag-demo cold">C</span> <b style="color:#5dade2">冷号补足</b>';
+        complexHtml += '</div>';
+
+        // 切换按钮
+        complexHtml += '<div class="complex-tabs" id="complexTabs">';
+        PICK_OPTIONS.forEach((p, idx) => {
+            const combos = Math.pow(p, posCount);
+            complexHtml += '<button class="complex-tab' + (idx === PICK_OPTIONS.length - 1 ? ' active' : '') + '" data-pick="' + p + '">' + p + '×' + p + '复式（' + combos + '注）</button>';
+        });
+        complexHtml += '</div>';
+
+        // 内容容器
+        complexHtml += '<div id="complexContent"></div>';
+
+        // 冷温热号展示
+        complexHtml += '<div class="complex-temp-box">';
+        complexHtml += '<div class="complex-temp-title">🌡️ 各位号码温度分布</div>';
+        for (let pos = 0; pos < posCount; pos++) {
+            const hots = sortedByFreq[pos].slice(0, 3);
+            const warms = warmNumbers[pos].slice(0, 3);
+            const colds = coldNumbers[pos].slice(0, 3);
+            complexHtml += '<div class="complex-temp-row">';
+            complexHtml += '<span class="complex-temp-label">' + posLabels[pos] + '位：</span>';
+            complexHtml += '<span class="complex-temp-group"><span class="complex-temp-sub hot">热</span>';
+            hots.forEach(c => complexHtml += '<span class="complex-temp-num hot">' + c.n + '<sub>' + (c.pct * 100).toFixed(0) + '%</sub></span>');
+            complexHtml += '</span>';
+            complexHtml += '<span class="complex-temp-group"><span class="complex-temp-sub warm">温</span>';
+            if (warms.length > 0) {
+                warms.forEach(c => complexHtml += '<span class="complex-temp-num warm">' + c.n + '<sub>' + (c.pct * 100).toFixed(0) + '%</sub></span>');
+            } else {
+                complexHtml += '<span style="color:#666;font-size:11px;">无</span>';
+            }
+            complexHtml += '</span>';
+            complexHtml += '<span class="complex-temp-group"><span class="complex-temp-sub cold">冷</span>';
+            colds.forEach(c => complexHtml += '<span class="complex-temp-num cold">' + c.n + '<sub>' + (c.pct * 100).toFixed(0) + '%</sub></span>');
+            complexHtml += '</span>';
+            complexHtml += '</div>';
+        }
+        complexHtml += '</div>';
+
+        // 复制按钮
+        complexHtml += '<div class="complex-copy-box">';
+        complexHtml += '<button class="copy-btn" onclick="copyComplexResult()">📋 复制复式推荐</button>';
+        complexHtml += '<button class="copy-btn secondary" style="background:#3a3a3a;margin-left:8px;" onclick="copySuggestResult()">📋 复制精选单式</button>';
+        complexHtml += '<div id="complexCopyText" style="color:#fff;margin-top:8px;"></div>';
+        complexHtml += '</div>';
+
+        complexHtml += '</div>';
+
+        // 添加到内容区
+        const complexDiv = document.createElement('div');
+        complexDiv.innerHTML = complexHtml;
+        document.body.appendChild(complexDiv);
+
+        // 当前选中的每注号码数
+        let currentPick = 5;
+        let currentPicks = [];
+        let currentCombos = [];
+        let currentSuggest = [];
+
+        function renderComplex(pickCount) {
+            currentPick = pickCount;
+            currentPicks = [];
+            for (let pos = 0; pos < posCount; pos++) {
+                currentPicks.push(getPicksForPos(pos, pickCount));
+            }
+
+            const totalCombos = currentPicks.reduce((p, c) => p * c.length, 1);
+            let html = '';
+
+            // 每位推荐
+            html += '<div class="complex-picks">';
+            for (let pos = 0; pos < posCount; pos++) {
+                const picks = currentPicks[pos];
+                html += '<div class="complex-pos-block">';
+                html += '<span class="complex-pos-label">' + posLabels[pos] + '位：</span>';
+                picks.forEach(n => {
+                    const info = getNumTag(pos, n);
+                    const algoCls = info.algo ? ' algo-pick' : ' filler-pick';
+                    html += '<span class="complex-num ' + info.cls + algoCls + '" title="' + info.label + '">' + n + '<sup>' + info.tag + '</sup></span>';
+                });
+                html += '</div>';
+            }
+            html += '</div>';
+            html += '<div class="complex-summary">复式总注数：<b>' + totalCombos + '</b> 注（' + pickCount + '^' + posCount + '）</div>';
+
+            // 精选单式
+            currentCombos = enumerateCombos(currentPicks);
+            currentSuggest = currentCombos.slice(0, Math.min(SUGGEST_COUNT, currentCombos.length));
+
+            html += '<div class="complex-suggest">';
+            html += '<div class="complex-suggest-title">📋 精选单式（按综合概率 TOP' + currentSuggest.length + '）</div>';
+            currentSuggest.forEach((s, idx) => {
+                html += '<div class="complex-suggest-row">';
+                html += '<span class="complex-suggest-idx">第' + (idx + 1) + '注</span>';
+                s.combo.forEach(n => {
+                    html += '<span class="complex-suggest-num">' + n + '</span>';
+                });
+                html += '<span class="complex-suggest-score">得分:' + s.score.toFixed(3) + '</span>';
+                html += '</div>';
+            });
+            html += '</div>';
+
+            document.getElementById('complexContent').innerHTML = html;
+        }
+
+        // 初始渲染
+        renderComplex(5);
+
+        // Tab 切换
+        document.querySelectorAll('.complex-tab').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.complex-tab').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                renderComplex(parseInt(btn.dataset.pick));
+            });
+        });
+
+        // 复制复式
+        window.copyComplexResult = function() {
+            const parts = [];
+            for (let pos = 0; pos < posCount; pos++) {
+                parts.push(posLabels[pos] + ':' + currentPicks[pos].join(''));
+            }
+            const totalCombos = currentPicks.reduce((p, c) => p * c.length, 1);
+            const text = DATA.name + '复式推荐（' + currentPick + '×' + currentPick + '，' + totalCombos + '注）\\n' + parts.join(' ') + '\\n每位' + currentPick + '码：' + currentPicks.map(p => p.join('')).join(' | ');
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(text).then(() => alert('已复制：\\n' + text));
+            } else {
+                alert('复制：\\n' + text);
+            }
+        };
+        // 复制精选单式
+        window.copySuggestResult = function() {
+            let text = DATA.name + '精选单式 TOP' + currentSuggest.length + '\\n';
+            currentSuggest.forEach((s, i) => {
+                text += '第' + (i + 1) + '注：' + s.combo.join(' ') + '\\n';
+            });
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(text).then(() => alert('已复制：\\n' + text));
+            } else {
+                alert('复制：\\n' + text);
+            }
+        };
+    }
 })();
 </script>
 </body>
