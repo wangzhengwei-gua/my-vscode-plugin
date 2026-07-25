@@ -1,6 +1,7 @@
 node_modules/
 out/
-data/
+data/*
+!data/predictions.json
 .vscode/
 .vscode-test/
 *.vsix
