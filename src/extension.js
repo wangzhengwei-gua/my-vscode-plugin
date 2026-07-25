@@ -8,6 +8,126 @@ const PLUGIN_DATA_DIR = path.join(__dirname, '..', 'data');
 const DLT_DATA_DIR = 'E:\\dlt-simulator\\data';
 const DATA_DIR = fs.existsSync(PLUGIN_DATA_DIR) ? PLUGIN_DATA_DIR : DLT_DATA_DIR;
 
+// 预测记录文件路径
+const PREDICTIONS_FILE = path.join(PLUGIN_DATA_DIR, 'predictions.json');
+
+/**
+ * 读取预测记录
+ * @returns {Array<Object>} 预测记录列表
+ */
+function loadPredictions() {
+    try {
+        if (!fs.existsSync(PREDICTIONS_FILE)) return [];
+        const raw = fs.readFileSync(PREDICTIONS_FILE, 'utf-8');
+        return JSON.parse(raw) || [];
+    } catch (e) {
+        console.error('读取预测记录失败:', e.message);
+        return [];
+    }
+}
+
+/**
+ * 保存预测记录
+ * @param {Array<Object>} predictions - 预测记录列表
+ */
+function savePredictions(predictions) {
+    try {
+        if (!fs.existsSync(PLUGIN_DATA_DIR)) {
+            fs.mkdirSync(PLUGIN_DATA_DIR, { recursive: true });
+        }
+        fs.writeFileSync(PREDICTIONS_FILE, JSON.stringify(predictions, null, 2), 'utf-8');
+        console.log('预测记录已保存:', PREDICTIONS_FILE);
+    } catch (e) {
+        console.error('保存预测记录失败:', e.message);
+    }
+}
+
+/**
+ * 判断一条预测记录是否中奖（仅判断"位置全中"，即直选）
+ * @param {Object} pred - 预测记录 {type, targetPeriod, picks, note}
+ * @param {Object} history - 该彩种历史数据（已 reverse，最新在末尾）
+ * @returns {Object|null} 中奖详情，未中返回 null
+ */
+function checkPrediction(pred, history) {
+    if (!history || history.length === 0) return null;
+    // 在历史中查找匹配期号的记录
+    const match = history.find(h => h.period === pred.targetPeriod);
+    if (!match) return null;
+
+    // match 的号码：根据彩种提取每位号码数组
+    const cfg = LOTTERY_TYPES.find(c => c.key === pred.type);
+    if (!cfg) return null;
+    const drawNums = cfg.positions.map(p => p.pick(match));
+
+    // pred.picks: 每位选中的号码数组，如 [[1,6],[3],[7,0],[1],[4]]
+    // 判断 drawNums 的每位是否都在对应 picks 中（即"直选"中奖）
+    const posResults = [];
+    let allHit = true;
+    for (let i = 0; i < drawNums.length; i++) {
+        const drawN = drawNums[i];
+        const picksAtPos = pred.picks[i] || [];
+        const hit = picksAtPos.includes(drawN);
+        posResults.push({ pos: cfg.positions[i].label, drawNum: drawN, picks: picksAtPos, hit });
+        if (!hit) allHit = false;
+    }
+
+    // 排列三/排列五：要求每位都命中（直选）
+    // 大乐透/双色球：要求"选中号码集合" ⊇ "开奖号码集合"（复式命中）
+    if (pred.type === 'pl3' || pred.type === 'pl5') {
+        if (!allHit) return null;
+    } else {
+        // dlt/ssq: 检查所有开奖号码是否都在用户选号池中（不区分位置）
+        const allPicksFlat = pred.picks.flat();
+        const allDrawFlat = drawNums.slice();
+        const allCovered = allDrawFlat.every(n => allPicksFlat.includes(n));
+        if (!allCovered) return null;
+    }
+
+    return {
+        period: match.period,
+        date: match.date,
+        drawNums,
+        posResults,
+        prizeLevel: allHit ? '直选全中' : '复式命中'
+    };
+}
+
+/**
+ * 对比所有未开奖的预测记录，返回中奖列表
+ * @returns {Array<Object>} 中奖记录列表
+ */
+function checkAllPredictions() {
+    const predictions = loadPredictions();
+    const wins = [];
+    for (const pred of predictions) {
+        if (pred.checked) continue; // 已对比过的跳过
+        const cfg = LOTTERY_TYPES.find(c => c.key === pred.type);
+        if (!cfg) continue;
+        try {
+            const history = loadLotteryData(cfg);
+            const result = checkPrediction(pred, history);
+            if (result) {
+                wins.push({ prediction: pred, result });
+                // 标记已对比且中奖
+                pred.checked = true;
+                pred.winResult = result;
+            } else {
+                // 检查目标期号是否已经在历史中（已开奖但未中）
+                const match = history.find(h => h.period === pred.targetPeriod);
+                if (match) {
+                    pred.checked = true;
+                    pred.winResult = null; // 已开奖但未中
+                }
+            }
+        } catch (e) {
+            console.error('对比预测失败:', pred.type, e.message);
+        }
+    }
+    // 保存更新后的状态
+    savePredictions(predictions);
+    return wins;
+}
+
 const LOTTERY_TYPES = [
     {
         key: 'dlt',
@@ -192,6 +312,43 @@ function activate(context) {
             }
         );
         panel.webview.html = getTrendHtml(allData, panel.webview);
+
+        // 接收 Webview 消息（保存预测）
+        panel.webview.onDidReceiveMessage(async (msg) => {
+            if (msg.command === 'savePredictionBatch' && msg.predictions) {
+                try {
+                    const predictions = loadPredictions();
+                    let savedCount = 0;
+                    for (const pred of msg.predictions) {
+                        predictions.push({
+                            id: Date.now() + savedCount,
+                            type: pred.type,
+                            typeName: pred.typeName,
+                            basePeriod: pred.basePeriod,
+                            targetPeriod: pred.targetPeriod,
+                            picks: pred.picks,
+                            totalCombos: pred.totalCombos,
+                            note: pred.note,
+                            source: pred.source || 'chart',
+                            savedAt: new Date().toISOString(),
+                            checked: false,
+                            winResult: null
+                        });
+                        savedCount++;
+                    }
+                    savePredictions(predictions);
+                    if (savedCount > 0) {
+                        vscode.window.showInformationMessage(
+                            '💾 预测已保存！共 ' + savedCount + ' 条\n' +
+                            '目标期号：' + msg.predictions[0].targetPeriod + '\n' +
+                            '开奖后将自动对比是否中奖'
+                        );
+                    }
+                } catch (e) {
+                    vscode.window.showErrorMessage('保存预测失败: ' + e.message);
+                }
+            }
+        }, null, context.subscriptions);
     });
     context.subscriptions.push(chartDisposable);
 
@@ -369,8 +526,68 @@ function activate(context) {
             { enableScripts: true, retainContextWhenHidden: true }
         );
         panel.webview.html = getSmartPickHtml(data);
+
+        // 接收 Webview 消息（保存预测）
+        panel.webview.onDidReceiveMessage(async (msg) => {
+            if (msg.command === 'savePrediction') {
+                try {
+                    const predictions = loadPredictions();
+                    // 计算 targetPeriod：当前最新期号 + 1（粗略估算）
+                    // 对于排列三/五、双色球、大乐透，期号是递增的数字
+                    let targetPeriod = msg.basePeriod;
+                    const periodNum = parseInt(msg.basePeriod, 10);
+                    if (!isNaN(periodNum)) {
+                        targetPeriod = String(periodNum + 1);
+                    }
+                    predictions.push({
+                        id: Date.now(),
+                        type: msg.type,
+                        typeName: msg.typeName,
+                        basePeriod: msg.basePeriod,
+                        targetPeriod: targetPeriod,
+                        picks: msg.picks,
+                        totalCombos: msg.totalCombos,
+                        note: msg.note,
+                        savedAt: new Date().toISOString(),
+                        checked: false,
+                        winResult: null
+                    });
+                    savePredictions(predictions);
+                    vscode.window.showInformationMessage(
+                        '💾 预测已保存！\n' +
+                        msg.typeName + ' 目标期号：' + targetPeriod + '\n' +
+                        '开奖后将自动对比是否中奖'
+                    );
+                } catch (e) {
+                    vscode.window.showErrorMessage('保存预测失败: ' + e.message);
+                }
+            }
+        }, null, context.subscriptions);
     });
     context.subscriptions.push(smartPickDisposable);
+
+    // 查看预测记录命令
+    let showPredDisposable = vscode.commands.registerCommand('myPlugin.showPredictions', () => {
+        const predictions = loadPredictions();
+        const panel = vscode.window.createWebviewPanel(
+            'predictions',
+            '🔮 预测记录',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getPredictionsHtml(predictions);
+
+        // 接收删除消息
+        panel.webview.onDidReceiveMessage((msg) => {
+            if (msg.command === 'deletePrediction') {
+                const preds = loadPredictions();
+                const filtered = preds.filter(p => p.id !== msg.id);
+                savePredictions(filtered);
+                panel.webview.postMessage({ command: 'deleted' });
+            }
+        }, null, context.subscriptions);
+    });
+    context.subscriptions.push(showPredDisposable);
 
     // ===== 自动爬取数据 =====
     // 1. 插件启动时自动爬取（静默，不弹通知，除非失败）
@@ -418,9 +635,122 @@ async function autoRefresh(limit, silent) {
         } else if (!silent) {
             vscode.window.showInformationMessage('✅ 彩票数据已自动更新（' + limit + ' 期）');
         }
+
+        // 爬取成功后对比预测记录是否中奖
+        if (okCount > 0) {
+            try {
+                const wins = checkAllPredictions();
+                if (wins.length > 0) {
+                    showWinNotification(wins);
+                }
+            } catch (e) {
+                console.error('对比预测失败:', e.message);
+            }
+        }
     } catch (e) {
         console.error('自动爬取失败:', e.message);
     }
+}
+
+/**
+ * 显示中奖庆祝窗口
+ * @param {Array<Object>} wins - 中奖记录列表
+ */
+function showWinNotification(wins) {
+    for (const win of wins) {
+        const pred = win.prediction;
+        const result = win.result;
+        const cfg = LOTTERY_TYPES.find(c => c.key === pred.type);
+        const emoji = cfg ? cfg.emoji : '🎉';
+
+        // 构建中奖详情
+        let detail = '彩种：' + pred.typeName + '\n';
+        detail += '期号：' + result.period + '（' + result.date + '）\n';
+        detail += '中奖等级：' + result.prizeLevel + '\n';
+        detail += '开奖号码：' + result.drawNums.join(' ') + '\n';
+        detail += '您的选号：' + pred.picks.map(p => p.join(',')).join(' | ') + '\n';
+        detail += '复式注数：' + pred.totalCombos + ' 注';
+
+        // 弹出庆祝窗口
+        const choice = vscode.window.showInformationMessage(
+            '🎉🎉🎉 恭喜中奖！' + emoji + ' ' + pred.typeName + ' 第 ' + result.period + ' 期 ' + result.prizeLevel + '！',
+            { modal: false },
+            '查看详情', '查看所有预测', '关闭'
+        );
+        choice.then(btn => {
+            if (btn === '查看详情') {
+                const detailPanel = vscode.window.createWebviewPanel(
+                    'winDetail',
+                    '中奖详情 - ' + pred.typeName + ' 第' + result.period + '期',
+                    vscode.ViewColumn.One,
+                    { enableScripts: false }
+                );
+                detailPanel.webview.html = getWinDetailHtml(win);
+            } else if (btn === '查看所有预测') {
+                vscode.commands.executeCommand('myPlugin.showPredictions');
+            }
+        });
+    }
+}
+
+/**
+ * 生成中奖详情 HTML
+ * @param {Object} win - 中奖记录
+ * @returns {string} HTML
+ */
+function getWinDetailHtml(win) {
+    const pred = win.prediction;
+    const result = win.result;
+    const cfg = LOTTERY_TYPES.find(c => c.key === pred.type);
+    const posLabels = cfg ? cfg.positions.map(p => p.label) : [];
+
+    let posRows = '';
+    for (let i = 0; i < result.drawNums.length; i++) {
+        const pr = result.posResults[i];
+        const picksStr = pr.picks.join(', ');
+        const hitIcon = pr.hit ? '✅' : '❌';
+        const hitColor = pr.hit ? '#2ecc71' : '#e74c3c';
+        posRows += '<tr>' +
+            '<td>' + (posLabels[i] || '位' + (i + 1)) + '</td>' +
+            '<td style="color:#feca57;font-weight:bold;font-size:16px;">' + pr.drawNum + '</td>' +
+            '<td>' + picksStr + '</td>' +
+            '<td style="color:' + hitColor + ';font-weight:bold;">' + hitIcon + ' ' + (pr.hit ? '命中' : '未中') + '</td>' +
+            '</tr>';
+    }
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>中奖详情</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 14px; padding: 20px; }
+.win-banner { text-align: center; padding: 20px; background: linear-gradient(135deg, rgba(241,196,15,0.15), rgba(231,76,60,0.15)); border: 2px solid rgba(241,196,15,0.4); border-radius: 12px; margin-bottom: 20px; }
+.win-title { font-size: 28px; color: #f1c40f; font-weight: bold; margin-bottom: 8px; }
+.win-sub { color: #aaa; font-size: 14px; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+th, td { border: 1px solid #444; padding: 8px 12px; text-align: center; }
+th { background: #2d2d30; color: #8ec5ff; }
+.info-box { padding: 12px; background: rgba(0,0,0,0.2); border-radius: 6px; margin-bottom: 8px; }
+.info-box b { color: #feca57; }
+</style>
+</head>
+<body>
+<div class="win-banner">
+    <div class="win-title">🎉 恭喜中奖！🎉</div>
+    <div class="win-sub">${pred.typeName} 第 ${result.period} 期 · ${result.prizeLevel}</div>
+</div>
+<div class="info-box"><b>开奖日期：</b>${result.date}</div>
+<div class="info-box"><b>复式注数：</b>${pred.totalCombos} 注</div>
+<table>
+<thead><tr><th>位置</th><th>开奖号码</th><th>您的选号</th><th>命中情况</th></tr></thead>
+<tbody>${posRows}</tbody>
+</table>
+<div class="info-box"><b>保存时间：</b>${new Date(pred.savedAt).toLocaleString('zh-CN')}</div>
+<div class="info-box"><b>基于期号：</b>${pred.basePeriod}</div>
+</body>
+</html>`;
 }
 
 /**
@@ -438,6 +768,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🔄 刷新彩票数据', 'myPlugin.refreshData', '🔄'),
                 this.createItem('🔁 转移统计', 'myPlugin.showTrans', '🔁'),
                 this.createItem('🤖 智能推荐', 'myPlugin.smartPick', '🤖'),
+                this.createItem('🔮 预测记录', 'myPlugin.showPredictions', '🔮'),
                 this.createItem('🕐 显示当前时间', 'myPlugin.showTime', '🕐'),
                 this.createItem('👋 Hello World', 'myPlugin.helloWorld', '👋')
             ];
@@ -485,6 +816,127 @@ function getNonce() {
 /**
  * 转移统计 Webview HTML（独立面板）
  */
+/**
+ * 生成预测记录 HTML
+ * @param {Array<Object>} predictions - 预测记录列表
+ * @returns {string} HTML
+ */
+function getPredictionsHtml(predictions) {
+    const total = predictions.length;
+    const wins = predictions.filter(p => p.checked && p.winResult);
+    const checked = predictions.filter(p => p.checked);
+    const pending = predictions.filter(p => !p.checked);
+
+    let rows = '';
+    if (total === 0) {
+        rows = '<div style="text-align:center;padding:40px;color:#666;">暂无预测记录<br><span style="font-size:12px;">使用"智能推荐"功能后点击"💾 保存预测"即可记录</span></div>';
+    } else {
+        // 按保存时间倒序
+        const sorted = predictions.slice().sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt));
+        for (const p of sorted) {
+            const cfg = LOTTERY_TYPES.find(c => c.key === p.type);
+            const emoji = cfg ? cfg.emoji : '🔮';
+            const posLabels = cfg ? cfg.positions.map(pl => pl.label) : [];
+
+            // 状态
+            let statusBadge, statusColor;
+            if (p.checked && p.winResult) {
+                statusBadge = '🎉 中奖(' + p.winResult.prizeLevel + ')';
+                statusColor = '#f1c40f';
+            } else if (p.checked) {
+                statusBadge = '❌ 未中奖';
+                statusColor = '#e74c3c';
+            } else {
+                statusBadge = '⏳ 等待开奖';
+                statusColor = '#3498db';
+            }
+
+            // 选号展示
+            let picksHtml = '';
+            for (let i = 0; i < p.picks.length; i++) {
+                picksHtml += '<span style="color:#aaa;font-size:11px;">' + (posLabels[i] || '') + '：</span>';
+                for (const n of p.picks[i]) {
+                    picksHtml += '<span style="display:inline-block;min-width:22px;height:22px;line-height:20px;text-align:center;background:#333;color:#fff;border-radius:50%;font-size:11px;margin:0 1px;font-weight:bold;">' + n + '</span>';
+                }
+                picksHtml += ' ';
+            }
+
+            // 中奖详情
+            let winDetail = '';
+            if (p.checked && p.winResult) {
+                winDetail = '<div style="margin-top:6px;padding:6px;background:rgba(241,196,15,0.1);border-radius:4px;font-size:12px;">' +
+                    '<span style="color:#f1c40f;">开奖号码：' + p.winResult.drawNums.join(' ') + '</span></div>';
+            } else if (p.checked) {
+                winDetail = '<div style="margin-top:6px;padding:6px;background:rgba(231,76,60,0.08);border-radius:4px;font-size:12px;">' +
+                    '<span style="color:#e74c3c;">已开奖但未中奖</span></div>';
+            }
+
+            rows += '<div style="margin-bottom:12px;padding:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;">';
+            rows += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">';
+            rows += '<span style="font-size:15px;font-weight:600;">' + emoji + ' ' + p.typeName + ' · 目标期号 ' + p.targetPeriod + '</span>';
+            rows += '<span style="background:' + statusColor + ';color:#fff;padding:2px 10px;border-radius:3px;font-size:11px;font-weight:600;">' + statusBadge + '</span>';
+            rows += '</div>';
+            rows += '<div style="margin-bottom:6px;">' + picksHtml + '</div>';
+            rows += '<div style="color:#888;font-size:11px;">复式 ' + p.totalCombos + ' 注 · 基于 ' + p.basePeriod + ' 期 · 保存于 ' + new Date(p.savedAt).toLocaleString('zh-CN') + '</div>';
+            rows += winDetail;
+            rows += '<button class="copy-btn" style="margin-top:6px;font-size:11px;padding:2px 8px;" onclick="deletePrediction(' + p.id + ')">🗑️ 删除</button>';
+            rows += '</div>';
+        }
+    }
+
+    const winRate = checked.length > 0 ? (wins.length / checked.length * 100).toFixed(1) : '0.0';
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>预测记录</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
+h2 { color: #8ec5ff; margin-bottom: 8px; }
+.stats { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.stat-card { padding: 10px 16px; background: rgba(255,255,255,0.05); border-radius: 6px; text-align: center; min-width: 100px; }
+.stat-num { font-size: 24px; font-weight: bold; }
+.stat-label { font-size: 11px; color: #888; margin-top: 2px; }
+.stat-num.total { color: #8ec5ff; }
+.stat-num.win { color: #f1c40f; }
+.stat-num.pending { color: #3498db; }
+.stat-num.rate { color: #2ecc71; }
+.copy-btn { background: #0e639c; color: #fff; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+.copy-btn:hover { background: #1177bb; }
+</style>
+</head>
+<body>
+<h2>🔮 预测记录</h2>
+<div class="stats">
+    <div class="stat-card"><div class="stat-num total">${total}</div><div class="stat-label">总预测</div></div>
+    <div class="stat-card"><div class="stat-num win">${wins.length}</div><div class="stat-label">中奖</div></div>
+    <div class="stat-card"><div class="stat-num pending">${pending.length}</div><div class="stat-label">等待开奖</div></div>
+    <div class="stat-card"><div class="stat-num rate">${winRate}%</div><div class="stat-label">中奖率</div></div>
+</div>
+<div id="list">${rows}</div>
+<script>
+const vscode = typeof acquireVsCodeApi !== 'undefined' ? acquireVsCodeApi() : null;
+window.deletePrediction = function(id) {
+    if (confirm('确认删除这条预测记录？')) {
+        if (vscode) vscode.postMessage({ command: 'deletePrediction', id: id });
+    }
+};
+if (vscode) {
+    window.addEventListener('message', (event) => {
+        const msg = event.data;
+        if (msg.command === 'deleted') {
+            alert('已删除');
+            location.reload();
+        }
+    });
+}
+</script>
+</body>
+</html>`;
+}
+
 /**
  * 智能推荐 Webview HTML
  * 算法 1：基于转移统计 TOP3 概率（概率相同时取最近一期）
@@ -716,6 +1168,8 @@ const LIMIT_LABEL = DATA.limit === 0 ? '全部' : DATA.limit + ' 期';
     html += '<div id="copyNote" style="color:#888;font-size:11px;margin-bottom:8px;">每位选中多个号码时，将生成所有组合（例如万位[1,6] 千位[1] = 1X1、6X1 共 2 注）</div>';
     html += '<button class="copy-btn" onclick="copyResult()">📋 一键复制</button>';
     html += '<button class="copy-btn" style="background:#3a3a3a;margin-left:8px;" onclick="resetSelection()">🔄 重置为TOP1</button>';
+    html += '<button class="copy-btn" style="background:#2d7d46;margin-left:8px;" onclick="savePrediction()">💾 保存预测</button>';
+    html += '<div id="saveResult" style="margin-top:8px;"></div>';
     html += '</div>';
 
     document.getElementById('content').innerHTML = html;
@@ -830,6 +1284,48 @@ const LIMIT_LABEL = DATA.limit === 0 ? '全部' : DATA.limit + ' 期';
         document.querySelectorAll('.pick-num').forEach(el => el.classList.remove('selected'));
         document.querySelectorAll('.pick-num.top1').forEach(el => el.classList.add('selected'));
         updateCopyText();
+    };
+
+    // 保存预测：将当前每位选中号码发送给插件保存
+    window.savePrediction = function() {
+        const byPos = {};
+        document.querySelectorAll('.pick-num.selected').forEach(el => {
+            const p = el.dataset.pos;
+            if (!byPos[p]) byPos[p] = [];
+            byPos[p].push(parseInt(el.dataset.n));
+        });
+        const picks = [];
+        for (let i = 0; i < posCount; i++) {
+            picks.push((byPos[i] || []).sort((a, b) => a - b));
+        }
+        // 至少每位要有1个号码
+        if (picks.some(p => p.length === 0)) {
+            document.getElementById('saveResult').innerHTML = '<span style="color:#e74c3c;">⚠️ 每位至少选一个号码才能保存</span>';
+            return;
+        }
+        // 计算总注数
+        const totalCombos = picks.reduce((p, c) => p * c.length, 1);
+        // 发送给插件
+        const msg = {
+            command: 'savePrediction',
+            type: DATA.key,
+            typeName: DATA.name,
+            targetPeriod: latest.period,  // 目标期号 = 当前最新期号的下一期（实际上爬取后才能知道下一期号，这里保存"基于哪一期"）
+            basePeriod: latest.period,
+            picks: picks,
+            totalCombos: totalCombos,
+            note: '智能推荐 ' + DATA.name + ' (基于' + LIMIT_LABEL + ')'
+        };
+        // 通过 vscode.postMessage 发送
+        if (typeof acquireVsCodeApi !== 'undefined') {
+            const vscode = acquireVsCodeApi();
+            vscode.postMessage(msg);
+            document.getElementById('saveResult').innerHTML =
+                '<span style="color:#2ecc71;">✅ 预测已保存！</span><br>' +
+                '<span style="color:#888;font-size:11px;">目标期号：' + latest.period + ' 的下一期开奖后自动对比</span>';
+        } else {
+            document.getElementById('saveResult').innerHTML = '<span style="color:#e74c3c;">⚠️ 无法保存（Webview API 不可用）</span>';
+        }
     };
 
     // 默认选中所有 TOP1

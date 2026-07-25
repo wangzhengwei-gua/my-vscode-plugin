@@ -125,6 +125,7 @@
             '<button data-act="addrow" data-key="' + d.key + '">➕ 增加预选行</button>' +
             '<button class="secondary" data-act="clear" data-key="' + d.key + '">🗑️ 清空</button>' +
             '<button class="secondary" data-act="copy" data-key="' + d.key + '">📋 一键复制</button>' +
+            '<button class="secondary" data-act="save" data-key="' + d.key + '" style="background:#2d7d46;">💾 保存预测</button>' +
             '</div>';
         panel.appendChild(footer);
 
@@ -144,6 +145,7 @@
                 if (act === 'clear') clearPredict(key);
                 else if (act === 'addrow') addPredictRowByKey(key);
                 else if (act === 'copy') copyPredict(key);
+                else if (act === 'save') savePredict(key);
             });
         });
 
@@ -393,6 +395,86 @@
             });
         } else {
             fallbackCopy(text);
+        }
+    }
+
+    // 保存预测：收集当前所有预选行的选中号码，发送给插件保存
+    function savePredict(key) {
+        const panel = document.getElementById('panel-' + key);
+        if (!panel) return;
+        const d = ALL_DATA.find(x => x.key === key);
+        if (!d) return;
+        const groupLabels = d.positionLabels;
+
+        // 按行收集选中号码
+        const rows = {};
+        panel.querySelectorAll('.predict-num.selected').forEach(el => {
+            const prow = el.dataset.prow || '0';
+            const gi = el.dataset.gi;
+            if (!rows[prow]) rows[prow] = {};
+            if (!rows[prow][gi]) rows[prow][gi] = [];
+            rows[prow][gi].push(parseInt(el.dataset.n));
+        });
+
+        // 取最近一期作为基础期号
+        const lastPeriod = d.rows.length > 0 ? d.rows[d.rows.length - 1].period : '';
+        const nextPeriod = lastPeriod ? (parseInt(lastPeriod) + 1).toString() : '?';
+
+        // 检查是否有选号
+        const rowKeys = Object.keys(rows);
+        if (rowKeys.length === 0) {
+            showCopyToast('⚠️ 请先选择号码再保存');
+            return;
+        }
+
+        // 构建 picks 数组（每位选中的号码）
+        // 对于走势图，每位(group)的选号合并为一个 picks 数组
+        // 多行预选：每行作为一条独立预测
+        const predictions = [];
+        rowKeys.sort((a, b) => parseInt(a) - parseInt(b)).forEach(prow => {
+            const picks = [];
+            let hasAny = false;
+            for (let gi = 0; gi < groupLabels.length; gi++) {
+                const nums = (rows[prow][gi] || []).sort((a, b) => a - b);
+                picks.push(nums);
+                if (nums.length > 0) hasAny = true;
+            }
+            if (!hasAny) return; // 空行跳过
+
+            // 计算总注数
+            let totalCombos = 1;
+            for (const p of picks) {
+                totalCombos *= Math.max(p.length, 1);
+            }
+
+            predictions.push({
+                type: key,
+                typeName: d.name,
+                basePeriod: lastPeriod,
+                targetPeriod: nextPeriod,
+                picks: picks,
+                totalCombos: totalCombos,
+                note: '走势图选号 ' + d.name + ' (预选' + (parseInt(prow) + 1) + ')',
+                source: 'chart'
+            });
+        });
+
+        if (predictions.length === 0) {
+            showCopyToast('⚠️ 请先选择号码再保存');
+            return;
+        }
+
+        // 通过 vscode.postMessage 发送给插件
+        if (typeof acquireVsCodeApi !== 'undefined') {
+            const vscode = acquireVsCodeApi();
+            vscode.postMessage({
+                command: 'savePredictionBatch',
+                predictions: predictions
+            });
+            const count = predictions.length;
+            showCopyToast('✅ 已保存 ' + count + ' 条预测！\n目标期号：' + nextPeriod + '\n开奖后将自动对比是否中奖');
+        } else {
+            showCopyToast('⚠️ 无法保存（Webview API 不可用）');
         }
     }
 

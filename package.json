@@ -24,6 +24,7 @@
         "onCommand:myPlugin.refreshData",
         "onCommand:myPlugin.showTrans",
         "onCommand:myPlugin.smartPick",
+        "onCommand:myPlugin.showPredictions",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -51,6 +52,10 @@
             {
                 "command": "myPlugin.smartPick",
                 "title": "Smart Pick"
+            },
+            {
+                "command": "myPlugin.showPredictions",
+                "title": "Show Predictions"
             }
         ],
         "viewsContainers": {
