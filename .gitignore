@@ -4,7 +4,10 @@ data/*
 !data/predictions.json
 .vscode/
 .vscode-test/
+# 忽略所有 vsix，但保留最新的一个（用 ! 规则例外）
 *.vsix
+# 最新版本安装包（更新版本时改这里 + 删旧的）
+!my-vscode-plugin-0.1.18.vsix
 _vsix_tmp*
 .DS_Store
 Thumbs.db
