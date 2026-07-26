@@ -1651,22 +1651,43 @@ h2 { color: #8ec5ff; margin-bottom: 8px; }
     <div class="stat-card"><div class="stat-num rate">${winRate}%</div><div class="stat-label">中奖率</div></div>
 </div>
 <div id="list">${rows}</div>
+<div id="confirm-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:9999;justify-content:center;align-items:center;">
+    <div style="background:#2d2d2d;border:1px solid #555;border-radius:8px;padding:20px;max-width:360px;text-align:center;">
+        <div style="color:#ddd;font-size:14px;margin-bottom:16px;">确认删除这条预测记录？</div>
+        <div style="display:flex;gap:10px;justify-content:center;">
+            <button id="confirm-yes" style="background:#e74c3c;color:#fff;border:none;padding:6px 18px;border-radius:4px;cursor:pointer;font-size:13px;">确认删除</button>
+            <button id="confirm-no" style="background:#555;color:#fff;border:none;padding:6px 18px;border-radius:4px;cursor:pointer;font-size:13px;">取消</button>
+        </div>
+    </div>
+</div>
 <script>
 const vscode = typeof acquireVsCodeApi !== 'undefined' ? acquireVsCodeApi() : null;
+let pendingDeleteId = null;
 window.deletePrediction = function(id) {
-    if (confirm('确认删除这条预测记录？')) {
-        if (vscode) vscode.postMessage({ command: 'deletePrediction', id: id });
-    }
+    pendingDeleteId = id;
+    var modal = document.getElementById('confirm-modal');
+    if (modal) modal.style.display = 'flex';
 };
-if (vscode) {
-    window.addEventListener('message', (event) => {
-        const msg = event.data;
-        if (msg.command === 'deleted') {
-            alert('已删除');
-            location.reload();
-        }
-    });
-}
+document.addEventListener('DOMContentLoaded', function() {
+    var btnYes = document.getElementById('confirm-yes');
+    var btnNo = document.getElementById('confirm-no');
+    var modal = document.getElementById('confirm-modal');
+    if (btnYes) {
+        btnYes.onclick = function() {
+            if (pendingDeleteId !== null && vscode) {
+                vscode.postMessage({ command: 'deletePrediction', id: pendingDeleteId });
+            }
+            if (modal) modal.style.display = 'none';
+            pendingDeleteId = null;
+        };
+    }
+    if (btnNo) {
+        btnNo.onclick = function() {
+            if (modal) modal.style.display = 'none';
+            pendingDeleteId = null;
+        };
+    }
+});
 </script>
 </body>
 </html>`;
