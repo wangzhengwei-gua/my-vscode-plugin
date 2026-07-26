@@ -414,7 +414,7 @@
             const gi = el.dataset.gi;
             const n = parseInt(el.dataset.n);
             const k = prow + '_' + gi + '_' + n;
-            if (seenKey[k]) return; // 同一 (行, 位, 号码) 已收集过，跳过
+            if (seenKey[k]) return;
             seenKey[k] = true;
             if (!rows[prow]) rows[prow] = {};
             if (!rows[prow][gi]) rows[prow][gi] = [];
@@ -432,9 +432,7 @@
             return;
         }
 
-        // 构建 picks 数组（每位选中的号码）
-        // 对于走势图，每位(group)的选号合并为一个 picks 数组
-        // 多行预选：每行作为一条独立预测
+        // 每行预选作为一条独立预测（即使每行只选了部分位，也保留为独立条目）
         const predictions = [];
         rowKeys.sort((a, b) => parseInt(a) - parseInt(b)).forEach(prow => {
             const picks = [];
