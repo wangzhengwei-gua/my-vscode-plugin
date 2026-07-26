@@ -1,35 +1,39 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const crawler = require('./crawler');
 
-// 数据目录：优先用插件自己的 data/ 目录，不存在则 fallback 到 dlt-simulator
+// 工程数据目录（开发时直接用工程下的 data/）
+const PROJECT_DATA_DIR = 'd:\\0.Code\\my-vscode-plugin\\data';
+// 数据目录：优先用工程目录，不存在则用插件安装目录下的 data/
 const PLUGIN_DATA_DIR = path.join(__dirname, '..', 'data');
-const DLT_DATA_DIR = 'E:\\dlt-simulator\\data';
-const DATA_DIR = fs.existsSync(PLUGIN_DATA_DIR) ? PLUGIN_DATA_DIR : DLT_DATA_DIR;
+const DATA_DIR = fs.existsSync(PROJECT_DATA_DIR) ? PROJECT_DATA_DIR :
+                 (fs.existsSync(PLUGIN_DATA_DIR) ? PLUGIN_DATA_DIR : PLUGIN_DATA_DIR);
 
-// 预测记录：存到用户主目录下的固定位置，避免插件升级后数据丢失
-const PERSIST_DIR = path.join(os.homedir(), '.my-vscode-plugin-data');
-if (!fs.existsSync(PERSIST_DIR)) {
-    try { fs.mkdirSync(PERSIST_DIR, { recursive: true }); } catch (e) { /* ignore */ }
+// 预测记录：存到工程目录下的 data/predictions.json，方便查看和管理
+if (!fs.existsSync(DATA_DIR)) {
+    try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (e) { /* ignore */ }
 }
-const PREDICTIONS_FILE = path.join(PERSIST_DIR, 'predictions.json');
+const PREDICTIONS_FILE = path.join(DATA_DIR, 'predictions.json');
 
-// 迁移旧版本插件目录下的预测记录（一次性）
+// 迁移旧位置（用户主目录或旧版本插件目录）的预测记录到工程目录（一次性）
 try {
-    const oldPredFile = path.join(PLUGIN_DATA_DIR, 'predictions.json');
-    if (fs.existsSync(oldPredFile)) {
-        const oldData = fs.readFileSync(oldPredFile, 'utf-8').trim();
-        // 只有旧文件有数据、且新文件为空或不存在时才迁移
-        if (oldData && oldData !== '[]') {
-            let newData = '[]';
-            if (fs.existsSync(PREDICTIONS_FILE)) {
-                newData = fs.readFileSync(PREDICTIONS_FILE, 'utf-8').trim();
-            }
-            if (!newData || newData === '[]') {
-                fs.writeFileSync(PREDICTIONS_FILE, oldData, 'utf-8');
-                console.log('[迁移] 已将旧预测记录复制到:', PREDICTIONS_FILE);
+    const os = require('os');
+    const oldHomePredFile = path.join(os.homedir(), '.my-vscode-plugin-data', 'predictions.json');
+    const oldPluginPredFile = path.join(PLUGIN_DATA_DIR, 'predictions.json');
+    const candidates = [oldHomePredFile, oldPluginPredFile];
+    for (const oldFile of candidates) {
+        if (fs.existsSync(oldFile) && oldFile !== PREDICTIONS_FILE) {
+            const oldData = fs.readFileSync(oldFile, 'utf-8').trim();
+            if (oldData && oldData !== '[]') {
+                let newData = '[]';
+                if (fs.existsSync(PREDICTIONS_FILE)) {
+                    newData = fs.readFileSync(PREDICTIONS_FILE, 'utf-8').trim();
+                }
+                if (!newData || newData === '[]') {
+                    fs.writeFileSync(PREDICTIONS_FILE, oldData, 'utf-8');
+                    console.log('[迁移] 已将旧预测记录复制到:', PREDICTIONS_FILE);
+                }
             }
         }
     }
