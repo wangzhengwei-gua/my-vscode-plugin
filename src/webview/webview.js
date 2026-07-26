@@ -406,19 +406,18 @@
         if (!d) return;
         const groupLabels = d.positionLabels;
 
-        // 按行收集选中号码（按 (prow, gi, n) 去重）
+        // 按行收集选中号码（按 DOM 中的 tr 顺序分组，不依赖 data-prow）
         const rows = {};
-        const seenKey = {};
-        panel.querySelectorAll('.predict-num.selected').forEach(el => {
-            const prow = el.dataset.prow || '0';
-            const gi = el.dataset.gi;
-            const n = parseInt(el.dataset.n);
-            const k = prow + '_' + gi + '_' + n;
-            if (seenKey[k]) return;
-            seenKey[k] = true;
-            if (!rows[prow]) rows[prow] = {};
-            if (!rows[prow][gi]) rows[prow][gi] = [];
-            rows[prow][gi].push(n);
+        const predictRows = panel.querySelectorAll('tr.predict-row');
+        predictRows.forEach((tr, idx) => {
+            const prow = String(idx);
+            rows[prow] = {};
+            tr.querySelectorAll('.predict-num.selected').forEach(el => {
+                const gi = el.dataset.gi;
+                const n = parseInt(el.dataset.n);
+                if (!rows[prow][gi]) rows[prow][gi] = [];
+                if (rows[prow][gi].indexOf(n) === -1) rows[prow][gi].push(n);
+            });
         });
 
         // 取最近一期作为基础期号
@@ -427,6 +426,8 @@
 
         // 检查是否有选号
         const rowKeys = Object.keys(rows);
+        console.log('[savePredict] rows:', JSON.stringify(rows));
+        console.log('[savePredict] rowKeys:', rowKeys);
         if (rowKeys.length === 0) {
             showCopyToast('⚠️ 请先选择号码再保存');
             return;
@@ -443,6 +444,7 @@
                 picks.push(nums);
                 if (nums.length > 0) hasAny = true;
             }
+            console.log('[savePredict] prow=' + prow + ' picks=' + JSON.stringify(picks) + ' hasAny=' + hasAny);
             if (!hasAny) return; // 空行跳过
 
             // 计算总注数
@@ -476,6 +478,7 @@
                 predictions: predictions
             });
             const count = predictions.length;
+            console.log('[savePredict] 最终保存 ' + count + ' 条预测');
             showCopyToast('✅ 已保存 ' + count + ' 条预测！\n目标期号：' + nextPeriod + '\n开奖后将自动对比是否中奖');
         } else {
             showCopyToast('⚠️ 无法保存（Webview API 不可用）');
