@@ -406,14 +406,19 @@
         if (!d) return;
         const groupLabels = d.positionLabels;
 
-        // 按行收集选中号码
+        // 按行收集选中号码（按 (prow, gi, n) 去重）
         const rows = {};
+        const seenKey = {};
         panel.querySelectorAll('.predict-num.selected').forEach(el => {
             const prow = el.dataset.prow || '0';
             const gi = el.dataset.gi;
+            const n = parseInt(el.dataset.n);
+            const k = prow + '_' + gi + '_' + n;
+            if (seenKey[k]) return; // 同一 (行, 位, 号码) 已收集过，跳过
+            seenKey[k] = true;
             if (!rows[prow]) rows[prow] = {};
             if (!rows[prow][gi]) rows[prow][gi] = [];
-            rows[prow][gi].push(parseInt(el.dataset.n));
+            rows[prow][gi].push(n);
         });
 
         // 取最近一期作为基础期号
@@ -435,7 +440,8 @@
             const picks = [];
             let hasAny = false;
             for (let gi = 0; gi < groupLabels.length; gi++) {
-                const nums = (rows[prow][gi] || []).sort((a, b) => a - b);
+                // 去重 + 排序
+                const nums = Array.from(new Set(rows[prow][gi] || [])).sort((a, b) => a - b);
                 picks.push(nums);
                 if (nums.length > 0) hasAny = true;
             }
