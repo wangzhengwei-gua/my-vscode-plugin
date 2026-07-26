@@ -1587,24 +1587,64 @@ function getPredictionsHtml(predictions) {
                 statusColor = '#3498db';
             }
 
-            // 选号展示
+            // 开奖号码（用于高亮匹配的选号球）
+            let drawNums = (p.checked && p.winResult) ? p.winResult.drawNums : null;
+
+            // 选号展示（含中奖高亮）
             let picksHtml = '';
             for (let i = 0; i < p.picks.length; i++) {
                 picksHtml += '<span style="color:#aaa;font-size:11px;">' + (posLabels[i] || '') + '：</span>';
                 for (const n of p.picks[i]) {
-                    picksHtml += '<span style="display:inline-block;min-width:22px;height:22px;line-height:20px;text-align:center;background:#333;color:#fff;border-radius:50%;font-size:11px;margin:0 1px;font-weight:bold;">' + n + '</span>';
+                    // 判断是否中奖（注意：每位的位置对应关系）
+                    // 对于 dlt/ssq 这种复式选号，drawNums 包含所有号码，需要判断 n 是否在 drawNums 中
+                    // 对于 pl3/pl5 这种位置选号，drawNums[i] == n 才算中
+                    let isHit = false;
+                    if (drawNums) {
+                        if (p.type === 'pl3' || p.type === 'pl5') {
+                            // 直选：每位单独判断
+                            isHit = (drawNums[i] === n);
+                        } else {
+                            // 复式：号码在开奖号集合中即算中
+                            isHit = drawNums.indexOf(n) !== -1;
+                        }
+                    }
+                    if (isHit) {
+                        picksHtml += '<span style="display:inline-block;min-width:22px;height:22px;line-height:20px;text-align:center;background:#f1c40f;color:#000;border-radius:50%;font-size:11px;margin:0 1px;font-weight:bold;border:2px solid #fff;box-shadow:0 0 8px rgba(241,196,15,0.8);">' + n + '</span>';
+                    } else {
+                        picksHtml += '<span style="display:inline-block;min-width:22px;height:22px;line-height:20px;text-align:center;background:#333;color:#fff;border-radius:50%;font-size:11px;margin:0 1px;font-weight:bold;">' + n + '</span>';
+                    }
                 }
                 picksHtml += ' ';
             }
 
-            // 中奖详情
-            let winDetail = '';
-            if (p.checked && p.winResult) {
-                winDetail = '<div style="margin-top:6px;padding:6px;background:rgba(241,196,15,0.1);border-radius:4px;font-size:12px;">' +
-                    '<span style="color:#f1c40f;">开奖号码：' + p.winResult.drawNums.join(' ') + '</span></div>';
-            } else if (p.checked) {
-                winDetail = '<div style="margin-top:6px;padding:6px;background:rgba(231,76,60,0.08);border-radius:4px;font-size:12px;">' +
-                    '<span style="color:#e74c3c;">已开奖但未中奖</span></div>';
+            // 开奖号码（放在最上面，醒目展示）
+            let drawNumsHtml = '';
+            if (drawNums) {
+                drawNumsHtml = '<div style="margin:6px 0 10px 0;padding:8px 10px;background:rgba(241,196,15,0.12);border-left:3px solid #f1c40f;border-radius:4px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
+                drawNumsHtml += '<span style="color:#f1c40f;font-size:12px;font-weight:600;">🎯 开奖号码：</span>';
+                for (let i = 0; i < drawNums.length; i++) {
+                    const num = drawNums[i];
+                    // 判断每位是否完全命中（用于附加标记）
+                    let posHit = false;
+                    if (p.type === 'pl3' || p.type === 'pl5') {
+                        posHit = (p.picks[i] && p.picks[i].indexOf(num) !== -1);
+                    } else {
+                        posHit = true; // 复式不区分位
+                    }
+                    const lbl = posLabels[i] || '';
+                    drawNumsHtml += '<span style="display:inline-flex;flex-direction:column;align-items:center;margin:0 2px;">';
+                    if (lbl && (p.type === 'pl3' || p.type === 'pl5')) {
+                        drawNumsHtml += '<span style="color:#888;font-size:9px;line-height:1;">' + lbl + '</span>';
+                    }
+                    drawNumsHtml += '<span style="display:inline-block;min-width:24px;height:24px;line-height:22px;text-align:center;background:' + (posHit ? '#f1c40f' : '#555') + ';color:' + (posHit ? '#000' : '#aaa') + ';border-radius:50%;font-size:12px;font-weight:bold;' + (posHit ? 'box-shadow:0 0 6px rgba(241,196,15,0.6);' : '') + '">' + num + '</span>';
+                    drawNumsHtml += '</span>';
+                }
+                drawNumsHtml += '</div>';
+            }
+
+            // 未开奖记录显示"未开奖"提示
+            if (p.checked && !p.winResult) {
+                drawNumsHtml = '<div style="margin:6px 0 10px 0;padding:8px 10px;background:rgba(231,76,60,0.08);border-left:3px solid #e74c3c;border-radius:4px;font-size:12px;color:#e74c3c;">❌ 已开奖但未中奖</div>';
             }
 
             rows += '<div style="margin-bottom:12px;padding:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;">';
@@ -1612,9 +1652,9 @@ function getPredictionsHtml(predictions) {
             rows += '<span style="font-size:15px;font-weight:600;">' + emoji + ' ' + p.typeName + ' · 目标期号 ' + p.targetPeriod + '</span>';
             rows += '<span style="background:' + statusColor + ';color:#fff;padding:2px 10px;border-radius:3px;font-size:11px;font-weight:600;">' + statusBadge + '</span>';
             rows += '</div>';
+            rows += drawNumsHtml;
             rows += '<div style="margin-bottom:6px;">' + picksHtml + '</div>';
             rows += '<div style="color:#888;font-size:11px;">复式 ' + p.totalCombos + ' 注 · 基于 ' + p.basePeriod + ' 期 · 保存于 ' + new Date(p.savedAt).toLocaleString('zh-CN') + '</div>';
-            rows += winDetail;
             rows += '<button class="copy-btn" style="margin-top:6px;font-size:11px;padding:2px 8px;" onclick="deletePrediction(' + p.id + ')">🗑️ 删除</button>';
             rows += '</div>';
         }
