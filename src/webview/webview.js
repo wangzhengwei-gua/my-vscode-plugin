@@ -6,6 +6,9 @@
     const POS_COLORS = ['#e74c3c','#f39c12','#f1c40f','#1abc9c','#3498db','#9b59b6','#e84393','#00b894','#fd79a8','#6c5ce7'];
     const SELECT_LIMIT = { dlt_front: 7, dlt_back: 3, ssq_red: 8, ssq_blue: 2 };
 
+    // acquireVsCodeApi 只能调用一次，在模块顶部获取并缓存
+    const vscodeApi = (typeof acquireVsCodeApi !== 'undefined') ? acquireVsCodeApi() : null;
+
     // 标记 JS 启动
     document.title = 'JS-EXT-RUNNING';
 
@@ -401,18 +404,29 @@
     // 保存预测：收集当前所有预选行的选中号码，发送给插件保存
     function savePredict(key) {
         const panel = document.getElementById('panel-' + key);
-        if (!panel) return;
+        if (!panel) {
+            console.log('[savePredict] panel not found: panel-' + key);
+            showCopyToast('⚠️ 保存失败：找不到面板');
+            return;
+        }
         const d = ALL_DATA.find(x => x.key === key);
-        if (!d) return;
+        if (!d) {
+            console.log('[savePredict] data not found for key:', key);
+            showCopyToast('⚠️ 保存失败：找不到数据');
+            return;
+        }
         const groupLabels = d.positionLabels;
 
         // 按行收集选中号码（按 DOM 中的 tr 顺序分组，不依赖 data-prow）
         const rows = {};
         const predictRows = panel.querySelectorAll('tr.predict-row');
+        console.log('[savePredict] key=' + key + ' panel found, predictRows.length=' + predictRows.length);
         predictRows.forEach((tr, idx) => {
             const prow = String(idx);
             rows[prow] = {};
-            tr.querySelectorAll('.predict-num.selected').forEach(el => {
+            const selectedInRow = tr.querySelectorAll('.predict-num.selected');
+            console.log('[savePredict] row ' + idx + ' selected count=' + selectedInRow.length);
+            selectedInRow.forEach(el => {
                 const gi = el.dataset.gi;
                 const n = parseInt(el.dataset.n);
                 if (!rows[prow][gi]) rows[prow][gi] = [];
@@ -471,15 +485,19 @@
         }
 
         // 通过 vscode.postMessage 发送给插件
-        if (typeof acquireVsCodeApi !== 'undefined') {
-            const vscode = acquireVsCodeApi();
-            vscode.postMessage({
-                command: 'savePredictionBatch',
-                predictions: predictions
-            });
-            const count = predictions.length;
-            console.log('[savePredict] 最终保存 ' + count + ' 条预测');
-            showCopyToast('✅ 已保存 ' + count + ' 条预测！\n目标期号：' + nextPeriod + '\n开奖后将自动对比是否中奖');
+        if (vscodeApi) {
+            try {
+                vscodeApi.postMessage({
+                    command: 'savePredictionBatch',
+                    predictions: predictions
+                });
+                const count = predictions.length;
+                console.log('[savePredict] 最终保存 ' + count + ' 条预测');
+                showCopyToast('✅ 已保存 ' + count + ' 条预测！\n目标期号：' + nextPeriod + '\n开奖后将自动对比是否中奖');
+            } catch (e) {
+                console.error('[savePredict] postMessage 失败:', e);
+                showCopyToast('⚠️ 保存失败：' + e.message);
+            }
         } else {
             showCopyToast('⚠️ 无法保存（Webview API 不可用）');
         }
