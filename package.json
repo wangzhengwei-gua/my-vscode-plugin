@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.1.1",
+    "version": "0.1.3",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -25,6 +25,7 @@
         "onCommand:myPlugin.showTrans",
         "onCommand:myPlugin.smartPick",
         "onCommand:myPlugin.showPredictions",
+        "onCommand:myPlugin.maPatterns",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -56,6 +57,10 @@
             {
                 "command": "myPlugin.showPredictions",
                 "title": "Show Predictions"
+            },
+            {
+                "command": "myPlugin.maPatterns",
+                "title": "MA Pattern Detection"
             }
         ],
         "viewsContainers": {

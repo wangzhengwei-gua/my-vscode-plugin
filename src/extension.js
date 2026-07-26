@@ -217,6 +217,242 @@ function calcStats(cfg, h) {
     };
 }
 
+/**
+ * 计算移动平均线（MA）
+ * @param {Array<number>} values - 数值序列（按时间正序，旧→新）
+ * @param {number} period - 周期
+ * @returns {Array<number|null>} 每个点对应的 MA 值，不够周期返回 null
+ */
+function calcMA(values, period) {
+    const result = [];
+    for (let i = 0; i < values.length; i++) {
+        if (i < period - 1) {
+            result.push(null);
+        } else {
+            let sum = 0;
+            for (let j = i - period + 1; j <= i; j++) sum += values[j];
+            result.push(sum / period);
+        }
+    }
+    return result;
+}
+
+/**
+ * 在最近 N 期数据上识别 8 种均线形态
+ * @param {Array<number>} series - 某位号的历史值序列（旧→新）
+ * @returns {Object} 识别结果 {patterns: [{name, signal, desc, numbers}], maData}
+ */
+function detectMAPatterns(series) {
+    const N = 20; // 取最近 20 期
+    const recent = series.slice(-N);
+    if (recent.length < 20) {
+        return { patterns: [], maData: null, error: '数据不足（需要 ≥20 期）' };
+    }
+
+    const ma5 = calcMA(recent, 5);
+    const ma10 = calcMA(recent, 10);
+    const ma20 = calcMA(recent, 20);
+
+    const patterns = [];
+
+    // 取最近几期的有效值
+    const i = recent.length - 1; // 最新一期
+    const i1 = recent.length - 2;
+    const i2 = recent.length - 3;
+    const i3 = recent.length - 4;
+
+    const cur = { ma5: ma5[i], ma10: ma10[i], ma20: ma20[i] };
+    const prev = { ma5: ma5[i1], ma10: ma10[i1], ma20: ma20[i1] };
+    const prev2 = { ma5: ma5[i2], ma10: ma10[i2], ma20: ma20[i2] };
+
+    // 辅助：取最近 K 期 MA 均值
+    const avg = (arr, k) => {
+        const start = arr.length - k;
+        const slice = arr.slice(start).filter(v => v !== null);
+        return slice.length ? slice.reduce((a, b) => a + b, 0) / slice.length : 0;
+    };
+
+    // 辅助：把 MA 浮点值四舍五入为号码（限定 0-9 范围内最接近的整数）
+    const toNum = (v) => Math.max(0, Math.min(9, Math.round(v)));
+    // 最新一期实际开奖号码
+    const latestNum = recent[i];
+    // 上期号码
+    const prevNum = recent[i1];
+
+    // ① 多头排列：MA5 > MA10 > MA20，且三条均线最近几期都向上
+    if (cur.ma5 > cur.ma10 && cur.ma10 > cur.ma20) {
+        const upCount = (cur.ma5 > prev.ma5 ? 1 : 0) + (cur.ma10 > prev.ma10 ? 1 : 0) + (cur.ma20 > prev.ma20 ? 1 : 0);
+        if (upCount >= 2) {
+            patterns.push({
+                name: '多头排列', signal: 'bull',
+                desc: '短期均线在最上，中期在中间，长期在最下，三条均线同时向上，看涨信号，可做多',
+                numbers: [toNum(cur.ma5), toNum(cur.ma10), toNum(cur.ma20), latestNum],
+                numbersLabel: ['MA5≈', 'MA10≈', 'MA20≈', '最新']
+            });
+        }
+    }
+
+    // ② 空头排列：MA5 < MA10 < MA20，且三条均线最近几期都向下
+    if (cur.ma5 < cur.ma10 && cur.ma10 < cur.ma20) {
+        const downCount = (cur.ma5 < prev.ma5 ? 1 : 0) + (cur.ma10 < prev.ma10 ? 1 : 0) + (cur.ma20 < prev.ma20 ? 1 : 0);
+        if (downCount >= 2) {
+            patterns.push({
+                name: '空头排列', signal: 'bear',
+                desc: '长期均线在最上，中期在中间，短期在最下，三条均线同时向下，看跌信号，应做空',
+                numbers: [toNum(cur.ma5), toNum(cur.ma10), toNum(cur.ma20), latestNum],
+                numbersLabel: ['MA5≈', 'MA10≈', 'MA20≈', '最新']
+            });
+        }
+    }
+
+    // ③ 黄金交叉：MA5 由下向上穿越 MA10 或 MA20，且形成后均线走平或向上
+    if (prev.ma5 < prev.ma10 && cur.ma5 > cur.ma10) {
+        patterns.push({
+            name: '黄金交叉', signal: 'bull',
+            desc: '短期均线由下向上穿越长期均线，看涨信号，可积极介入',
+            numbers: [prevNum, latestNum, toNum(cur.ma5), toNum(cur.ma10)],
+            numbersLabel: ['上期', '本期', 'MA5≈', 'MA10≈']
+        });
+    } else if (prev.ma5 < prev.ma20 && cur.ma5 > cur.ma20) {
+        patterns.push({
+            name: '黄金交叉', signal: 'bull',
+            desc: '短期均线由下向上穿越长期均线，看涨信号，可积极介入',
+            numbers: [prevNum, latestNum, toNum(cur.ma5), toNum(cur.ma20)],
+            numbersLabel: ['上期', '本期', 'MA5≈', 'MA20≈']
+        });
+    }
+
+    // ④ 死亡交叉：MA5 由上向下穿越 MA10 或 MA20
+    if (prev.ma5 > prev.ma10 && cur.ma5 < cur.ma10) {
+        patterns.push({
+            name: '死亡交叉', signal: 'bear',
+            desc: '短期均线由上向下穿越长期均线，看跌信号，应坚决看空',
+            numbers: [prevNum, latestNum, toNum(cur.ma5), toNum(cur.ma10)],
+            numbersLabel: ['上期', '本期', 'MA5≈', 'MA10≈']
+        });
+    } else if (prev.ma5 > prev.ma20 && cur.ma5 < cur.ma20) {
+        patterns.push({
+            name: '死亡交叉', signal: 'bear',
+            desc: '短期均线由上向下穿越长期均线，看跌信号，应坚决看空',
+            numbers: [prevNum, latestNum, toNum(cur.ma5), toNum(cur.ma20)],
+            numbersLabel: ['上期', '本期', 'MA5≈', 'MA20≈']
+        });
+    }
+
+    // ⑤ 银山谷：MA5 和 MA10 先后上穿 MA20，形成向上三角形
+    // 检测：最近几期内 MA5 先上穿 MA20，之后 MA10 再上穿 MA20
+    let silverCross1 = false; // MA5 上穿 MA20
+    let silverCross2 = false; // MA10 上穿 MA20
+    for (let k = i2; k < i; k++) {
+        if (!silverCross1 && ma5[k - 1] < ma20[k - 1] && ma5[k] > ma20[k]) silverCross1 = true;
+        if (silverCross1 && !silverCross2 && ma10[k - 1] < ma20[k - 1] && ma10[k] > ma20[k]) silverCross2 = true;
+    }
+    if (silverCross1 && silverCross2 && cur.ma5 > cur.ma20 && cur.ma10 > cur.ma20) {
+        patterns.push({
+            name: '银山谷', signal: 'bull',
+            desc: '短期和中期均线先后上穿长期均线形成向上三角形，见底上涨信号，可买入',
+            numbers: [toNum(cur.ma5), toNum(cur.ma10), toNum(cur.ma20), latestNum],
+            numbersLabel: ['MA5≈', 'MA10≈', 'MA20≈', '最新']
+        });
+    }
+
+    // ⑥ 死亡谷：MA5 和 MA10 先后下穿 MA20
+    let deathCross1 = false;
+    let deathCross2 = false;
+    for (let k = i2; k < i; k++) {
+        if (!deathCross1 && ma5[k - 1] > ma20[k - 1] && ma5[k] < ma20[k]) deathCross1 = true;
+        if (deathCross1 && !deathCross2 && ma10[k - 1] > ma20[k - 1] && ma10[k] < ma20[k]) deathCross2 = true;
+    }
+    if (deathCross1 && deathCross2 && cur.ma5 < cur.ma20 && cur.ma10 < cur.ma20) {
+        patterns.push({
+            name: '死亡谷', signal: 'bear',
+            desc: '短期和中期均线先后下穿长期均线形成向下三角形，看跌信号，应警惕',
+            numbers: [toNum(cur.ma5), toNum(cur.ma10), toNum(cur.ma20), latestNum],
+            numbersLabel: ['MA5≈', 'MA10≈', 'MA20≈', '最新']
+        });
+    }
+
+    // ⑦ 粘合向上发散：MA5/MA10/MA20 缠绕后向上发散
+    // 检测：前 5 期 max-min 较小（缠绕），最近 5 期 max-min 扩大且向上
+    const convergeWindow = ma5.slice(0, 15).map((v, idx) => ({
+        ma5: ma5[idx + 5], ma10: ma10[idx + 5], ma20: ma20[idx + 5]
+    })).filter(x => x.ma5 !== null && x.ma10 !== null && x.ma20 !== null);
+    const divergeWindow = ma5.slice(15).map((v, idx) => ({
+        ma5: ma5[idx + 15], ma10: ma10[idx + 15], ma20: ma20[idx + 15]
+    })).filter(x => x.ma5 !== null);
+
+    if (convergeWindow.length >= 5 && divergeWindow.length >= 3) {
+        const convSpread = Math.max(...convergeWindow.map(x => Math.max(x.ma5, x.ma10, x.ma20) - Math.min(x.ma5, x.ma10, x.ma20)));
+        const divSpread = Math.max(...divergeWindow.map(x => Math.max(x.ma5, x.ma10, x.ma20) - Math.min(x.ma5, x.ma10, x.ma20)));
+        const recentUp = divergeWindow.slice(-3).every((x, idx, arr) => idx === 0 || (x.ma5 > arr[idx - 1].ma5));
+        if (convSpread < 1.0 && divSpread > convSpread * 1.5 && recentUp && cur.ma5 > cur.ma10 && cur.ma10 > cur.ma20) {
+            patterns.push({
+                name: '粘合向上发散', signal: 'bull',
+                desc: '均线缠绕后向上发散，强烈的买入信号',
+                numbers: [toNum(cur.ma5), toNum(cur.ma10), toNum(cur.ma20), latestNum],
+                numbersLabel: ['MA5≈', 'MA10≈', 'MA20≈', '最新']
+            });
+        }
+    }
+
+    // ⑧ 粘合向下发散：均线缠绕后向下发散
+    if (convergeWindow.length >= 5 && divergeWindow.length >= 3) {
+        const convSpread = Math.max(...convergeWindow.map(x => Math.max(x.ma5, x.ma10, x.ma20) - Math.min(x.ma5, x.ma10, x.ma20)));
+        const divSpread = Math.max(...divergeWindow.map(x => Math.max(x.ma5, x.ma10, x.ma20) - Math.min(x.ma5, x.ma10, x.ma20)));
+        const recentDown = divergeWindow.slice(-3).every((x, idx, arr) => idx === 0 || (x.ma5 < arr[idx - 1].ma5));
+        if (convSpread < 1.0 && divSpread > convSpread * 1.5 && recentDown && cur.ma5 < cur.ma10 && cur.ma10 < cur.ma20) {
+            patterns.push({
+                name: '粘合向下发散', signal: 'bear',
+                desc: '均线缠绕后向下发散，下跌警告信号，应注意风险',
+                numbers: [toNum(cur.ma5), toNum(cur.ma10), toNum(cur.ma20), latestNum],
+                numbersLabel: ['MA5≈', 'MA10≈', 'MA20≈', '最新']
+            });
+        }
+    }
+
+    // ⑨ 上山爬坡形：三条均线基本沿着一定坡度上移
+    // 检测：最近 10 期三条均线都在稳步上升
+    const climbWindow = ma5.slice(10).map((v, idx) => ({
+        ma5: ma5[idx + 10], ma10: ma10[idx + 10], ma20: ma20[idx + 10]
+    })).filter(x => x.ma5 !== null && x.ma10 !== null && x.ma20 !== null);
+    if (climbWindow.length >= 8) {
+        const allUp = climbWindow.every((x, idx, arr) => idx === 0 ||
+            (x.ma5 > arr[idx - 1].ma5 && x.ma10 > arr[idx - 1].ma10 && x.ma20 > arr[idx - 1].ma20));
+        if (allUp) {
+            patterns.push({
+                name: '上山爬坡形', signal: 'bull',
+                desc: '三条均线沿着一定坡度上移，看涨做多信号，可买入等待上涨',
+                numbers: [toNum(cur.ma5), toNum(cur.ma10), toNum(cur.ma20), latestNum],
+                numbersLabel: ['MA5≈', 'MA10≈', 'MA20≈', '最新']
+            });
+        }
+    }
+
+    // ⑩ 下山滑坡形：三条均线基本沿着一定坡度下移
+    if (climbWindow.length >= 8) {
+        const allDown = climbWindow.every((x, idx, arr) => idx === 0 ||
+            (x.ma5 < arr[idx - 1].ma5 && x.ma10 < arr[idx - 1].ma10 && x.ma20 < arr[idx - 1].ma20));
+        if (allDown) {
+            patterns.push({
+                name: '下山滑坡形', signal: 'bear',
+                desc: '三条均线沿着一定坡度下移，后市看跌信号，应敬而远之',
+                numbers: [toNum(cur.ma5), toNum(cur.ma10), toNum(cur.ma20), latestNum],
+                numbersLabel: ['MA5≈', 'MA10≈', 'MA20≈', '最新']
+            });
+        }
+    }
+
+    return {
+        patterns,
+        maData: {
+            series: recent,
+            ma5, ma10, ma20,
+            currentValues: cur,
+            prevValues: prev
+        }
+    };
+}
+
 function loadLotteryData(cfg) {
     // 动态判断数据目录：优先插件自己的 data/，没有则用 dlt-simulator
     const dir = fs.existsSync(PLUGIN_DATA_DIR) ? PLUGIN_DATA_DIR : DLT_DATA_DIR;
@@ -589,6 +825,79 @@ function activate(context) {
     });
     context.subscriptions.push(showPredDisposable);
 
+    // 均线形态识别命令
+    let maPatternsDisposable = vscode.commands.registerCommand('myPlugin.maPatterns', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎯 排列三', value: 'pl3' },
+                { label: '🎰 排列五', value: 'pl5' },
+                { label: '🎲 大乐透', value: 'dlt' },
+                { label: '🔴 双色球', value: 'ssq' }
+            ],
+            { placeHolder: '选择要分析的彩种' }
+        );
+        if (!pick) return;
+
+        let data;
+        try {
+            const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+            if (!cfg) return;
+            const history = loadLotteryData(cfg);
+            if (history.length < 20) {
+                vscode.window.showWarningMessage('数据不足（需要 ≥20 期），请先刷新数据');
+                return;
+            }
+            // 取最近 20 期数据（旧→新）
+            const recent = history.slice(-20);
+            // 对每位分别识别形态
+            const posResults = [];
+            for (let pos = 0; pos < cfg.positions.length; pos++) {
+                const series = recent.map(h => cfg.positions[pos].pick(h));
+                const result = detectMAPatterns(series);
+                posResults.push({
+                    pos: pos,
+                    label: cfg.positions[pos].label,
+                    patterns: result.patterns,
+                    maData: result.maData,
+                    error: result.error
+                });
+            }
+            // 总览：取所有位中"最显著的形态"
+            const allPatterns = [];
+            posResults.forEach(pr => {
+                pr.patterns.forEach(p => {
+                    allPatterns.push({ ...p, posLabel: pr.label });
+                });
+            });
+
+            data = {
+                key: cfg.key,
+                name: cfg.name,
+                emoji: cfg.emoji,
+                positionLabels: cfg.positions.map(p => p.label),
+                recentPeriod: recent[recent.length - 1].period,
+                posResults: posResults,
+                summary: {
+                    bullCount: allPatterns.filter(p => p.signal === 'bull').length,
+                    bearCount: allPatterns.filter(p => p.signal === 'bear').length,
+                    patternNames: Array.from(new Set(allPatterns.map(p => p.name)))
+                }
+            };
+        } catch (e) {
+            vscode.window.showErrorMessage('读取数据失败: ' + e.message);
+            return;
+        }
+
+        const panel = vscode.window.createWebviewPanel(
+            'maPatterns',
+            '均线形态识别 - ' + data.name,
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getMAPatternsHtml(data);
+    });
+    context.subscriptions.push(maPatternsDisposable);
+
     // ===== 自动爬取数据 =====
     // 1. 插件启动时自动爬取（静默，不弹通知，除非失败）
     autoRefresh(500, true);
@@ -768,6 +1077,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🔄 刷新彩票数据', 'myPlugin.refreshData', '🔄'),
                 this.createItem('🔁 转移统计', 'myPlugin.showTrans', '🔁'),
                 this.createItem('🤖 智能推荐', 'myPlugin.smartPick', '🤖'),
+                this.createItem('📈 均线形态', 'myPlugin.maPatterns', '📈'),
                 this.createItem('🔮 预测记录', 'myPlugin.showPredictions', '🔮'),
                 this.createItem('🕐 显示当前时间', 'myPlugin.showTime', '🕐'),
                 this.createItem('👋 Hello World', 'myPlugin.helloWorld', '👋')
@@ -816,6 +1126,376 @@ function getNonce() {
 /**
  * 转移统计 Webview HTML（独立面板）
  */
+/**
+ * 生成均线形态识别 Webview HTML
+ * @param {Object} d - {key, name, emoji, positionLabels, recentPeriod, posResults, summary}
+ * @returns {string} HTML
+ */
+function getMAPatternsHtml(d) {
+    const dataJson = JSON.stringify(d);
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>均线形态识别 - ${d.name}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
+h2 { color: #8ec5ff; margin-bottom: 8px; }
+.desc { color: #aaa; margin-bottom: 16px; line-height: 1.6; }
+.limit-badge { display: inline-block; background: #0e639c; color: #fff; padding: 2px 10px; border-radius: 3px; font-size: 12px; font-weight: 500; }
+
+/* 总览卡片 */
+.summary-section { margin-bottom: 20px; padding: 14px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; }
+.summary-title { color: #feca57; font-size: 14px; font-weight: 600; margin-bottom: 10px; }
+.summary-stats { display: flex; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.summary-stat { padding: 8px 16px; background: rgba(0,0,0,0.2); border-radius: 4px; text-align: center; min-width: 80px; }
+.summary-stat-num { font-size: 24px; font-weight: bold; }
+.summary-stat-label { font-size: 11px; color: #888; margin-top: 2px; }
+.summary-stat.bull .summary-stat-num { color: #e74c3c; }
+.summary-stat.bear .summary-stat-num { color: #27ae60; }
+.summary-stat.all .summary-stat-num { color: #8ec5ff; }
+
+/* 形态徽章 */
+.pattern-badge { display: inline-block; padding: 4px 10px; margin: 3px 4px 3px 0; border-radius: 4px; font-size: 12px; font-weight: 600; }
+.pattern-badge.bull { background: rgba(231,76,60,0.15); color: #ff6b6b; border: 1px solid rgba(231,76,60,0.4); }
+.pattern-badge.bear { background: rgba(39,174,96,0.15); color: #2ecc71; border: 1px solid rgba(39,174,96,0.4); }
+
+/* 每个位置的结果 */
+.pos-section { margin-bottom: 16px; padding: 14px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; }
+.pos-title { color: #feca57; font-size: 14px; font-weight: 600; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+.pos-title .pos-name { font-size: 16px; }
+.pos-empty { color: #666; padding: 12px; text-align: center; }
+
+/* 图表区 */
+.chart-wrap { margin-top: 10px; padding: 10px; background: rgba(0,0,0,0.3); border-radius: 6px; }
+.chart-title { color: #aaa; font-size: 11px; margin-bottom: 6px; }
+.chart-svg-wrap { background: #252526; border-radius: 4px; padding: 6px; overflow-x: auto; }
+
+/* 形态详情 */
+.pattern-detail { padding: 8px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; margin-top: 6px; }
+.pattern-detail .name { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+.pattern-detail .name.bull { color: #ff6b6b; }
+.pattern-detail .name.bear { color: #2ecc71; }
+.pattern-detail .desc-text { color: #aaa; font-size: 11px; line-height: 1.5; }
+
+/* 形态对应号码球 */
+.pattern-numbers { margin-top: 6px; padding: 6px 8px; background: rgba(255,255,255,0.04); border-radius: 4px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.pattern-numbers-label { color: #888; font-size: 11px; margin-right: 4px; }
+.num-ball { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 30px; padding: 2px 4px; border-radius: 4px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); }
+.num-ball .num-ball-label { font-size: 9px; color: #888; line-height: 1; margin-bottom: 1px; }
+.num-ball .num-ball-value { font-size: 14px; font-weight: bold; color: #ddd; line-height: 1.2; }
+.num-ball.bull { border-color: rgba(231,76,60,0.5); background: rgba(231,76,60,0.12); }
+.num-ball.bull .num-ball-value { color: #ff6b6b; }
+.num-ball.bear { border-color: rgba(39,174,96,0.5); background: rgba(39,174,96,0.12); }
+.num-ball.bear .num-ball-value { color: #2ecc71; }
+.num-ball.latest { border-color: rgba(254,202,87,0.7); background: rgba(254,202,87,0.15); }
+.num-ball.latest .num-ball-value { color: #feca57; }
+
+/* 推荐选号建议区 */
+.suggest-section { margin-bottom: 20px; padding: 14px; background: rgba(254,202,87,0.06); border: 1px solid rgba(254,202,87,0.3); border-radius: 8px; }
+.suggest-title { color: #feca57; font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+.suggest-hint { color: #888; font-size: 11px; line-height: 1.6; margin-bottom: 10px; }
+.suggest-row { display: flex; align-items: flex-start; margin-bottom: 8px; padding: 8px 10px; background: rgba(0,0,0,0.2); border-radius: 4px; flex-wrap: wrap; gap: 6px; }
+.suggest-row-label { color: #aaa; font-size: 12px; min-width: 70px; padding-top: 3px; }
+.suggest-row.bull { border-left: 3px solid #e74c3c; }
+.suggest-row.bear { border-left: 3px solid #27ae60; }
+.suggest-row.neutral { border-left: 3px solid #888; }
+.suggest-nums { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; }
+.suggest-pos-tag { display: inline-block; padding: 1px 6px; background: rgba(255,255,255,0.08); border-radius: 3px; font-size: 10px; color: #ccc; margin-right: 4px; }
+.suggest-big-ball { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; font-size: 13px; font-weight: bold; margin: 0 1px; }
+.suggest-big-ball.bull { background: rgba(231,76,60,0.25); color: #ff6b6b; border: 1px solid rgba(231,76,60,0.5); }
+.suggest-big-ball.bear { background: rgba(39,174,96,0.25); color: #2ecc71; border: 1px solid rgba(39,174,96,0.5); text-decoration: line-through; }
+.suggest-empty { color: #666; font-size: 11px; padding: 4px 0; }
+
+.copy-btn { background: #0e639c; color: #fff; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; margin-top: 8px; }
+.copy-btn:hover { background: #1177bb; }
+</style>
+</head>
+<body>
+<h2>📈 ${d.name} 均线形态识别</h2>
+<div class="desc">
+    <span class="limit-badge">基于最近 20 期数据 · 最新期号 ${d.recentPeriod}</span><br>
+    对每位号码计算 <b>MA5（短期）</b>、<b>MA10（中期）</b>、<b>MA20（长期）</b> 三条移动平均线，
+    识别 10 种典型均线形态。
+</div>
+<div id="content"></div>
+<script>
+const DATA = ${dataJson};
+
+const ALL_PATTERNS = [
+    { name: '多头排列', signal: 'bull', desc: '短期均线在最上，中期在中间，长期在最下，三条均线同时向上移动的排列形态即为多头排列。技术含义：做多信号，继续看涨。' },
+    { name: '空头排列', signal: 'bear', desc: '三条均线同时以圆弧状向下运行，且从上到下时间越来越短，形成空头排列。技术含义：做空信号，继续看跌。' },
+    { name: '黄金交叉', signal: 'bull', desc: '短期均线由下向上穿越长期均线，且均线形式走平或向上。技术含义：看涨信号，两线交叉的角度越大，上涨的信号越强烈。' },
+    { name: '死亡交叉', signal: 'bear', desc: '短期均线由上向下穿越长期均线，且长期均线走势疲软。技术含义：看跌信号，两根均线的夹角越大，下跌越猛烈。' },
+    { name: '银山谷', signal: 'bull', desc: '短期均线和中期均线先后向上穿越长期均线，三根均线形成一个一角向上的不规则三角形，多出现在上涨的初期。技术含义：见底开始上涨的信号，后市看涨。' },
+    { name: '死亡谷', signal: 'bear', desc: '多出现在下跌的初期，短期均线和中期均线先后下穿长期均线，形成一个一角向下的不规则三角形。技术含义：看跌的信号，应提高警惕。' },
+    { name: '粘合向上发散', signal: 'bull', desc: '出现在上涨的初期或趋势继中，短期、中期以及长期均线缠绕粘连，后向上发散，上涨趋势明显。技术含义：买入上涨信号，投资者可在发散初期及时介入。' },
+    { name: '粘合向下发散', signal: 'bear', desc: '出现在横盘末期，短期、中期和长期均线缠绕粘连，横盘选择方向，后均线发散开始下跌走势。技术含义：下跌警告信号，应注意风险。' },
+    { name: '上山爬坡形', signal: 'bull', desc: '出现在上涨趋势中，短期、中期和长期均线基本都沿着一定坡度往上移。技术含义：看涨做多的信号，可逢低买入，等待上涨。' },
+    { name: '下山滑坡形', signal: 'bear', desc: '出现在跌势中，均线基本沿着一定的坡度往下移动，是后市看跌信号。技术含义：最好的策略还是敬而远之，下跌趋势中每次反弹都是逃跑的机会。' }
+];
+
+(function() {
+    let html = '';
+
+    // 总览区
+    const detected = DATA.summary.patternNames;
+    html += '<div class="summary-section">';
+    html += '<div class="summary-title">🎯 总览</div>';
+    html += '<div class="summary-stats">';
+    html += '<div class="summary-stat bull"><div class="summary-stat-num">' + DATA.summary.bullCount + '</div><div class="summary-stat-label">看涨信号</div></div>';
+    html += '<div class="summary-stat bear"><div class="summary-stat-num">' + DATA.summary.bearCount + '</div><div class="summary-stat-label">看跌信号</div></div>';
+    html += '<div class="summary-stat all"><div class="summary-stat-num">' + (DATA.summary.bullCount + DATA.summary.bearCount) + '</div><div class="summary-stat-label">总信号</div></div>';
+    html += '</div>';
+    if (detected.length > 0) {
+        html += '<div style="margin-top:8px;">';
+        html += '<div style="color:#aaa;font-size:11px;margin-bottom:4px;">已识别的形态：</div>';
+        detected.forEach(name => {
+            const p = ALL_PATTERNS.find(x => x.name === name);
+            if (p) {
+                html += '<span class="pattern-badge ' + p.signal + '">' + p.name + '</span>';
+            }
+        });
+        html += '</div>';
+    } else {
+        html += '<div style="color:#888;font-size:12px;margin-top:8px;">暂未识别到典型形态（市场处于震荡或无明显趋势）</div>';
+    }
+    html += '</div>';
+
+    // 推荐选号建议区：按位归类看涨/看跌号码
+    html += '<div class="suggest-section">';
+    html += '<div class="suggest-title">🎯 推荐选号建议</div>';
+    html += '<div class="suggest-hint">' +
+        '根据各位置识别到的均线形态自动归类：<b style="color:#ff6b6b;">看涨信号</b>的号码建议<b>优先选择</b>（趋势向上），' +
+        '<b style="color:#2ecc71;">看跌信号</b>的号码建议<b>避开</b>（趋势向下，已加删除线标记）。' +
+        '号码来源：该位置形态对应的 MA5/MA10/MA20 均线值四舍五入 + 最新一期实际号码。</div>';
+
+    DATA.posResults.forEach((pr, idx) => {
+        const bullNums = [];
+        const bearNums = [];
+        pr.patterns.forEach(p => {
+            if (p.numbers && p.numbers.length > 0) {
+                p.numbers.forEach(n => {
+                    if (p.signal === 'bull') {
+                        if (bullNums.indexOf(n) === -1) bullNums.push(n);
+                    } else {
+                        if (bearNums.indexOf(n) === -1) bearNums.push(n);
+                    }
+                });
+            }
+        });
+        // 排序
+        bullNums.sort((a, b) => a - b);
+        bearNums.sort((a, b) => a - b);
+
+        html += '<div class="suggest-row ' + (bullNums.length >= bearNums.length ? (bullNums.length > 0 ? 'bull' : 'neutral') : 'bear') + '">';
+        html += '<div class="suggest-row-label">' + pr.label + '位</div>';
+        html += '<div class="suggest-nums">';
+        if (bullNums.length === 0 && bearNums.length === 0) {
+            html += '<span class="suggest-empty">无形态信号，参考其他分析</span>';
+        } else {
+            if (bullNums.length > 0) {
+                html += '<span class="suggest-pos-tag">📈 优选</span>';
+                bullNums.forEach(n => {
+                    html += '<span class="suggest-big-ball bull">' + n + '</span>';
+                });
+            }
+            if (bearNums.length > 0) {
+                if (bullNums.length > 0) html += '<span style="color:#555;margin:0 4px;">|</span>';
+                html += '<span class="suggest-pos-tag">📉 避开</span>';
+                bearNums.forEach(n => {
+                    html += '<span class="suggest-big-ball bear">' + n + '</span>';
+                });
+            }
+        }
+        html += '</div>';
+        html += '</div>';
+    });
+    html += '</div>';
+
+    // 每位详情
+    DATA.posResults.forEach((pr, idx) => {
+        html += '<div class="pos-section">';
+        html += '<div class="pos-title">';
+        html += '<span class="pos-name">🎯 ' + pr.label + '位</span>';
+        if (pr.patterns.length > 0) {
+            html += '<span style="font-size:11px;color:#888;">识别到 ' + pr.patterns.length + ' 个形态</span>';
+        }
+        html += '</div>';
+
+        if (pr.error) {
+            html += '<div class="pos-empty">' + pr.error + '</div>';
+        } else {
+            // 当前均线值
+            const cv = pr.maData.currentValues;
+            html += '<div style="margin-bottom:8px;font-size:11px;color:#aaa;">';
+            html += '当前 MA5=<b style="color:#f39c12;">' + cv.ma5.toFixed(2) + '</b>, ';
+            html += 'MA10=<b style="color:#9b59b6;">' + cv.ma10.toFixed(2) + '</b>, ';
+            html += 'MA20=<b style="color:#3498db;">' + cv.ma20.toFixed(2) + '</b>';
+            html += '</div>';
+
+            // 形态列表
+            if (pr.patterns.length > 0) {
+                pr.patterns.forEach(p => {
+                    html += '<div class="pattern-detail">';
+                    html += '<div class="name ' + p.signal + '">' +
+                        (p.signal === 'bull' ? '📈 ' : '📉 ') + p.name + '</div>';
+                    html += '<div class="desc-text">' + p.desc + '</div>';
+                    // 显示该形态对应的关键号码
+                    if (p.numbers && p.numbers.length > 0) {
+                        html += '<div class="pattern-numbers">';
+                        html += '<span class="pattern-numbers-label">对应号码：</span>';
+                        const labels = p.numbersLabel || [];
+                        p.numbers.forEach((num, ni) => {
+                            const lbl = labels[ni] || '';
+                            const isLatest = lbl === '最新' || lbl === '本期';
+                            const cls = isLatest ? 'num-ball latest' : 'num-ball ' + p.signal;
+                            html += '<span class="' + cls + '" title="' + lbl + '">' +
+                                (lbl ? '<span class="num-ball-label">' + lbl + '</span>' : '') +
+                                '<span class="num-ball-value">' + num + '</span></span>';
+                        });
+                        html += '</div>';
+                    }
+                    html += '</div>';
+                });
+            } else {
+                html += '<div style="color:#888;font-size:12px;padding:6px;">未识别到典型形态</div>';
+            }
+
+            // 走势图
+            html += '<div class="chart-wrap">';
+            html += '<div class="chart-title">📊 最近 20 期均线走势</div>';
+            html += '<div class="chart-svg-wrap">';
+            html += renderChart(pr.maData);
+            html += '</div></div>';
+        }
+        html += '</div>';
+    });
+
+    // 形态图例
+    html += '<div class="summary-section">';
+    html += '<div class="summary-title">📚 形态说明（10 种）</div>';
+    html += '<div style="color:#888;font-size:11px;margin-bottom:8px;line-height:1.6;">' +
+        '每种形态识别后会显示对应的<b style="color:#feca57;">关键号码</b>：' +
+        '<span style="color:#f39c12;">MA5≈</span> 表示短期均线四舍五入的号码、' +
+        '<span style="color:#9b59b6;">MA10≈</span> 中期、' +
+        '<span style="color:#3498db;">MA20≈</span> 长期，' +
+        '<span style="color:#feca57;">最新/本期</span> 为最近一期实际开奖号码。' +
+        '可根据这些号码作为该位的候选参考。</div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;margin-top:8px;">';
+    ALL_PATTERNS.forEach(p => {
+        html += '<div class="pattern-detail">';
+        html += '<div class="name ' + p.signal + '">' +
+            (p.signal === 'bull' ? '📈 ' : '📉 ') + p.name + '</div>';
+        html += '<div class="desc-text">' + p.desc + '</div>';
+        html += '</div>';
+    });
+    html += '</div></div>';
+
+    document.getElementById('content').innerHTML = html;
+
+    function renderChart(maData) {
+        const series = maData.series;
+        const ma5 = maData.ma5;
+        const ma10 = maData.ma10;
+        const ma20 = maData.ma20;
+        const n = series.length;
+
+        // 图表尺寸
+        const W = Math.max(400, n * 22);
+        const H = 160;
+        const padL = 30, padR = 10, padT = 10, padB = 20;
+
+        // 计算 y 轴范围
+        const allVals = [...series, ...ma5.filter(v => v !== null), ...ma10.filter(v => v !== null), ...ma20.filter(v => v !== null)];
+        const minV = Math.min(...allVals);
+        const maxV = Math.max(...allVals);
+        const range = maxV - minV || 1;
+        const yMin = minV - range * 0.1;
+        const yMax = maxV + range * 0.1;
+
+        const xStep = (W - padL - padR) / (n - 1);
+        const yScale = (v) => padT + (H - padT - padB) * (1 - (v - yMin) / (yMax - yMin));
+
+        let svg = '<svg width="' + W + '" height="' + H + '" style="background:#1a1a1a;border-radius:4px;">';
+
+        // y 轴参考线
+        for (let k = 0; k <= 4; k++) {
+            const yVal = yMin + (yMax - yMin) * k / 4;
+            const y = yScale(yVal);
+            svg += '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="#333" stroke-width="0.5"/>';
+            svg += '<text x="2" y="' + (y + 3) + '" fill="#666" font-size="9">' + yVal.toFixed(1) + '</text>';
+        }
+
+        // 原始数据点
+        let ptsStr = '';
+        series.forEach((v, i) => {
+            const x = padL + i * xStep;
+            const y = yScale(v);
+            ptsStr += (i === 0 ? 'M' : 'L') + x + ',' + y + ' ';
+        });
+        svg += '<path d="' + ptsStr + '" stroke="#888" stroke-width="1" fill="none" opacity="0.6"/>';
+
+        // 每个数据点画圆 + 标注号码
+        series.forEach((v, i) => {
+            const x = padL + i * xStep;
+            const y = yScale(v);
+            const isLatest = (i === n - 1);
+            if (isLatest) {
+                // 最新一期：高亮黄色大圆 + 号码
+                svg += '<circle cx="' + x + '" cy="' + y + '" r="5" fill="#feca57" stroke="#000" stroke-width="1"/>';
+                svg += '<text x="' + x + '" y="' + (y - 9) + '" fill="#feca57" font-size="11" font-weight="bold" text-anchor="middle">' + v + '</text>';
+            } else if (i % 2 === 0 || n <= 12) {
+                // 普通点：小圆 + 号码（数据少时全标，数据多时隔点标）
+                svg += '<circle cx="' + x + '" cy="' + y + '" r="3" fill="#aaa"/>';
+                svg += '<text x="' + x + '" y="' + (y - 7) + '" fill="#bbb" font-size="9" text-anchor="middle">' + v + '</text>';
+            } else {
+                svg += '<circle cx="' + x + '" cy="' + y + '" r="2" fill="#888"/>';
+            }
+        });
+
+        // MA5
+        svg += drawMALine(ma5, '#f39c12', padL, xStep, yScale);
+        // MA10
+        svg += drawMALine(ma10, '#9b59b6', padL, xStep, yScale);
+        // MA20
+        svg += drawMALine(ma20, '#3498db', padL, xStep, yScale);
+
+        // x 轴期号
+        for (let i = 0; i < n; i += Math.ceil(n / 10)) {
+            const x = padL + i * xStep;
+            svg += '<text x="' + x + '" y="' + (H - 5) + '" fill="#888" font-size="9" text-anchor="middle">' + (i + 1) + '</text>';
+        }
+
+        // 图例
+        svg += '<rect x="' + (W - 130) + '" y="5" width="125" height="40" fill="#000" opacity="0.5" rx="3"/>';
+        svg += '<text x="' + (W - 125) + '" y="18" fill="#f39c12" font-size="10">━ MA5 (短期)</text>';
+        svg += '<text x="' + (W - 125) + '" y="30" fill="#9b59b6" font-size="10">━ MA10 (中期)</text>';
+        svg += '<text x="' + (W - 125) + '" y="42" fill="#3498db" font-size="10">━ MA20 (长期)</text>';
+
+        svg += '</svg>';
+        return svg;
+    }
+
+    function drawMALine(ma, color, padL, xStep, yScale) {
+        let d = '';
+        let started = false;
+        ma.forEach((v, i) => {
+            if (v === null) return;
+            const x = padL + i * xStep;
+            const y = yScale(v);
+            d += (started ? 'L' : 'M') + x + ',' + y + ' ';
+            started = true;
+        });
+        return '<path d="' + d + '" stroke="' + color + '" stroke-width="1.5" fill="none"/>';
+    }
+})();
+</script>
+</body>
+</html>`;
+}
+
 /**
  * 生成预测记录 HTML
  * @param {Array<Object>} predictions - 预测记录列表
