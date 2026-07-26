@@ -46,7 +46,7 @@
     "note": "走势图选号 排列五 (预选1)",
     "source": "chart",
     "savedAt": "2026-07-26T05:08:32.733Z",
-    "checked": false,
+    "checked": true,
     "winResult": null
   },
   {
@@ -86,7 +86,7 @@
     "note": "走势图选号 排列五 (预选1)",
     "source": "chart",
     "savedAt": "2026-07-26T11:10:28.030Z",
-    "checked": false,
+    "checked": true,
     "winResult": null
   },
   {
@@ -122,7 +122,43 @@
     "note": "走势图选号 排列三 (预选1)",
     "source": "chart",
     "savedAt": "2026-07-26T11:15:32.288Z",
-    "checked": false,
+    "checked": true,
+    "winResult": null
+  },
+  {
+    "id": 1785065393629000,
+    "type": "ssq",
+    "typeName": "双色球",
+    "basePeriod": "26084",
+    "targetPeriod": "26085",
+    "picks": [
+      [
+        5
+      ],
+      [
+        7
+      ],
+      [
+        17
+      ],
+      [
+        23
+      ],
+      [
+        26
+      ],
+      [
+        29
+      ],
+      [
+        1
+      ]
+    ],
+    "totalCombos": 1,
+    "note": "走势图选号 双色球 (预选1)",
+    "source": "chart",
+    "savedAt": "2026-07-26T11:29:53.629Z",
+    "checked": true,
     "winResult": null
   }
 ]
