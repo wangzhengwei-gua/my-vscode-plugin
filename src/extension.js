@@ -62,8 +62,9 @@ function loadPredictions() {
  */
 function savePredictions(predictions) {
     try {
-        if (!fs.existsSync(PLUGIN_DATA_DIR)) {
-            fs.mkdirSync(PLUGIN_DATA_DIR, { recursive: true });
+        const predDir = path.dirname(PREDICTIONS_FILE);
+        if (!fs.existsSync(predDir)) {
+            fs.mkdirSync(predDir, { recursive: true });
         }
         fs.writeFileSync(PREDICTIONS_FILE, JSON.stringify(predictions, null, 2), 'utf-8');
         console.log('预测记录已保存:', PREDICTIONS_FILE);
@@ -587,7 +588,7 @@ function activate(context) {
                     let savedCount = 0;
                     for (const pred of msg.predictions) {
                         predictions.push({
-                            id: Date.now() + savedCount,
+                            id: Date.now() * 1000 + savedCount,
                             type: pred.type,
                             typeName: pred.typeName,
                             basePeriod: pred.basePeriod,
