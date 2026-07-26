@@ -849,7 +849,8 @@ function activate(context) {
                 const preds = loadPredictions();
                 const filtered = preds.filter(p => p.id !== msg.id);
                 savePredictions(filtered);
-                panel.webview.postMessage({ command: 'deleted' });
+                // 重新生成 HTML 并更新 webview（而不是让前端 location.reload）
+                panel.webview.html = getPredictionsHtml(filtered);
             }
         }, null, context.subscriptions);
     });
