@@ -1,6 +1,7 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const crawler = require('./crawler');
 
 // 数据目录：优先用插件自己的 data/ 目录，不存在则 fallback 到 dlt-simulator
@@ -8,8 +9,33 @@ const PLUGIN_DATA_DIR = path.join(__dirname, '..', 'data');
 const DLT_DATA_DIR = 'E:\\dlt-simulator\\data';
 const DATA_DIR = fs.existsSync(PLUGIN_DATA_DIR) ? PLUGIN_DATA_DIR : DLT_DATA_DIR;
 
-// 预测记录文件路径
-const PREDICTIONS_FILE = path.join(PLUGIN_DATA_DIR, 'predictions.json');
+// 预测记录：存到用户主目录下的固定位置，避免插件升级后数据丢失
+const PERSIST_DIR = path.join(os.homedir(), '.my-vscode-plugin-data');
+if (!fs.existsSync(PERSIST_DIR)) {
+    try { fs.mkdirSync(PERSIST_DIR, { recursive: true }); } catch (e) { /* ignore */ }
+}
+const PREDICTIONS_FILE = path.join(PERSIST_DIR, 'predictions.json');
+
+// 迁移旧版本插件目录下的预测记录（一次性）
+try {
+    const oldPredFile = path.join(PLUGIN_DATA_DIR, 'predictions.json');
+    if (fs.existsSync(oldPredFile)) {
+        const oldData = fs.readFileSync(oldPredFile, 'utf-8').trim();
+        // 只有旧文件有数据、且新文件为空或不存在时才迁移
+        if (oldData && oldData !== '[]') {
+            let newData = '[]';
+            if (fs.existsSync(PREDICTIONS_FILE)) {
+                newData = fs.readFileSync(PREDICTIONS_FILE, 'utf-8').trim();
+            }
+            if (!newData || newData === '[]') {
+                fs.writeFileSync(PREDICTIONS_FILE, oldData, 'utf-8');
+                console.log('[迁移] 已将旧预测记录复制到:', PREDICTIONS_FILE);
+            }
+        }
+    }
+} catch (e) {
+    console.error('[迁移] 预测记录迁移失败:', e.message);
+}
 
 /**
  * 读取预测记录
@@ -1207,6 +1233,7 @@ h2 { color: #8ec5ff; margin-bottom: 8px; }
 .suggest-big-ball.bull { background: rgba(231,76,60,0.25); color: #ff6b6b; border: 1px solid rgba(231,76,60,0.5); }
 .suggest-big-ball.bear { background: rgba(39,174,96,0.25); color: #2ecc71; border: 1px solid rgba(39,174,96,0.5); text-decoration: line-through; }
 .suggest-empty { color: #666; font-size: 11px; padding: 4px 0; }
+.suggest-tip { width: 100%; margin-top: 6px; padding: 5px 8px; background: rgba(254,202,87,0.08); border-left: 2px solid #feca57; border-radius: 3px; font-size: 11px; color: #feca57; line-height: 1.5; }
 
 .copy-btn { background: #0e639c; color: #fff; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; margin-top: 8px; }
 .copy-btn:hover { background: #1177bb; }
@@ -1308,6 +1335,29 @@ const ALL_PATTERNS = [
                     html += '<span class="suggest-big-ball bear">' + n + '</span>';
                 });
             }
+        }
+
+        // 生成具体选号建议文字
+        if (bullNums.length > 0 || bearNums.length > 0) {
+            const latestNum = pr.maData && pr.maData.series ? pr.maData.series[pr.maData.series.length - 1] : null;
+            let suggest = '';
+            if (bullNums.length > 0 && bearNums.length === 0) {
+                // 纯看涨：号码往上走，选偏大或优选号码附近
+                suggest = '→ 该位看涨，号码有上升趋势，建议优先选上面红色号码';
+                if (latestNum !== null) {
+                    suggest += '（当前' + latestNum + '，下期可能 ≥' + latestNum + '）';
+                }
+            } else if (bearNums.length > 0 && bullNums.length === 0) {
+                // 纯看跌：号码往下走，选偏小或避开号码之外的小号
+                suggest = '→ 该位看跌，号码有下降趋势，建议避开上面绿色号码，选偏小号码';
+                if (latestNum !== null) {
+                    suggest += '（当前' + latestNum + '，下期可能 ≤' + latestNum + '）';
+                }
+            } else {
+                // 多空交织：信号矛盾，谨慎
+                suggest = '→ 该位多空信号交织，趋势不明，建议参考其他分析（转移统计/走势图）再定';
+            }
+            html += '<div class="suggest-tip">' + suggest + '</div>';
         }
         html += '</div>';
         html += '</div>';
