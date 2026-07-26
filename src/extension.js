@@ -1587,24 +1587,37 @@ function getPredictionsHtml(predictions) {
                 statusColor = '#3498db';
             }
 
-            // 开奖号码（用于高亮匹配的选号球）
-            let drawNums = (p.checked && p.winResult) ? p.winResult.drawNums : null;
+            // 开奖号码：已开奖的记录都有 drawNums（无论是否中奖），用于高亮和展示
+            let drawNums = null;
+            if (p.checked) {
+                if (p.winResult && p.winResult.drawNums) {
+                    drawNums = p.winResult.drawNums;
+                } else {
+                    // 已开奖但未中奖：从历史数据中查 targetPeriod 的开奖号
+                    try {
+                        const cfg = LOTTERY_TYPES.find(c => c.key === p.type);
+                        if (cfg) {
+                            const history = loadLotteryData(cfg);
+                            const match = history.find(h => h.period === p.targetPeriod);
+                            if (match) {
+                                drawNums = cfg.positions.map(pos => pos.pick(match));
+                            }
+                        }
+                    } catch (e) { /* ignore */ }
+                }
+            }
 
             // 选号展示（含中奖高亮）
             let picksHtml = '';
             for (let i = 0; i < p.picks.length; i++) {
                 picksHtml += '<span style="color:#aaa;font-size:11px;">' + (posLabels[i] || '') + '：</span>';
                 for (const n of p.picks[i]) {
-                    // 判断是否中奖（注意：每位的位置对应关系）
-                    // 对于 dlt/ssq 这种复式选号，drawNums 包含所有号码，需要判断 n 是否在 drawNums 中
-                    // 对于 pl3/pl5 这种位置选号，drawNums[i] == n 才算中
+                    // 判断该号码是否在开奖号中（高亮显示，但不作为"中奖"）
                     let isHit = false;
                     if (drawNums) {
                         if (p.type === 'pl3' || p.type === 'pl5') {
-                            // 直选：每位单独判断
                             isHit = (drawNums[i] === n);
                         } else {
-                            // 复式：号码在开奖号集合中即算中
                             isHit = drawNums.indexOf(n) !== -1;
                         }
                     }
@@ -1642,9 +1655,13 @@ function getPredictionsHtml(predictions) {
                 drawNumsHtml += '</div>';
             }
 
-            // 未开奖记录显示"未开奖"提示
-            if (p.checked && !p.winResult) {
-                drawNumsHtml = '<div style="margin:6px 0 10px 0;padding:8px 10px;background:rgba(231,76,60,0.08);border-left:3px solid #e74c3c;border-radius:4px;font-size:12px;color:#e74c3c;">❌ 已开奖但未中奖</div>';
+            // 未中奖的已开奖记录（drawNums 已显示），追加红色"未中奖"提示
+            if (p.checked && !p.winResult && drawNumsHtml) {
+                drawNumsHtml += '<div style="margin-top:6px;padding:6px 10px;background:rgba(231,76,60,0.08);border-left:3px solid #e74c3c;border-radius:4px;font-size:12px;color:#e74c3c;display:inline-block;">❌ 已开奖但未中奖</div>';
+            }
+            // 已 checked 但找不到开奖号（历史数据里没这条记录）
+            if (p.checked && !drawNumsHtml) {
+                drawNumsHtml = '<div style="margin:6px 0 10px 0;padding:8px 10px;background:rgba(231,76,60,0.08);border-left:3px solid #e74c3c;border-radius:4px;font-size:12px;color:#e74c3c;">❌ 已开奖但未中奖（未找到开奖号）</div>';
             }
 
             rows += '<div style="margin-bottom:12px;padding:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;">';
