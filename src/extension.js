@@ -4,7 +4,7 @@ const path = require('path');
 const crawler = require('./crawler');
 
 // 工程数据目录（开发时直接用工程下的 data/）
-const PROJECT_DATA_DIR = 'd:\\0.Code\\my-vscode-plugin\\data';
+const PROJECT_DATA_DIR = 'd:\\0.Y003H\\Plugin\\data';
 // 数据目录：优先用工程目录，不存在则用插件安装目录下的 data/
 const PLUGIN_DATA_DIR = path.join(__dirname, '..', 'data');
 const DATA_DIR = fs.existsSync(PROJECT_DATA_DIR) ? PROJECT_DATA_DIR :
