@@ -3,17 +3,42 @@ const fs = require('fs');
 const path = require('path');
 const crawler = require('./crawler');
 
-// 工程数据目录（开发时直接用工程下的 data/）
-const PROJECT_DATA_DIR = 'd:\\0.Y003H\\Plugin\\data';
-// 数据目录：优先用工程目录，不存在则用插件安装目录下的 data/
+// 插件安装目录下的 data/（兜底）
 const PLUGIN_DATA_DIR = path.join(__dirname, '..', 'data');
-const DATA_DIR = fs.existsSync(PROJECT_DATA_DIR) ? PROJECT_DATA_DIR :
-                 (fs.existsSync(PLUGIN_DATA_DIR) ? PLUGIN_DATA_DIR : PLUGIN_DATA_DIR);
 
-// 预测记录：存到工程目录下的 data/predictions.json，方便查看和管理
+/**
+ * 动态获取数据目录，优先级：
+ *   1. 当前工作区文件夹下的 data/（通用，换电脑只需打开工程文件夹即可）
+ *   2. 插件安装目录下的 data/（兜底）
+ * @returns {string}
+ */
+function getDataDir() {
+    // 1. 尝试当前工作区
+    const wsFolders = vscode.workspace.workspaceFolders;
+    if (wsFolders && wsFolders.length > 0) {
+        const wsDataDir = path.join(wsFolders[0].uri.fsPath, 'data');
+        if (fs.existsSync(wsDataDir)) return wsDataDir;
+    }
+    // 2. 兜底：插件安装目录
+    return PLUGIN_DATA_DIR;
+}
+
+// 兼容：DATA_DIR 在模块加载时初始化（用于迁移等一次性逻辑）
+const DATA_DIR = getDataDir();
+
+/**
+ * 动态获取 predictions.json 路径（每次调用时重新判断工作区）
+ * @returns {string}
+ */
+function getPredictionsFile() {
+    return path.join(getDataDir(), 'predictions.json');
+}
+
+// 预测记录：确保数据目录存在
 if (!fs.existsSync(DATA_DIR)) {
     try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (e) { /* ignore */ }
 }
+// 兼容旧常量引用
 const PREDICTIONS_FILE = path.join(DATA_DIR, 'predictions.json');
 
 // 迁移旧位置（用户主目录或旧版本插件目录）的预测记录到工程目录（一次性）
@@ -47,8 +72,9 @@ try {
  */
 function loadPredictions() {
     try {
-        if (!fs.existsSync(PREDICTIONS_FILE)) return [];
-        const raw = fs.readFileSync(PREDICTIONS_FILE, 'utf-8');
+        const file = getPredictionsFile();
+        if (!fs.existsSync(file)) return [];
+        const raw = fs.readFileSync(file, 'utf-8');
         return JSON.parse(raw) || [];
     } catch (e) {
         console.error('读取预测记录失败:', e.message);
@@ -62,12 +88,13 @@ function loadPredictions() {
  */
 function savePredictions(predictions) {
     try {
-        const predDir = path.dirname(PREDICTIONS_FILE);
+        const file = getPredictionsFile();
+        const predDir = path.dirname(file);
         if (!fs.existsSync(predDir)) {
             fs.mkdirSync(predDir, { recursive: true });
         }
-        fs.writeFileSync(PREDICTIONS_FILE, JSON.stringify(predictions, null, 2), 'utf-8');
-        console.log('预测记录已保存:', PREDICTIONS_FILE);
+        fs.writeFileSync(file, JSON.stringify(predictions, null, 2), 'utf-8');
+        console.log('预测记录已保存:', file);
     } catch (e) {
         console.error('保存预测记录失败:', e.message);
     }
@@ -485,8 +512,8 @@ function detectMAPatterns(series) {
 }
 
 function loadLotteryData(cfg) {
-    // 动态判断数据目录：优先插件自己的 data/，没有则用 dlt-simulator
-    const dir = fs.existsSync(PLUGIN_DATA_DIR) ? PLUGIN_DATA_DIR : DLT_DATA_DIR;
+    // 动态获取数据目录：优先当前工作区 data/，兜底插件安装目录 data/
+    const dir = getDataDir();
     const filePath = path.join(dir, cfg.file);
     const raw = fs.readFileSync(filePath, 'utf-8');
     const json = JSON.parse(raw);
@@ -642,8 +669,9 @@ function activate(context) {
         }, async (progress) => {
             progress.report({ message: '爬取中（可能需要 10-30 秒）...' });
             try {
-                // 数据存到插件自己的 data/ 目录
-                const results = await crawler.crawlAll(PLUGIN_DATA_DIR, limit);
+                // 数据存到当前工作区 data/ 目录（通用，兜底插件安装目录）
+                const saveDir = getDataDir();
+                const results = await crawler.crawlAll(saveDir, limit);
                 let okCount = 0;
                 let failMsg = [];
                 Object.keys(results).forEach(type => {
@@ -964,7 +992,8 @@ function activate(context) {
  */
 async function autoRefresh(limit, silent) {
     try {
-        const results = await crawler.crawlAll(PLUGIN_DATA_DIR, limit);
+        const saveDir = getDataDir();
+        const results = await crawler.crawlAll(saveDir, limit);
         let okCount = 0;
         let failMsg = [];
         Object.keys(results).forEach(type => {
