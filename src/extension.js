@@ -3,11 +3,14 @@ const fs = require('fs');
 const path = require('path');
 const crawler = require('./crawler');
 
-// 插件安装目录下的 data/（兜底）
+// 插件安装目录下的 data/（兜底，用于彩票历史数据）
 const PLUGIN_DATA_DIR = path.join(__dirname, '..', 'data');
 
+// 保存 extension context，用于 globalStoragePath（预测记录统一存储位置）
+let _context = null;
+
 /**
- * 动态获取数据目录，优先级：
+ * 获取彩票历史数据目录，优先级：
  *   1. 当前工作区文件夹下的 data/（通用，换电脑只需打开工程文件夹即可）
  *   2. 插件安装目录下的 data/（兜底）
  * @returns {string}
@@ -23,47 +26,26 @@ function getDataDir() {
     return PLUGIN_DATA_DIR;
 }
 
-// 兼容：DATA_DIR 在模块加载时初始化（用于迁移等一次性逻辑）
-const DATA_DIR = getDataDir();
+/**
+ * 获取预测记录统一存储目录（context.globalStoragePath）
+ * 该目录与工作区无关，任何工程窗口下都能共享同一份预测记录。
+ * 如果 context 还未初始化（activate 之前），fallback 到工作区/插件目录。
+ * @returns {string}
+ */
+function getPredDir() {
+    if (_context && _context.globalStoragePath) {
+        return _context.globalStoragePath;
+    }
+    // activate 之前的兜底
+    return getDataDir();
+}
 
 /**
- * 动态获取 predictions.json 路径（每次调用时重新判断工作区）
+ * 动态获取 predictions.json 路径
  * @returns {string}
  */
 function getPredictionsFile() {
-    return path.join(getDataDir(), 'predictions.json');
-}
-
-// 预测记录：确保数据目录存在
-if (!fs.existsSync(DATA_DIR)) {
-    try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (e) { /* ignore */ }
-}
-// 兼容旧常量引用
-const PREDICTIONS_FILE = path.join(DATA_DIR, 'predictions.json');
-
-// 迁移旧位置（用户主目录或旧版本插件目录）的预测记录到工程目录（一次性）
-try {
-    const os = require('os');
-    const oldHomePredFile = path.join(os.homedir(), '.my-vscode-plugin-data', 'predictions.json');
-    const oldPluginPredFile = path.join(PLUGIN_DATA_DIR, 'predictions.json');
-    const candidates = [oldHomePredFile, oldPluginPredFile];
-    for (const oldFile of candidates) {
-        if (fs.existsSync(oldFile) && oldFile !== PREDICTIONS_FILE) {
-            const oldData = fs.readFileSync(oldFile, 'utf-8').trim();
-            if (oldData && oldData !== '[]') {
-                let newData = '[]';
-                if (fs.existsSync(PREDICTIONS_FILE)) {
-                    newData = fs.readFileSync(PREDICTIONS_FILE, 'utf-8').trim();
-                }
-                if (!newData || newData === '[]') {
-                    fs.writeFileSync(PREDICTIONS_FILE, oldData, 'utf-8');
-                    console.log('[迁移] 已将旧预测记录复制到:', PREDICTIONS_FILE);
-                }
-            }
-        }
-    }
-} catch (e) {
-    console.error('[迁移] 预测记录迁移失败:', e.message);
+    return path.join(getPredDir(), 'predictions.json');
 }
 
 /**
@@ -522,6 +504,36 @@ function loadLotteryData(cfg) {
 
 function activate(context) {
     console.log('插件 "my-vscode-plugin" 已激活');
+    _context = context;
+
+    // 确保 globalStoragePath 目录存在（预测记录统一存储位置）
+    const predDir = getPredDir();
+    if (!fs.existsSync(predDir)) {
+        try { fs.mkdirSync(predDir, { recursive: true }); } catch (e) { /* ignore */ }
+    }
+
+    // 一次性迁移：把旧的 predictions.json（工作区/插件目录）复制到 globalStoragePath
+    try {
+        const predFile = getPredictionsFile();
+        if (!fs.existsSync(predFile) || fs.readFileSync(predFile, 'utf-8').trim() === '[]') {
+            const candidates = [
+                path.join(getDataDir(), 'predictions.json'),
+                path.join(PLUGIN_DATA_DIR, 'predictions.json')
+            ];
+            for (const oldFile of candidates) {
+                if (fs.existsSync(oldFile) && oldFile !== predFile) {
+                    const oldData = fs.readFileSync(oldFile, 'utf-8').trim();
+                    if (oldData && oldData !== '[]') {
+                        fs.writeFileSync(predFile, oldData, 'utf-8');
+                        console.log('[迁移] 预测记录已迁移到:', predFile);
+                        break;
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.error('[迁移] 预测记录迁移失败:', e.message);
+    }
 
     // ===== 侧边栏树视图 =====
     const treeDataProvider = new LotteryTreeDataProvider();
