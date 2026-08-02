@@ -417,47 +417,44 @@
         }
         const groupLabels = d.positionLabels;
 
-        // 按预选行分组收集选中号码：完全依据每个号码元素自身的 data-prow 归属，
-        // 不依赖 tr 在 DOM 中的顺序或索引，确保每个预选行相互独立、互不影响。
-        const rows = {};
-        const allSelected = panel.querySelectorAll('.predict-num.selected');
-        console.log('[savePredict] key=' + key + ' selected total=' + allSelected.length);
-        allSelected.forEach(el => {
-            // data-prow 标识该号码所属的预选行；缺失时归到 '0'
-            const prow = el.dataset.prow || '0';
-            const gi = el.dataset.gi;
-            const n = parseInt(el.dataset.n);
-            if (!rows[prow]) rows[prow] = {};
-            if (!rows[prow][gi]) rows[prow][gi] = [];
-            if (rows[prow][gi].indexOf(n) === -1) rows[prow][gi].push(n);
-        });
+        // 严格按 tr.predict-row 在 DOM 中的顺序分行收集选中号码。
+        // 每个预选行是独立的一条记录，行与行之间互不影响：
+        //   - 只在该 tr 内部查询 .predict-num.selected，绝对不会跨行收集
+        //   - 行号用 tr 的 DOM 顺序索引（0,1,2...），不依赖 data-prow / data-predictRow
+        //     等可能因重建/属性丢失而失效的属性
+        const predictRows = panel.querySelectorAll('tr.predict-row');
+        console.log('[savePredict] key=' + key + ' predictRows.length=' + predictRows.length);
 
         // 取最近一期作为基础期号
         const lastPeriod = d.rows.length > 0 ? d.rows[d.rows.length - 1].period : '';
         const nextPeriod = lastPeriod ? (parseInt(lastPeriod) + 1).toString() : '?';
 
-        // 检查是否有选号
-        const rowKeys = Object.keys(rows);
-        console.log('[savePredict] rows:', JSON.stringify(rows));
-        console.log('[savePredict] rowKeys:', rowKeys);
-        if (rowKeys.length === 0) {
-            showCopyToast('⚠️ 请先选择号码再保存');
-            return;
-        }
-
         // 每行预选作为一条独立预测：即使某行只选了部分位（如只选万位），
         // 也作为独立条目保存，其它位按空数组处理，不影响下一行。
         const predictions = [];
-        rowKeys.sort((a, b) => parseInt(a) - parseInt(b)).forEach(prow => {
+        predictRows.forEach((tr, idx) => {
+            // 仅在当前 tr 内查找已选号码，确保不跨行
+            const selectedInRow = tr.querySelectorAll('.predict-num.selected');
+            console.log('[savePredict] row#' + idx + ' (data-predictRow=' + tr.dataset.predictRow + ') selected=' + selectedInRow.length);
+
+            // 按位（gi）分组
+            const byGi = {};
+            selectedInRow.forEach(el => {
+                const gi = el.dataset.gi;
+                const n = parseInt(el.dataset.n);
+                if (byGi[gi] === undefined) byGi[gi] = [];
+                if (byGi[gi].indexOf(n) === -1) byGi[gi].push(n);
+            });
+
+            // 按位的顺序生成 picks（每位独立，未选号为空数组）
             const picks = [];
             let hasAny = false;
             for (let gi = 0; gi < groupLabels.length; gi++) {
-                // 去重 + 排序；该行该位未选号时为空数组
-                const nums = Array.from(new Set(rows[prow][gi] || [])).sort((a, b) => a - b);
+                const nums = Array.from(new Set(byGi[gi] || [])).sort((a, b) => a - b);
                 picks.push(nums);
                 if (nums.length > 0) hasAny = true;
             }
-            console.log('[savePredict] prow=' + prow + ' picks=' + JSON.stringify(picks) + ' hasAny=' + hasAny);
+            console.log('[savePredict] row#' + idx + ' picks=' + JSON.stringify(picks) + ' hasAny=' + hasAny);
             if (!hasAny) return; // 完全空行跳过
 
             // 计算总注数（空位按 1 计，不影响其它位）
@@ -473,7 +470,7 @@
                 targetPeriod: nextPeriod,
                 picks: picks,
                 totalCombos: totalCombos,
-                note: '走势图选号 ' + d.name + ' (预选' + (parseInt(prow) + 1) + ')',
+                note: '走势图选号 ' + d.name + ' (预选' + (idx + 1) + ')',
                 source: 'chart'
             });
         });
