@@ -417,21 +417,19 @@
         }
         const groupLabels = d.positionLabels;
 
-        // 按行收集选中号码（按 DOM 中的 tr 顺序分组，不依赖 data-prow）
+        // 按预选行分组收集选中号码：完全依据每个号码元素自身的 data-prow 归属，
+        // 不依赖 tr 在 DOM 中的顺序或索引，确保每个预选行相互独立、互不影响。
         const rows = {};
-        const predictRows = panel.querySelectorAll('tr.predict-row');
-        console.log('[savePredict] key=' + key + ' panel found, predictRows.length=' + predictRows.length);
-        predictRows.forEach((tr, idx) => {
-            const prow = String(idx);
-            rows[prow] = {};
-            const selectedInRow = tr.querySelectorAll('.predict-num.selected');
-            console.log('[savePredict] row ' + idx + ' selected count=' + selectedInRow.length);
-            selectedInRow.forEach(el => {
-                const gi = el.dataset.gi;
-                const n = parseInt(el.dataset.n);
-                if (!rows[prow][gi]) rows[prow][gi] = [];
-                if (rows[prow][gi].indexOf(n) === -1) rows[prow][gi].push(n);
-            });
+        const allSelected = panel.querySelectorAll('.predict-num.selected');
+        console.log('[savePredict] key=' + key + ' selected total=' + allSelected.length);
+        allSelected.forEach(el => {
+            // data-prow 标识该号码所属的预选行；缺失时归到 '0'
+            const prow = el.dataset.prow || '0';
+            const gi = el.dataset.gi;
+            const n = parseInt(el.dataset.n);
+            if (!rows[prow]) rows[prow] = {};
+            if (!rows[prow][gi]) rows[prow][gi] = [];
+            if (rows[prow][gi].indexOf(n) === -1) rows[prow][gi].push(n);
         });
 
         // 取最近一期作为基础期号
@@ -447,21 +445,22 @@
             return;
         }
 
-        // 每行预选作为一条独立预测（即使每行只选了部分位，也保留为独立条目）
+        // 每行预选作为一条独立预测：即使某行只选了部分位（如只选万位），
+        // 也作为独立条目保存，其它位按空数组处理，不影响下一行。
         const predictions = [];
         rowKeys.sort((a, b) => parseInt(a) - parseInt(b)).forEach(prow => {
             const picks = [];
             let hasAny = false;
             for (let gi = 0; gi < groupLabels.length; gi++) {
-                // 去重 + 排序
+                // 去重 + 排序；该行该位未选号时为空数组
                 const nums = Array.from(new Set(rows[prow][gi] || [])).sort((a, b) => a - b);
                 picks.push(nums);
                 if (nums.length > 0) hasAny = true;
             }
             console.log('[savePredict] prow=' + prow + ' picks=' + JSON.stringify(picks) + ' hasAny=' + hasAny);
-            if (!hasAny) return; // 空行跳过
+            if (!hasAny) return; // 完全空行跳过
 
-            // 计算总注数
+            // 计算总注数（空位按 1 计，不影响其它位）
             let totalCombos = 1;
             for (const p of picks) {
                 totalCombos *= Math.max(p.length, 1);
