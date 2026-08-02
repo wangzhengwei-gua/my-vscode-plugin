@@ -41,6 +41,15 @@ const LOTTERY_SOURCES = {
         areas: [['num', 'cfont2', 5]],
         output: 'pl5.json',
         limit: 500
+    },
+    fc3d: {
+        name: '福彩3D',
+        url: 'https://datachart.500.com/sd/history/inc/history.php?limit={limit}&sort=0',
+        referer: 'https://datachart.500.com/sd/',
+        encoding: 'gb2312',
+        areas: [['num', 'cfont2', 3]],
+        output: 'fc3d.json',
+        limit: 500
     }
 };
 

@@ -384,7 +384,7 @@
             ? '格式：前区 1-35 选 5+ 个  +  后区 1-12 选 2+ 个'
             : (key === 'ssq')
             ? '格式：红球 1-33 选 6+ 个  +  蓝球 1-16 选 1+ 个'
-            : (key === 'pl3')
+            : (key === 'pl3' || key === 'fc3d')
             ? '格式：百位 / 十位 / 个位  每位 0-9'
             : '格式：万位 / 千位 / 百位 / 十位 / 个位  每位 0-9';
         const text = [header, formatHint, '---', lines.join('\n').trim() || '(空)'].join('\n');
@@ -593,8 +593,8 @@
         if (!d) return;
         const panel = document.getElementById('panel-' + key);
         if (!panel) return;
-        // 只对排列三/五做
-        if (d.key !== 'pl3' && d.key !== 'pl5') return;
+        // 只对排列三/五/福彩3D做
+        if (d.key !== 'pl3' && d.key !== 'pl5' && d.key !== 'fc3d') return;
 
         // 找到或创建转移统计容器
         let transDiv = document.getElementById('trans-' + key);

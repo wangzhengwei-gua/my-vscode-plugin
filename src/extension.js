@@ -111,9 +111,9 @@ function checkPrediction(pred, history) {
         if (!hit) allHit = false;
     }
 
-    // 排列三/排列五：要求每位都命中（直选）
+    // 排列三/排列五/福彩3D：要求每位都命中（直选）
     // 大乐透/双色球：要求"选中号码集合" ⊇ "开奖号码集合"（复式命中）
-    if (pred.type === 'pl3' || pred.type === 'pl5') {
+    if (pred.type === 'pl3' || pred.type === 'pl5' || pred.type === 'fc3d') {
         if (!allHit) return null;
     } else {
         // dlt/ssq: 检查所有开奖号码是否都在用户选号池中（不区分位置）
@@ -230,6 +230,20 @@ const LOTTERY_TYPES = [
             { label: '百', pick: (h) => h.num[2], max: 9 },
             { label: '十', pick: (h) => h.num[3], max: 9 },
             { label: '个', pick: (h) => h.num[4], max: 9 }
+        ],
+        allNums: (h) => h.num,
+        bigFn: (n) => n >= 5,
+        roadFn: (n) => n % 3
+    },
+    {
+        key: 'fc3d',
+        name: '福彩3D',
+        emoji: '🎁',
+        file: 'fc3d.json',
+        positions: [
+            { label: '百', pick: (h) => h.num[0], max: 9 },
+            { label: '十', pick: (h) => h.num[1], max: 9 },
+            { label: '个', pick: (h) => h.num[2], max: 9 }
         ],
         allNums: (h) => h.num,
         bigFn: (n) => n >= 5,
@@ -714,7 +728,8 @@ function activate(context) {
         const pick = await vscode.window.showQuickPick(
             [
                 { label: '🎯 排列三', value: 'pl3' },
-                { label: '🎰 排列五', value: 'pl5' }
+                { label: '🎰 排列五', value: 'pl5' },
+                { label: '🎁 福彩3D', value: 'fc3d' }
             ],
             { placeHolder: '选择彩种' }
         );
@@ -778,6 +793,7 @@ function activate(context) {
             [
                 { label: '🎯 排列三', value: 'pl3' },
                 { label: '🎰 排列五', value: 'pl5' },
+                { label: '🎁 福彩3D', value: 'fc3d' },
                 { label: '🎲 大乐透', value: 'dlt' },
                 { label: '🔴 双色球', value: 'ssq' }
             ],
@@ -903,6 +919,7 @@ function activate(context) {
             [
                 { label: '🎯 排列三', value: 'pl3' },
                 { label: '🎰 排列五', value: 'pl5' },
+                { label: '🎁 福彩3D', value: 'fc3d' },
                 { label: '🎲 大乐透', value: 'dlt' },
                 { label: '🔴 双色球', value: 'ssq' }
             ],
@@ -1656,7 +1673,7 @@ function getPredictionsHtml(predictions) {
                     // 判断该号码是否在开奖号中（高亮显示，但不作为"中奖"）
                     let isHit = false;
                     if (drawNums) {
-                        if (p.type === 'pl3' || p.type === 'pl5') {
+                        if (p.type === 'pl3' || p.type === 'pl5' || p.type === 'fc3d') {
                             isHit = (drawNums[i] === n);
                         } else {
                             isHit = drawNums.indexOf(n) !== -1;
@@ -1680,14 +1697,14 @@ function getPredictionsHtml(predictions) {
                     const num = drawNums[i];
                     // 判断每位是否完全命中（用于附加标记）
                     let posHit = false;
-                    if (p.type === 'pl3' || p.type === 'pl5') {
+                    if (p.type === 'pl3' || p.type === 'pl5' || p.type === 'fc3d') {
                         posHit = (p.picks[i] && p.picks[i].indexOf(num) !== -1);
                     } else {
                         posHit = true; // 复式不区分位
                     }
                     const lbl = posLabels[i] || '';
                     drawNumsHtml += '<span style="display:inline-flex;flex-direction:column;align-items:center;margin:0 2px;">';
-                    if (lbl && (p.type === 'pl3' || p.type === 'pl5')) {
+                    if (lbl && (p.type === 'pl3' || p.type === 'pl5' || p.type === 'fc3d')) {
                         drawNumsHtml += '<span style="color:#888;font-size:9px;line-height:1;">' + lbl + '</span>';
                     }
                     drawNumsHtml += '<span style="display:inline-block;min-width:24px;height:24px;line-height:22px;text-align:center;background:' + (posHit ? '#f1c40f' : '#555') + ';color:' + (posHit ? '#000' : '#aaa') + ';border-radius:50%;font-size:12px;font-weight:bold;' + (posHit ? 'box-shadow:0 0 6px rgba(241,196,15,0.6);' : '') + '">' + num + '</span>';
@@ -2382,10 +2399,10 @@ const LIMIT_LABEL = DATA.limit === 0 ? '全部' : DATA.limit + ' 期';
 
     document.getElementById('trend_content').innerHTML = trendHtml;
 
-    // ===== 复式推荐（仅排三/排五）=====
+    // ===== 复式推荐（仅排三/排五/福彩3D）=====
     // 每位选2~5个号码：热号(TOP3)优先 → 温号(频率中等) → 冷号(频率最低)补足
     // 支持 2^N ~ 5^N 复式切换
-    if (DATA.key === 'pl3' || DATA.key === 'pl5') {
+    if (DATA.key === 'pl3' || DATA.key === 'pl5' || DATA.key === 'fc3d') {
         // 计算每位号码的全局频率
         const globalFreq = [];
         for (let pos = 0; pos < posCount; pos++) {
