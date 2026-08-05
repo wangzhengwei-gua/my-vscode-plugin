@@ -4441,7 +4441,7 @@ ${rec.formula}
 <td style="text-align:center;font-weight:bold;">${rankTag}</td>
 <td style="text-align:center;font-family:monospace;font-size:16px;font-weight:bold;color:#38bdf8;letter-spacing:3px;">
 ${comboStr}
-<button class="copy-btn" style="margin-left:6px;padding:2px 8px;font-size:10px;" onclick="doCopy(this, '${comboStr}')">复制</button>
+<button class="copy-btn" style="margin-left:6px;padding:2px 8px;font-size:10px;" data-copy="${Buffer.from(comboStr).toString('base64')}" onclick="copySingle(this)">复制</button>
 </td>
 <td style="text-align:center;">`;
             roadStr.split('').forEach(r => {
@@ -4481,8 +4481,33 @@ ${comboStr}
 </div>
 
 <script>
-// 空脚本 - 测试用
-console.log('road analysis loaded');
+// 使用 VSCode 原生 API 复制（通过消息机制）
+function copyToClipboard(text) {
+    try { const vscode = acquireVsCodeApi(); vscode.postMessage({ command: 'copy', text: text }); } catch(e) {}
+}
+
+function decodeBase64(str) { try { return atob(str); } catch(e) { return str; } }
+
+// 复制复式
+function copyFromData(btn) {
+    copyToClipboard(decodeBase64(btn.getAttribute('data-copy')));
+    btn.innerHTML = '✅ 已复制'; btn.classList.add('copied');
+    setTimeout(() => { btn.innerHTML = '📋 复制'; btn.classList.remove('copied'); }, 1500);
+}
+
+// 复制单注
+function copySingle(btn) {
+    copyToClipboard(decodeBase64(btn.getAttribute('data-copy')));
+    btn.innerHTML = '✅ 已复制'; btn.classList.add('copied');
+    setTimeout(() => { btn.innerHTML = '复制'; btn.classList.remove('copied'); }, 1500);
+}
+
+// 复制全部单注
+function copyAllSingles() {
+    const btn = document.getElementById('copyAllSingleBtn');
+    const el = document.getElementById('singlesData');
+    if (el) { copyToClipboard(el.getAttribute('data-singles')); btn.innerHTML = '✅ 已复制'; btn.classList.add('copied'); setTimeout(() => { btn.innerHTML = '📋 复制全部单注'; btn.classList.remove('copied'); }, 1500); }
+}
 </script>
 
 </body>
