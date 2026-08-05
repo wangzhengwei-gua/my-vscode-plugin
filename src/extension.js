@@ -3988,9 +3988,13 @@ function computeRoadAnalysis(history, cfg) {
  */
 function getRoadAnalysisHtml(result, cfg, N) {
     const R = result;
+    // 从 result 和参数中提取所有 HTML 模板需要的变量
+    const posCount = R.posCount || (cfg && cfg.positions ? cfg.positions.length : 3);
+    const posNames = R.posNames || [];
     const posColors = ['#ef4444', '#22c55e', '#3b82f6', '#f59e0b', '#8b5cf6'];
     const roadColors = { 0: '#06b6d4', 1: '#8b5cf6', 2: '#f59e0b' };
     const roadNums = { 0: '0,3,6,9', 1: '1,4,7', 2: '2,5,8' };
+    const lotteryName = (cfg && cfg.name) || '';
 
     // 工具函数（本函数内使用）
     function getRoad(n) { return n % 3; }
