@@ -4047,6 +4047,13 @@ tr:hover td{background:rgba(99,102,241,.08)}
 .timeline table{min-width:${R.posCount * 180 + 100}px}
 .footer{text-align:center;margin:25px 0 15px;padding:15px;color:#64748b;font-size:11px;border-top:1px solid #334155}
 .pos-header{padding:6px 10px;border-radius:6px;margin-bottom:10px;font-weight:bold;color:white}
+.copy-btn{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:white;border:none;padding:5px 12px;border-radius:6px;font-size:11px;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.copy-btn:hover{transform:scale(1.05);box-shadow:0 2px 8px rgba(99,102,241,.4)}
+.copy-btn:active{transform:scale(.95)}
+.copy-btn.copied{background:linear-gradient(135deg,#10b981,#059669)}
+.copy-all-btn{background:linear-gradient(135deg,#f59e0b,#d97706);color:white;border:none;padding:8px 18px;border-radius:8px;font-size:13px;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:6px;margin:10px 0}
+.copy-all-btn:hover{transform:scale(1.03);box-shadow:0 3px 12px rgba(245,158,11,.4)}
+.copy-all-btn.copied{background:linear-gradient(135deg,#10b981,#059669)}
 </style>
 </head>
 <body>
@@ -4344,11 +4351,17 @@ tr:hover td{background:rgba(99,102,241,.08)}
             const label = sizeLabels[rec.size] || rec.size + '码';
             const color = sizeColors[rec.size] || '#94a3b8';
             const tagClass = idx === 0 ? 'tag-hot' : idx < 2 ? 'tag-warm' : 'tag-alert';
+            // 生成每位号码的文本格式
+            const copyText = rec.display.join(' | ');
 
             html += `
 <div style="background:#334155;border-radius:8px;padding:14px;border-top:3px solid ${color};">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-<span style="font-weight:bold;color:${color};">${label}复式 (${rec.size}*${rec.size}${posCount===3?'':('×'+posCount+'位')})</span><span class="${tagClass}">${rec.count}注</span>
+<span style="font-weight:bold;color:${color};">${label}复式 (${rec.size}*${rec.size}${posCount===3?'':('×'+posCount+'位')})</span>
+<div style="display:flex;align-items:center;gap:8px;">
+<span class="${tagClass}">${rec.count}注</span>
+<button class="copy-btn" onclick="copyText(this, '${copyText.replace(/'/g, "\\'")}')">📋 复制</button>
+</div>
 </div>
 <div style="font-size:${posCount > 3 ? '16' : '20'}px;font-family:monospace;font-weight:bold;text-align:center;padding:12px;background:#1e293b;border-radius:6px;margin-bottom:10px;letter-spacing:${posCount > 3 ? '2' : '4'}px;">
 ${rec.formula}
@@ -4368,6 +4381,9 @@ ${rec.formula}
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
 <div class="card-title" style="color:#ef4444;font-size:15px;margin:0;">🏆 精选单注推荐（按综合评分排序）</div>
 <span style="font-size:11px;color:#94a3b8;">基于五维评分+形态匹配+和值优化</span>
+</div>
+<div style="text-align:right;margin-bottom:10px;">
+<button class="copy-all-btn" id="copyAllSingleBtn" onclick="copyAllSingles()">📋 复制全部单注</button>
 </div>
 <table style="font-size:13px;">
 <tr style="background:#334155;">
@@ -4408,7 +4424,10 @@ ${rec.formula}
             
             html += `<tr ${rowBg}>
 <td style="text-align:center;font-weight:bold;">${rankTag}</td>
-<td style="text-align:center;font-family:monospace;font-size:16px;font-weight:bold;color:#38bdf8;letter-spacing:3px;">${comboStr}</td>
+<td style="text-align:center;font-family:monospace;font-size:16px;font-weight:bold;color:#38bdf8;letter-spacing:3px;">
+${comboStr}
+<button class="copy-btn" style="margin-left:6px;padding:2px 8px;font-size:10px;" onclick="copyText(this, '${comboStr}')">复制</button>
+</td>
 <td style="text-align:center;">`;
             roadStr.split('').forEach(r => {
                 html += `<span class="road-cell r${r}" style="width:22px;height:22px;font-size:10px;line-height:22px;">${r}</span>`;
@@ -4445,6 +4464,68 @@ ${rec.formula}
 <p>🛤️ 012路趋势分析 | ${cfg.name} | 数据驱动 · 智能分析</p>
 </div>
 </div>
+
+<script>
+// 复制文本到剪贴板
+function copyText(btn, text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function() {
+            const original = btn.innerHTML;
+            btn.innerHTML = '✅ 已复制';
+            btn.classList.add('copied');
+            setTimeout(function() {
+                btn.innerHTML = original;
+                btn.classList.remove('copied');
+            }, 1500);
+        }).catch(function() {
+            fallbackCopy(text, btn);
+        });
+    } else {
+        fallbackCopy(text, btn);
+    }
+}
+
+// 降级复制方案
+function fallbackCopy(text, btn) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+        document.execCommand('copy');
+        const original = btn.innerHTML;
+        btn.innerHTML = '✅ 已复制';
+        btn.classList.add('copied');
+        setTimeout(function() {
+            btn.innerHTML = original;
+            btn.classList.remove('copied');
+        }, 1500);
+    } catch (err) {
+        btn.innerHTML = '❌ 失败';
+        setTimeout(function() { btn.innerHTML = '📋 复制'; }, 1500);
+    }
+    document.body.removeChild(textarea);
+}
+
+// 复制全部精选单注
+function copyAllSingles() {
+    const btn = document.getElementById('copyAllSingleBtn');
+    const singles = [];
+`;
+
+    // 收集所有单注号码
+    R.singleRec.forEach((item) => {
+        html += `singles.push('${item.combo.join('') }');\n`;
+    });
+
+    html += `
+    const allText = singles.join('\\n');
+    copyText(btn, allText);
+}
+</script>
+
 </body>
 </html>`;
 
