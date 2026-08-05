@@ -3893,18 +3893,21 @@ function computeRoadAnalysis(history, cfg) {
     }
     
     // 7.2 复式推荐（多规格可选）
-    // 排三: 2/3/4/5 每位选号数，排五: 2/3 每位选号数（避免注数过大）
-    const complexOptions = posCount === 3 ? [2, 3, 4, 5] : [2, 3];
+    // 排三/3D: 2/3/4/5 每位选号数，排五: 2/3/4/5 每位选号数
+    const complexOptions = [2, 3, 4, 5];
     
     const complexRec = complexOptions.map(size => {
         const nums = numScores.map(ps => ps.slice(0, size).map(x => x.num));
         const count = nums.reduce((a, b) => a * b.length, 1);
+        // 生成多行格式的复制文本
+        const copyLines = nums.map((arr, idx) => `${R.posNames[idx]}位：${arr.join(' ')}`).join('\n');
         return {
             size: size,
             nums: nums,
             count: count,
             formula: nums.map(arr => arr.join('')).join('*'),
-            display: nums.map(arr => arr.join(','))
+            display: nums.map(arr => arr.join(',')),
+            copyText: copyLines
         };
     });
     
@@ -4351,8 +4354,6 @@ tr:hover td{background:rgba(99,102,241,.08)}
             const label = sizeLabels[rec.size] || rec.size + '码';
             const color = sizeColors[rec.size] || '#94a3b8';
             const tagClass = idx === 0 ? 'tag-hot' : idx < 2 ? 'tag-warm' : 'tag-alert';
-            // 生成每位号码的文本格式
-            const copyText = rec.display.join(' | ');
 
             html += `
 <div style="background:#334155;border-radius:8px;padding:14px;border-top:3px solid ${color};">
@@ -4360,7 +4361,7 @@ tr:hover td{background:rgba(99,102,241,.08)}
 <span style="font-weight:bold;color:${color};">${label}复式 (${rec.size}*${rec.size}${posCount===3?'':('×'+posCount+'位')})</span>
 <div style="display:flex;align-items:center;gap:8px;">
 <span class="${tagClass}">${rec.count}注</span>
-<button class="copy-btn" onclick="copyText(this, '${copyText.replace(/'/g, "\\'")}')">📋 复制</button>
+<button class="copy-btn" onclick="copyText(this, \`${rec.copyText.replace(/`/g, '\\`')}\`)">📋 复制</button>
 </div>
 </div>
 <div style="font-size:${posCount > 3 ? '16' : '20'}px;font-family:monospace;font-weight:bold;text-align:center;padding:12px;background:#1e293b;border-radius:6px;margin-bottom:10px;letter-spacing:${posCount > 3 ? '2' : '4'}px;">
