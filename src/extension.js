@@ -4481,59 +4481,8 @@ ${comboStr}
 </div>
 
 <script>
-// 使用 VSCode 原生 API 复制（通过消息机制）
-function copyToClipboard(text) {
-    if (typeof acquireVsCodeApi !== 'undefined') {
-        const vscode = acquireVsCodeApi();
-        vscode.postMessage({ command: 'copy', text: text });
-    }
-}
-
-// 监听复制成功消息
-window.addEventListener('message', (event) => {
-    const msg = event.data;
-    if (msg.command === 'copySuccess') {
-        // 找到所有复制按钮并显示成功状态
-        document.querySelectorAll('.copy-btn, .copy-all-btn').forEach(btn => {
-            if (btn.dataset.copied !== 'true') return;
-            btn.innerHTML = '✅ 已复制';
-            btn.classList.add('copied');
-            setTimeout(() => {
-                btn.innerHTML = btn.dataset.originalText || '📋 复制';
-                btn.classList.remove('copied');
-                btn.dataset.copied = 'false';
-            }, 1500);
-        });
-    }
-});
-
-// 从 data 属性复制
-function copyFromData(btn) {
-    const text = decodeBase64(btn.getAttribute('data-copy'));
-    doCopy(btn, text);
-}
-
-// Base64 解码
-function decodeBase64(str) {
-    try { return atob(str); } catch(e) { return str; }
-}
-
-// 执行复制并显示状态
-function doCopy(btn, text) {
-    btn.dataset.originalText = btn.innerHTML;
-    btn.dataset.copied = 'true';
-    copyToClipboard(text);
-}
-
-// 复制全部精选单注
-function copyAllSingles() {
-    const btn = document.getElementById('copyAllSingleBtn');
-    const singlesData = document.getElementById('singlesData');
-    const text = singlesData ? singlesData.getAttribute('data-singles') : '';
-    if (text) {
-        doCopy(btn, text);
-    }
-}
+// 空脚本 - 测试用
+console.log('road analysis loaded');
 </script>
 
 </body>
