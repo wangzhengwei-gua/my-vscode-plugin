@@ -3996,6 +3996,9 @@ function getRoadAnalysisHtml(result, cfg, N) {
     function getRoad(n) { return n % 3; }
     function isOdd(n) { return n % 2 === 1; }
 
+    // 从 result 中提取热门路组合（HTML模板中使用）
+    const hotCombos = (R.combos || []).slice(0, 5).map(c => c[0] || c);
+
     let html = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
