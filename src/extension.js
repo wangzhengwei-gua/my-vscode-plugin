@@ -4354,6 +4354,8 @@ tr:hover td{background:rgba(99,102,241,.08)}
             const label = sizeLabels[rec.size] || rec.size + '码';
             const color = sizeColors[rec.size] || '#94a3b8';
             const tagClass = idx === 0 ? 'tag-hot' : idx < 2 ? 'tag-warm' : 'tag-alert';
+            // 将复制文本编码为 base64 避免特殊字符问题
+            const copyBase64 = Buffer.from(rec.copyText).toString('base64');
 
             html += `
 <div style="background:#334155;border-radius:8px;padding:14px;border-top:3px solid ${color};">
@@ -4361,7 +4363,7 @@ tr:hover td{background:rgba(99,102,241,.08)}
 <span style="font-weight:bold;color:${color};">${label}复式 (${rec.size}*${rec.size}${posCount===3?'':('×'+posCount+'位')})</span>
 <div style="display:flex;align-items:center;gap:8px;">
 <span class="${tagClass}">${rec.count}注</span>
-<button class="copy-btn" onclick="copyText(this, \`${rec.copyText.replace(/`/g, '\\`')}\`)">📋 复制</button>
+<button class="copy-btn" data-copy="${copyBase64}" onclick="copyFromData(this)">📋 复制</button>
 </div>
 </div>
 <div style="font-size:${posCount > 3 ? '16' : '20'}px;font-family:monospace;font-weight:bold;text-align:center;padding:12px;background:#1e293b;border-radius:6px;margin-bottom:10px;letter-spacing:${posCount > 3 ? '2' : '4'}px;">
@@ -4385,6 +4387,7 @@ ${rec.formula}
 </div>
 <div style="text-align:right;margin-bottom:10px;">
 <button class="copy-all-btn" id="copyAllSingleBtn" onclick="copyAllSingles()">📋 复制全部单注</button>
+<span id="singlesData" data-singles="${(R.singleRec || []).map(item => item.combo.join('')).join('\\n')}"></span>
 </div>
 <table style="font-size:13px;">
 <tr style="background:#334155;">
@@ -4467,23 +4470,43 @@ ${comboStr}
 </div>
 
 <script>
-// 复制文本到剪贴板
-function copyText(btn, text) {
+// Base64 解码
+function decodeBase64(str) {
+    try {
+        return atob(str);
+    } catch(e) {
+        return decodeURIComponent(Array.from(atob(str), c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+    }
+}
+
+// 从 data 属性复制
+function copyFromData(btn) {
+    const text = decodeBase64(btn.getAttribute('data-copy'));
+    copyTextCore(btn, text);
+}
+
+// 复制文本核心函数
+function copyTextCore(btn, text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(function() {
-            const original = btn.innerHTML;
-            btn.innerHTML = '✅ 已复制';
-            btn.classList.add('copied');
-            setTimeout(function() {
-                btn.innerHTML = original;
-                btn.classList.remove('copied');
-            }, 1500);
+            showCopied(btn);
         }).catch(function() {
             fallbackCopy(text, btn);
         });
     } else {
         fallbackCopy(text, btn);
     }
+}
+
+// 显示已复制状态
+function showCopied(btn) {
+    const original = btn.innerHTML;
+    btn.innerHTML = '✅ 已复制';
+    btn.classList.add('copied');
+    setTimeout(function() {
+        btn.innerHTML = original;
+        btn.classList.remove('copied');
+    }, 1500);
 }
 
 // 降级复制方案
@@ -4496,13 +4519,7 @@ function fallbackCopy(text, btn) {
     textarea.select();
     try {
         document.execCommand('copy');
-        const original = btn.innerHTML;
-        btn.innerHTML = '✅ 已复制';
-        btn.classList.add('copied');
-        setTimeout(function() {
-            btn.innerHTML = original;
-            btn.classList.remove('copied');
-        }, 1500);
+        showCopied(btn);
     } catch (err) {
         btn.innerHTML = '❌ 失败';
         setTimeout(function() { btn.innerHTML = '📋 复制'; }, 1500);
@@ -4513,18 +4530,11 @@ function fallbackCopy(text, btn) {
 // 复制全部精选单注
 function copyAllSingles() {
     const btn = document.getElementById('copyAllSingleBtn');
-    const singles = [`;
-
-    // 收集所有单注号码（内联到JS数组中）
-    if (R.singleRec && Array.isArray(R.singleRec)) {
-        R.singleRec.forEach((item) => {
-            html += `'${item.combo.join('')}',`;
-        });
+    const singlesData = document.getElementById('singlesData');
+    const text = singlesData ? singlesData.getAttribute('data-singles') : '';
+    if (text) {
+        copyTextCore(btn, text);
     }
-
-    html += `];
-    const allText = singles.join('\\n');
-    copyText(btn, allText);
 }
 </script>
 
