@@ -3899,8 +3899,8 @@ function computeRoadAnalysis(history, cfg) {
     const complexRec = complexOptions.map(size => {
         const nums = numScores.map(ps => ps.slice(0, size).map(x => x.num));
         const count = nums.reduce((a, b) => a * b.length, 1);
-        // 生成多行格式的复制文本
-        const copyLines = nums.map((arr, idx) => `${R.posNames[idx]}位：${arr.join(' ')}`).join('\n');
+        // 生成多行格式的复制文本（带彩种标题）
+        const copyLines = `${cfg.name}：\n` + nums.map((arr, idx) => `${R.posNames[idx]}位：${arr.join(' ')}`).join('\n');
         return {
             size: size,
             nums: nums,
