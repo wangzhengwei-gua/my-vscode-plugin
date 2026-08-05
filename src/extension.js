@@ -4090,7 +4090,7 @@ tr:hover td{background:rgba(99,102,241,.08)}
         let itemClass = 'normal';
         if (ratio >= 0.7) itemClass = 'hot';
         else if (ratio <= 0.25) itemClass = 'cold';
-        const tag = ratio >= 0.7 ? '★热' : ratio <= 0.25 ? '☆冷' '';
+        const tag = ratio >= 0.7 ? '★热' : (ratio <= 0.25 ? '☆冷' : '');
         
         html += `<div class="combo-item ${itemClass}">
 <div class="combo-code">${combo}</div>
