@@ -3992,6 +3992,10 @@ function getRoadAnalysisHtml(result, cfg, N) {
     const roadColors = { 0: '#06b6d4', 1: '#8b5cf6', 2: '#f59e0b' };
     const roadNums = { 0: '0,3,6,9', 1: '1,4,7', 2: '2,5,8' };
 
+    // 工具函数（本函数内使用）
+    function getRoad(n) { return n % 3; }
+    function isOdd(n) { return n % 2 === 1; }
+
     let html = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
