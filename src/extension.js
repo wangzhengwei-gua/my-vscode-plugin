@@ -3838,6 +3838,133 @@ function computeRoadAnalysis(history, cfg) {
         }
     }
 
+    // ========== 7. 智能号码推荐 ==========
+    
+    // 7.1 每位每个号码的综合评分
+    const numScores = [];
+    for (let p = 0; p < posCount; p++) {
+        numScores[p] = [];
+        for (let n = 0; n <= 9; n++) {
+            const road = getRoad(n);
+            const odd = isOdd(n);
+            
+            let score = 0;
+            const weights = { freq: 0.25, miss: 0.30, roadTrend: 0.20, oddEven: 0.10, momentum: 0.15 };
+            
+            // 因子1: 频次得分
+            let numCount = 0;
+            for (let i = 0; i < N; i++) { if (history[i].num[p] === n) numCount++; }
+            score += (numCount / N) * 10 * weights.freq;
+            
+            // 因子2: 遗漏回归得分
+            let numMiss = 0;
+            for (let i = N - 1; i >= 0; i--) { if (history[i].num[p] === n) break; numMiss++; }
+            const avgMissAll = N / 10;
+            if (numMiss > avgMissAll * 2) score += 0.25 * weights.miss;
+            else if (numMiss > avgMissAll * 1.3) score += 0.18 * weights.miss;
+            else if (numMiss > avgMissAll * 0.8) score += 0.10 * weights.miss;
+            else score += 0.05 * weights.miss;
+            
+            // 因子3: 012路趋势得分
+            const advice = trendAdvice[p][road];
+            if (advice.status === 'cold' || advice.alert === '超漏') score += 0.20 * weights.roadTrend;
+            else if (advice.status === 'hot') score += 0.10 * weights.roadTrend;
+            else score += 0.15 * weights.roadTrend;
+            
+            // 因子4: 奇偶平衡补偿
+            const rs = roadStats[p][road];
+            if (rs.total > 0) {
+                const actualOddPct = rs.odd / rs.total;
+                const numsInRoad = road === 0 ? [0,3,6,9] : road === 1 ? [1,4,7] : [2,5,8];
+                const theoryOddPct = numsInRoad.filter(x => x % 2 === 1).length / numsInRoad.length;
+                if (odd && actualOddPct < theoryOddPct - 0.03) score += 0.10 * weights.oddEven;
+                else if (!odd && actualOddPct > theoryOddPct + 0.03) score += 0.10 * weights.oddEven;
+                else score += 0.05 * weights.oddEven;
+            }
+            
+            // 因子5: 近期动量
+            let recentCount = 0;
+            for (let i = Math.max(0, N - 20); i < N; i++) { if (history[i].num[p] === n) recentCount++; }
+            score += (recentCount / 20) * weights.momentum;
+            
+            numScores[p].push({ num: n, score: parseFloat(score.toFixed(4)), road: road, miss: numMiss });
+        }
+        numScores[p].sort((a, b) => b.score - a.score);
+    }
+    
+    // 7.2 复式推荐
+    const topSmall = 2;
+    const topMedium = posCount === 3 ? 5 : 3;
+    
+    const complexRec = {
+        small: {
+            nums: numScores.map(ps => ps.slice(0, topSmall).map(x => x.num)),
+            count: 0,
+            formula: ''
+        },
+        medium: {
+            nums: numScores.map(ps => ps.slice(0, topMedium).map(x => x.num)),
+            count: 0,
+            formula: ''
+        }
+    };
+    complexRec.small.count = complexRec.small.nums.reduce((a, b) => a * b.length, 1);
+    complexRec.small.formula = complexRec.small.nums.map(arr => arr.join('')).join('*');
+    complexRec.medium.count = complexRec.medium.nums.reduce((a, b) => a * b.length, 1);
+    complexRec.medium.formula = complexRec.medium.nums.map(arr => arr.join('')).join('*');
+    
+    // 7.3 精选单注推荐
+    function generateTopSingles(numScoresArr, maxResults, posCnt) {
+        const results = [];
+        const tops = numScoresArr.map(ps => ps.slice(0, 4).map(x => x.num));
+        
+        function genCombo(depth, currentCombo, currentScore) {
+            if (depth === posCnt) {
+                results.push({ combo: [...currentCombo], score: parseFloat(currentScore.toFixed(4)) });
+                return;
+            }
+            for (let i = 0; i < tops[depth].length && results.length < maxResults * 3; i++) {
+                const n = tops[depth][i];
+                const s = numScoresArr[depth].find(x => x.num === n)?.score || 0;
+                currentCombo.push(n);
+                genCombo(depth + 1, currentCombo, currentScore + s);
+                currentCombo.pop();
+            }
+        }
+        genCombo(0, [], 0);
+        results.sort((a, b) => b.score - a.score);
+        
+        const seen = new Set();
+        const unique = [];
+        for (const r of results) {
+            const key = r.combo.join('');
+            if (!seen.has(key)) { seen.add(key); unique.push(r); if (unique.length >= maxResults) break; }
+        }
+        return unique;
+    }
+    
+    const rawSingles = generateTopSingles(numScores, posCount === 3 ? 25 : 60, posCount);
+    const hotCombos = sortedCombos.slice(0, 5).map(c => c[0]);
+    
+    for (const rs of rawSingles) {
+        const comboRoad = rs.combo.map(n => getRoad(n)).join('');
+        let bonus = 0;
+        const comboIdx = hotCombos.indexOf(comboRoad);
+        if (comboIdx !== -1) bonus += (5 - comboIdx) * 0.02;
+        
+        const sumVal = rs.combo.reduce((a, b) => a + b, 0);
+        const theorySum = posCount === 3 ? 13.5 : 22.5;
+        if (Math.abs(sumVal - theorySum) <= (posCount === 3 ? 9 : 15)) bonus += 0.01;
+        
+        const sorted = [...rs.combo].sort((a, b) => a - b);
+        for (let i = 0; i < sorted.length - 1; i++) {
+            if (sorted[i + 1] - sorted[i] === 1) { bonus += 0.008; break; }
+        }
+        
+        rs.finalScore = parseFloat((rs.score + bonus).toFixed(4));
+    }
+    rawSingles.sort((a, b) => b.finalScore - a.finalScore);
+
     return {
         posCount: posCount,
         posNames: posNames,
@@ -3845,11 +3972,14 @@ function computeRoadAnalysis(history, cfg) {
         roadStats: roadStats,
         segData: segData,
         missData: missData,
-        combos: sortedCombos.slice(0, 20), // TOP20组合
+        combos: sortedCombos.slice(0, 20),
         recentTrend: recentTrend,
         trendAdvice: trendAdvice,
         latestPeriod: history[N - 1]?.period || '',
-        firstPeriod: history[0]?.period || ''
+        firstPeriod: history[0]?.period || '',
+        numScores: numScores,
+        complexRec: complexRec,
+        singleRec: rawSingles.slice(0, posCount === 3 ? 10 : 15)
     };
 }
 
@@ -4176,24 +4306,148 @@ tr:hover td{background:rgba(99,102,241,.08)}
     }
     html += `</div>`;
 
-    // 综合推荐
+    // 综合推荐 - 012路形态
     html += `<div class="insight-box" style="background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(6,182,212,.08));border-color:#10b981;">
-<div class="insight-title" style="color:#10b981;">🎯 综合推荐</div>
+<div class="insight-title" style="color:#10b981;">🎯 综合推荐 - 012路组合形态</div>
 <p style="font-size:13px;line-height:1.8;">
 基于以上数据分析，下期推荐的<strong>012路组合形态</strong>：<br/>
 `;
     
-    // 推荐组合逻辑
     const topCombos = R.combos.slice(0, 3);
     topCombos.forEach(([combo, count], idx) => {
         const stars = idx === 0 ? '⭐' : idx === 1 ? '🌟' : '✨';
         html += `${stars} <strong>${combo}</strong> (${count}次, ${((count/N)*100).toFixed(1)}%) &nbsp;&nbsp;`;
     });
     
-    html += `<br/><br/>
-<small style="color:#94a3b8;">数据范围：${R.firstPeriod} ~ ${R.latestPeriod} | 分析期数：${N}期<br/>
-本报告基于历史数据统计分析，仅供技术研究参考，不构成任何投注建议</small>
-</p></div>
+    html += `</p></div>`;
+
+    // ========== 八、智能号码推荐 ==========
+    if (R.complexRec && R.singleRec) {
+        html += `
+<h2>八、🎲 智能号码推荐</h2>
+
+<!-- 复式推荐 -->
+<div class="card" style="border-left:4px solid #f59e0b;">
+<div class="card-title" style="color:#f59e0b;font-size:15px;">📋 复式推荐</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:10px;">
+
+<!-- 小复式 -->
+<div style="background:#334155;border-radius:8px;padding:14px;">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+<span style="font-weight:bold;color:#38bdf8;">精简复式</span><span class="tag-hot">${R.complexRec.small.count}注</span>
+</div>
+<div style="font-size:20px;font-family:monospace;font-weight:bold;text-align:center;padding:12px;background:#1e293b;border-radius:6px;margin-bottom:10px;letter-spacing:4px;">
+${R.complexRec.small.formula}
+</div>
+<div style="font-size:11px;color:#94a3b8;line-height:1.8;">
+`;
+        for (let p = 0; p < R.posCount; p++) {
+            const nums = R.complexRec.small.nums[p];
+            const scores = nums.map(n => {
+                const item = (R.numScores[p] || []).find(x => x.num === n);
+                return item ? n + '(' + item.score.toFixed(2) + ')' : n;
+            });
+            html += `<div>${R.posNames[p]}位: <span style="color:${posColors[p]}">${nums.join(', ')}</span> [评分: ${scores.join(' ')}]</div>`;
+        }
+        html += `
+</div>
+</div>
+
+<!-- 中复式 -->
+<div style="background:#334155;border-radius:8px;padding:14px;">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+<span style="font-weight:bold;color:#a78bfa;">标准复式</span><span class="tag-warm">${R.complexRec.medium.count}注</span>
+</div>
+<div style="font-size:18px;font-family:monospace;font-weight:bold;text-align:center;padding:12px;background:#1e293b;border-radius:6px;margin-bottom:10px;letter-spacing:3px;">
+${R.complexRec.medium.formula}
+</div>
+<div style="font-size:11px;color:#94a3b8;line-height:1.8;">
+`;
+        for (let p = 0; p < R.posCount; p++) {
+            const nums = R.complexRec.medium.nums[p];
+            html += `<div>${R.posNames[p]}位: <span style="color:${posColors[p]}">${nums.join(', ')}</span></div>`;
+        }
+        html += `
+</div>
+</div>
+
+</div>
+</div>
+
+<!-- 精选单注 -->
+<div class="card" style="border-left:4px solid #ef4444;margin-top:14px;">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+<div class="card-title" style="color:#ef4444;font-size:15px;margin:0;">🏆 精选单注推荐（按综合评分排序）</div>
+<span style="font-size:11px;color:#94a3b8;">基于五维评分+形态匹配+和值优化</span>
+</div>
+<table style="font-size:13px;">
+<tr style="background:#334155;">
+<th width="50">排名</th>
+<th width="100">号码</th>
+<th width="80">012路</th>
+<th width="70">和值</th>
+<th width="80">综合分</th>
+<th>特征标签</th>
+</tr>`;
+
+        R.singleRec.forEach((item, idx) => {
+            const comboStr = item.combo.join('');
+            const roadStr = item.combo.map(n => getRoad(n)).join('');
+            const sumVal = item.combo.reduce((a, b) => a + b, 0);
+            
+            // 特征标签
+            const tags = [];
+            // 奇偶形态
+            const oddCnt = item.combo.filter(n => isOdd(n)).length;
+            tags.push(oddCnt > R.posCount / 2 ? '奇多' : oddCnt < R.posCount / 2 ? '偶多' : '均衡');
+            // 大小形态
+            const bigCnt = item.combo.filter(n => n >= 5).length;
+            tags.push(bigCnt > R.posCount / 2 ? '大多' : bigCnt < R.posCount / 2 ? '小多' : '中小');
+            // 连号
+            const sortedCombo = [...item.combo].sort((a, b) => a - b);
+            let hasConsec = false;
+            for (let i = 0; i < sortedCombo.length - 1; i++) { if (sortedCombo[i+1] - sortedCombo[i] === 1) hasConsec = true; }
+            if (hasConsec) tags.push('连号');
+            // 路形态是否热门
+            if (hotCombos.includes(roadStr)) tags.push('热形态');
+            
+            const rankTag = idx === 0 ? '<span class="tag-hot">TOP1</span>' : 
+                           idx < 3 ? '<span class="tag-warm">TOP' + (idx+1) + '</span>' :
+                           '<span style="color:#64748b">' + (idx+1) + '</span>';
+            
+            const rowBg = idx % 2 === 0 ? '' : 'style="background:rgba(51,65,85,.3)"';
+            
+            html += `<tr ${rowBg}>
+<td style="text-align:center;font-weight:bold;">${rankTag}</td>
+<td style="text-align:center;font-family:monospace;font-size:16px;font-weight:bold;color:#38bdf8;letter-spacing:3px;">${comboStr}</td>
+<td style="text-align:center;">`;
+            roadStr.split('').forEach(r => {
+                html += `<span class="road-cell r${r}" style="width:22px;height:22px;font-size:10px;line-height:22px;">${r}</span>`;
+            });
+            html += `</td>
+<td style="text-align:center;font-weight:bold;color:#f59e0b;">${sumVal}</td>
+<td style="text-align:center;color:#10b981;font-weight:bold;">${item.finalScore.toFixed(3)}</td>
+<td style="text-align:left;font-size:11px;">${tags.map(t => '<span style="background:#475569;padding:1px 6px;border-radius:3px;margin:1px;display:inline-block;">' + t + '</span>').join(' ')}</td>
+</tr>`;
+        });
+
+        html += `
+</table>
+
+<div class="insight-box" style="margin-top:14px;background:linear-gradient(135deg,rgba(239,68,68,.08),rgba(245,158,11,.05));border-color:rgba(239,68,68,.3);">
+<div class="insight-title" style="color:#f59e0b;">💡 推荐说明</div>
+<ul class="insight-list">
+<li><strong>精简复式</strong>：每位取评分最高的2个号码，共 ${R.complexRec.small.count} 注，适合精准投注</li>
+<li><strong>标准复式</strong>：每位取评分最高的${posCount===3?'5':'3'}个号码，共 ${R.complexRec.medium.count} 注，覆盖面更广</li>
+<li><strong>精选单注</strong>：基于频次、遗漏回归、012路趋势、奇偶补偿、近期动量五维加权评分，结合历史热门形态和连号/和值优化</li>
+<li>评分越高代表该组合在当前数据特征下的出现概率越大</li>
+</ul>
+</div>
+</div>`;
+    }
+
+    html += `
+<small style="color:#94a3b8;display:block;margin-top:15px;text-align:center;">数据范围：${R.firstPeriod} ~ ${R.latestPeriod} | 分析期数：${N}期<br/>
 
 <div class="footer">
 <p>🛤️ 012路趋势分析 | ${cfg.name} | 数据驱动 · 智能分析</p>
