@@ -4513,15 +4513,14 @@ function fallbackCopy(text, btn) {
 // 复制全部精选单注
 function copyAllSingles() {
     const btn = document.getElementById('copyAllSingleBtn');
-    const singles = [];
-`;
+    const singles = [`;
 
-    // 收集所有单注号码
+    // 收集所有单注号码（内联到JS代码中）
     R.singleRec.forEach((item) => {
-        html += `singles.push('${item.combo.join('') }');\n`;
+        html += `'${item.combo.join('')}',`;
     });
 
-    html += `
+    html += `];
     const allText = singles.join('\\n');
     copyText(btn, allText);
 }
