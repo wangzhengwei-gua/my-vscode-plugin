@@ -159,9 +159,37 @@ async function crawlOne(type, dataDir, limit) {
     const effLimit = limit || config.limit;
     console.log(`[${name}] 开始爬取 (limit=${effLimit})...`);
 
-    // 请求
+    // 请求（带重试，最多3次，指数退避）
     const url = config.url.replace('{limit}', effLimit);
-    const buf = await fetchBuffer(url, config.referer);
+    let buf;
+    const maxRetries = 3;
+    let lastErr;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            buf = await fetchBuffer(url, config.referer);
+            lastErr = null;
+            break;
+        } catch (e) {
+            lastErr = e;
+            console.warn(`[${name}] 第 ${attempt}/${maxRetries} 次请求失败: ${e.message}`);
+            if (attempt < maxRetries) {
+                // 指数退避：1s, 2s, 4s
+                const delay = 1000 * Math.pow(2, attempt - 1);
+                await new Promise(r => setTimeout(r, delay));
+                console.log(`[${name}] 等待 ${delay}ms 后重试...`);
+            }
+        }
+    }
+    if (lastErr) {
+        // 友好错误提示
+        let hint = '';
+        if (/timeout|超时/i.test(lastErr.message)) hint = '（服务器响应慢，可稍后再试）';
+        else if (/HTTP 4\d\d/.test(lastErr.message)) hint = '（请求被限制，请稍后再试）';
+        else if (/HTTP 5\d\d/.test(lastErr.message)) hint = '（服务器异常，请稍后再试）';
+        else if (/ECONNREFUSED|ENOTFOUND|ECONNRESET/i.test(lastErr.message)) hint = '（网络连接问题，请检查网络）';
+        throw new Error(`${name} 请求失败: ${lastErr.message}${hint}`);
+    }
+
     const html = decodeBuffer(buf, config.encoding);
 
     // 提取数据行
@@ -170,6 +198,10 @@ async function crawlOne(type, dataDir, limit) {
     let m;
     while ((m = rowPattern.exec(html)) !== null) {
         rows.push(m[0]);
+    }
+
+    if (rows.length === 0) {
+        throw new Error(`${name} 网页结构变化或无数据（未匹配到任何数据行，可能网站改版）`);
     }
 
     const history = [];
@@ -191,7 +223,7 @@ async function crawlOne(type, dataDir, limit) {
     }
 
     if (history.length === 0) {
-        throw new Error(`${name} 未能解析到有效数据`);
+        throw new Error(`${name} 匹配到 ${rows.length} 行但未能解析出有效号码（CSS 类名可能变更）`);
     }
 
     // 写入文件
@@ -226,7 +258,10 @@ async function crawlOne(type, dataDir, limit) {
 async function crawlAll(dataDir, limit) {
     const results = {};
     const types = Object.keys(LOTTERY_SOURCES);
-    for (const type of types) {
+    for (let i = 0; i < types.length; i++) {
+        const type = types[i];
+        // 彩种间间隔 500ms，降低被限流概率
+        if (i > 0) await new Promise(r => setTimeout(r, 500));
         try {
             results[type] = await crawlOne(type, dataDir, limit);
         } catch (e) {

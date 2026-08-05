@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.1.21",
+    "version": "0.1.22",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -26,6 +26,9 @@
         "onCommand:myPlugin.smartPick",
         "onCommand:myPlugin.showPredictions",
         "onCommand:myPlugin.maPatterns",
+        "onCommand:myPlugin.probabilityPick",
+        "onCommand:myPlugin.probabilityBacktest",
+        "onCommand:myPlugin.roadAnalysis",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -61,6 +64,18 @@
             {
                 "command": "myPlugin.maPatterns",
                 "title": "MA Pattern Detection"
+            },
+            {
+                "command": "myPlugin.probabilityPick",
+                "title": "Probability Smart Recommendation"
+            },
+            {
+                "command": "myPlugin.probabilityBacktest",
+                "title": "Probability Backtest"
+            },
+            {
+                "command": "myPlugin.roadAnalysis",
+                "title": "012路趋势分析"
             }
         ],
         "viewsContainers": {

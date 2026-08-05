@@ -700,6 +700,7 @@ function activate(context) {
                 const results = await crawler.crawlAll(saveDir, limit);
                 let okCount = 0;
                 let failMsg = [];
+                const totalCount = Object.keys(results).length;
                 Object.keys(results).forEach(type => {
                     if (results[type] && !results[type].error) {
                         okCount++;
@@ -707,14 +708,19 @@ function activate(context) {
                         failMsg.push(type + ': ' + (results[type] && results[type].error));
                     }
                 });
-                if (okCount === 4) {
+                if (okCount === totalCount) {
                     vscode.window.showInformationMessage(
-                        '✅ 数据爬取完成！4 个彩种全部成功，各 ' + limit + ' 期。请重新打开走势图查看。'
+                        '✅ 数据爬取完成！' + totalCount + ' 个彩种全部成功，各 ' + limit + ' 期。请重新打开走势图查看。'
                     );
                 } else {
-                    vscode.window.showWarningMessage(
-                        '⚠️ 部分爬取失败：' + failMsg.join('; ') + '。成功 ' + okCount + '/4。'
+                    const retryBtn = await vscode.window.showWarningMessage(
+                        '⚠️ 部分爬取失败：' + failMsg.join('; ') + '。成功 ' + okCount + '/' + totalCount + '。',
+                        '🔄 重试',
+                        '稍后再试'
                     );
+                    if (retryBtn === '🔄 重试') {
+                        vscode.commands.executeCommand('myPlugin.refreshData');
+                    }
                 }
             } catch (e) {
                 vscode.window.showErrorMessage('❌ 爬取失败: ' + e.message);
@@ -889,6 +895,228 @@ function activate(context) {
     });
     context.subscriptions.push(smartPickDisposable);
 
+    // 概率统计智能推荐命令
+    let probPickDisposable = vscode.commands.registerCommand('myPlugin.probabilityPick', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎯 排列三', value: 'pl3', description: '统计概率智能推荐' },
+                { label: '🎰 排列五', value: 'pl5', description: '统计概率智能推荐' },
+                { label: '🎁 福彩3D', value: 'fc3d', description: '统计概率智能推荐' }
+            ],
+            { placeHolder: '选择要分析的彩种（仅支持数字彩）' }
+        );
+        if (!pick) return;
+
+        const limitPick = await vscode.window.showQuickPick(
+            [
+                { label: '100 期', value: 100 },
+                { label: '200 期', value: 200 },
+                { label: '500 期', value: 500 },
+                { label: '全部', value: 0 }
+            ],
+            { placeHolder: '基于多少期历史数据进行概率分析' }
+        );
+        if (!limitPick) return;
+        const limit = limitPick.value;
+
+        const compoundPick = await vscode.window.showQuickPick(
+            [
+                { label: '🤖 自动模式', value: 'auto', description: '基于评分落差阈值动态决定每位选 2~5 个' },
+                { label: '2 × 2 × ... (每位2个)', value: 2, description: '最小复式，注数最少' },
+                { label: '3 × 3 × ... (每位3个)', value: 3, description: '中等复式' },
+                { label: '4 × 4 × ... (每位4个)', value: 4, description: '较大复式' },
+                { label: '5 × 5 × ... (每位5个)', value: 5, description: '最大复式' },
+                { label: '🎛️ 自定义每位选号数', value: 'custom', description: '每位独立指定 2~5 个' }
+            ],
+            { placeHolder: '选择复式推荐规格' }
+        );
+        if (!compoundPick) return;
+        let compoundSpec;
+        if (compoundPick.value === 'auto') {
+            compoundSpec = undefined;
+        } else if (compoundPick.value === 'custom') {
+            const cfg2 = LOTTERY_TYPES.find(c => c.key === pick.value);
+            const customArr = [];
+            for (let i = 0; i < cfg2.positions.length; i++) {
+                const kPick = await vscode.window.showQuickPick(
+                    [
+                        { label: '2 个', value: 2 },
+                        { label: '3 个', value: 3 },
+                        { label: '4 个', value: 4 },
+                        { label: '5 个', value: 5 }
+                    ],
+                    { placeHolder: cfg2.positions[i].label + '位 选几个号码？' }
+                );
+                if (!kPick) return;
+                customArr.push(kPick.value);
+            }
+            compoundSpec = customArr;
+        } else {
+            compoundSpec = compoundPick.value;
+        }
+
+        const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+        if (!cfg) return;
+
+        let analysis;
+        try {
+            const history = loadLotteryData(cfg);
+
+            if (history.length < 10) {
+                vscode.window.showWarningMessage('数据不足（需要 ≥10 期），请先刷新数据');
+                return;
+            }
+
+            const sliced = limit > 0 ? history.slice(-limit) : history;
+            analysis = computeProbabilityAnalysis(sliced, cfg, compoundSpec);
+        } catch (e) {
+            vscode.window.showErrorMessage('读取数据失败: ' + e.message);
+            return;
+        }
+
+        const panel = vscode.window.createWebviewPanel(
+            'probabilityPick',
+            '🧬 概率统计智能推荐 - ' + cfg.name,
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getProbabilityPickHtml(analysis);
+    });
+    context.subscriptions.push(probPickDisposable);
+
+    // ========== 012路趋势+奇偶比深度分析 ==========
+    let roadAnalysisDisposable = vscode.commands.registerCommand('myPlugin.roadAnalysis', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎯 排列三', value: 'pl3', description: '3位012路趋势+奇偶比分析' },
+                { label: '🎰 排列五', value: 'pl5', description: '5位012路趋势+奇偶比分析' },
+                { label: '🎁 福彩3D', value: 'fc3d', description: '3位012路趋势+奇偶比分析' }
+            ],
+            { placeHolder: '选择要分析的彩种（012路趋势 + 奇偶比）' }
+        );
+        if (!pick) return;
+
+        const limitPick = await vscode.window.showQuickPick(
+            [
+                { label: '最近 50 期', value: 50, description: '短期趋势' },
+                { label: '最近 100 期', value: 100, description: '中期趋势' },
+                { label: '最近 200 期', value: 200, description: '中长趋势' },
+                { label: '最近 300 期', value: 300, description: '长趋势（推荐）' },
+                { label: '全部数据', value: 0, description: '使用所有历史数据' }
+            ],
+            { placeHolder: '选择分析期数范围' }
+        );
+        if (!limitPick) return;
+
+        const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+        if (!cfg) return;
+
+        let history;
+        try {
+            history = loadLotteryData(cfg);
+            if (history.length < 20) {
+                vscode.window.showWarningMessage('数据不足（需要 ≥20 期），请先刷新数据');
+                return;
+            }
+        } catch (e) {
+            vscode.window.showErrorMessage('读取数据失败: ' + e.message);
+            return;
+        }
+
+        // 按时间正序排列
+        const sortedHistory = history.slice().reverse();
+        const dataToAnalyze = limitPick.value > 0 ? sortedHistory.slice(-limitPick.value) : sortedHistory;
+        const N = dataToAnalyze.length;
+
+        // 执行012路分析
+        const analysisResult = computeRoadAnalysis(dataToAnalyze, cfg);
+
+        // 创建Webview面板展示结果
+        const panel = vscode.window.createWebviewPanel(
+            'roadAnalysis',
+            '🛤️ 012路趋势分析 - ' + cfg.name,
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getRoadAnalysisHtml(analysisResult, cfg, N);
+    });
+    context.subscriptions.push(roadAnalysisDisposable);
+
+    // 概率推荐历史回测命令
+    let probBacktestDisposable = vscode.commands.registerCommand('myPlugin.probabilityBacktest', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎯 排列三', value: 'pl3', description: '概率推荐历史回测' },
+                { label: '🎰 排列五', value: 'pl5', description: '概率推荐历史回测' },
+                { label: '🎁 福彩3D', value: 'fc3d', description: '概率推荐历史回测' }
+            ],
+            { placeHolder: '选择要回测的彩种' }
+        );
+        if (!pick) return;
+
+        const trainPick = await vscode.window.showQuickPick(
+            [
+                { label: '100 期', value: 100 },
+                { label: '200 期', value: 200 },
+                { label: '500 期', value: 500 }
+            ],
+            { placeHolder: '每次预测使用的训练样本期数（越大越慢但更稳定）' }
+        );
+        if (!trainPick) return;
+
+        const stepPick = await vscode.window.showQuickPick(
+            [
+                { label: '每 1 期', value: 1, description: '最密集（最慢，最细）' },
+                { label: '每 5 期', value: 5 },
+                { label: '每 10 期', value: 10, description: '推荐（默认）' },
+                { label: '每 20 期', value: 20, description: '最快速' }
+            ],
+            { placeHolder: '回测步长（每隔多少期做一次预测）' }
+        );
+        if (!stepPick) return;
+
+        const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+        if (!cfg) return;
+
+        let bt;
+        try {
+            const history = loadLotteryData(cfg);
+            if (history.length < trainPick.value + 20) {
+                vscode.window.showWarningMessage('历史数据不足（需要 ≥' + (trainPick.value + 20) + ' 期），请先刷新数据');
+                return;
+            }
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: '🧪 正在执行概率推荐回测...',
+                cancellable: false
+            }, async () => {
+                bt = backtestProbabilityAnalysis(history, cfg, {
+                    trainSize: trainPick.value,
+                    step: stepPick.value,
+                    topK: 8,
+                    hitMode: 'exact'
+                });
+            });
+        } catch (e) {
+            vscode.window.showErrorMessage('回测失败: ' + e.message);
+            return;
+        }
+
+        if (!bt || bt.totalTests === 0) {
+            vscode.window.showWarningMessage('回测无有效结果，请调整参数或刷新数据');
+            return;
+        }
+
+        const panel = vscode.window.createWebviewPanel(
+            'probabilityBacktest',
+            '🧪 概率推荐回测 - ' + cfg.name,
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getBacktestHtml(bt);
+    });
+    context.subscriptions.push(probBacktestDisposable);
+
     // 查看预测记录命令
     let showPredDisposable = vscode.commands.registerCommand('myPlugin.showPredictions', () => {
         const predictions = loadPredictions();
@@ -1025,12 +1253,13 @@ async function autoRefresh(limit, silent) {
         const results = await crawler.crawlAll(saveDir, limit);
         let okCount = 0;
         let failMsg = [];
+        const totalCount = Object.keys(results).length;
         Object.keys(results).forEach(type => {
             if (results[type] && !results[type].error) okCount++;
             else failMsg.push(type + ': ' + (results[type] && results[type].error));
         });
-        if (okCount < 4) {
-            vscode.window.showWarningMessage('⚠️ 彩票数据自动爬取部分失败：' + failMsg.join('; '));
+        if (okCount < totalCount) {
+            vscode.window.showWarningMessage('⚠️ 彩票数据自动爬取部分失败：' + failMsg.join('; ') + '（成功 ' + okCount + '/' + totalCount + '）');
         } else if (!silent) {
             vscode.window.showInformationMessage('✅ 彩票数据已自动更新（' + limit + ' 期）');
         }
@@ -1167,6 +1396,9 @@ class LotteryTreeDataProvider {
                 this.createItem('🔄 刷新彩票数据', 'myPlugin.refreshData', '🔄'),
                 this.createItem('🔁 转移统计', 'myPlugin.showTrans', '🔁'),
                 this.createItem('🤖 智能推荐', 'myPlugin.smartPick', '🤖'),
+                this.createItem('🧬 概率推荐', 'myPlugin.probabilityPick', '🧬'),
+                this.createItem('🛤️ 012路趋势', 'myPlugin.roadAnalysis', '🛤️'),
+                this.createItem('🧪 概率回测', 'myPlugin.probabilityBacktest', '🧪'),
                 this.createItem('📈 均线形态', 'myPlugin.maPatterns', '📈'),
                 this.createItem('🔮 预测记录', 'myPlugin.showPredictions', '🔮'),
                 this.createItem('🕐 显示当前时间', 'myPlugin.showTime', '🕐'),
@@ -2679,6 +2911,1760 @@ const LIMIT_LABEL = DATA.limit === 0 ? '全部' : DATA.limit + ' 期';
             }
         };
     }
+})();
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * ============================================================
+ *  概率统计智能推荐系统
+ *  — 基于频次、遗漏、Z分数、卡方检验、分布模式的多维度分析
+ * ============================================================
+ */
+
+/**
+ * 核心分析引擎：计算所有统计量
+ * @param {Array} history - 开奖历史数据
+ * @param {Object} cfg - 彩种配置
+ * @returns {Object} analysis
+ */
+function computeProbabilityAnalysis(history, cfg, compoundSpec) {
+    const N = history.length;
+    const posCount = cfg.positions.length;
+    const latest = history[N - 1];
+
+    // 提取每位号码序列
+    const posSeries = [];
+    for (let p = 0; p < posCount; p++) {
+        posSeries.push(history.map(h => cfg.positions[p].pick(h)));
+    }
+
+    // ---- 1. 多窗口频次统计 ----
+    const windows = [10, 30, 50, 100, N];
+    const freqWindows = [];
+    for (const w of windows) {
+        if (w > N) continue;
+        const start = N - w;
+        const counts = [];
+        for (let p = 0; p < posCount; p++) {
+            const arr = new Array(10).fill(0);
+            for (let i = start; i < N; i++) {
+                arr[posSeries[p][i]]++;
+            }
+            counts.push(arr);
+        }
+        freqWindows.push({ window: w, counts: counts });
+    }
+
+    // ---- 2. 遗漏值分析（每位每个号码距今多少期未出现）----
+    const missing = []; // missing[pos][num] = 遗漏期数
+    for (let p = 0; p < posCount; p++) {
+        const miss = new Array(10).fill(0);
+        for (let n = 0; n <= 9; n++) {
+            let found = false;
+            for (let i = N - 1; i >= 0; i--) {
+                if (posSeries[p][i] === n) {
+                    miss[n] = N - 1 - i;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) miss[n] = N; // 从未出现
+        }
+        missing.push(miss);
+    }
+
+    // ---- 3. 理论频率 & Z分数 ----
+    const expectedFreq = N / 10; // 每个号码期望出现次数
+    const allCounts = [];
+    const zScores = [];
+    for (let p = 0; p < posCount; p++) {
+        const cnt = new Array(10).fill(0);
+        for (let i = 0; i < N; i++) cnt[posSeries[p][i]]++;
+        allCounts.push(cnt);
+        const se = Math.sqrt(N * 0.1 * 0.9); // 二项分布标准差
+        const z = cnt.map(c => (c - expectedFreq) / se);
+        zScores.push(z);
+    }
+
+    // ---- 4. 冷热号分类（基于Z分数）----
+    // Z > 1.0 → 热号, Z < -1.0 → 冷号, -1.0~1.0 → 温号
+    const classification = [];
+    for (let p = 0; p < posCount; p++) {
+        const cls = new Array(10).fill('温');
+        for (let n = 0; n <= 9; n++) {
+            if (zScores[p][n] > 1.0) cls[n] = '热';
+            else if (zScores[p][n] < -1.0) cls[n] = '冷';
+        }
+        classification.push(cls);
+    }
+
+    // ---- 5. 卡方拟合优度检验 ----
+    const chiSquareResults = [];
+    for (let p = 0; p < posCount; p++) {
+        const observed = allCounts[p];
+        const expected = new Array(10).fill(expectedFreq);
+        let chi2 = 0;
+        for (let n = 0; n <= 9; n++) {
+            const e = expected[n] > 0 ? expected[n] : 1;
+            chi2 += (observed[n] - e) ** 2 / e;
+        }
+        // 自由度 = 9，p值近似
+        const dof = 9;
+        const pValue = chiSquarePValue(chi2, dof);
+        chiSquareResults.push({
+            chi2: parseFloat(chi2.toFixed(3)),
+            dof: dof,
+            pValue: parseFloat(pValue.toFixed(4)),
+            significant: pValue < 0.05 // 是否显著偏离均匀分布
+        });
+    }
+
+    // ---- 6. 和值分布分析 ----
+    // 计算所有期次的和值
+    const sums = [];
+    for (let i = 0; i < N; i++) {
+        let sum = 0;
+        for (let p = 0; p < posCount; p++) sum += posSeries[p][i];
+        sums.push(sum);
+    }
+    // 理论均值：每位期望4.5，posCount位
+    const theoreticalMean = posCount * 4.5;
+    const theoreticalStdDev = Math.sqrt(posCount * 8.25); // 每位方差 8.25
+    const sumStats = {
+        min: Math.min.apply(null, sums),
+        max: Math.max.apply(null, sums),
+        mean: parseFloat((sums.reduce((a, b) => a + b, 0) / N).toFixed(2)),
+        theoreticalMean: theoreticalMean,
+        theoreticalStdDev: parseFloat(theoreticalStdDev.toFixed(2)),
+        recent: sums.slice(-10),  // 最近10期和值
+        latest: sums[N - 1]
+    };
+
+    // ---- 7. 跨度分布（每位 max-min）----
+    const spans = [];
+    for (let i = 0; i < N; i++) {
+        const vals = [];
+        for (let p = 0; p < posCount; p++) vals.push(posSeries[p][i]);
+        spans.push(Math.max.apply(null, vals) - Math.min.apply(null, vals));
+    }
+    const spanDist = new Array(10).fill(0);
+    spans.forEach(s => { if (s >= 0 && s <= 9) spanDist[s]++; });
+
+    // ---- 8. 奇偶比/大小比/012路 ----
+    const patterns = [];
+    for (let i = 0; i < N; i++) {
+        let oddCnt = 0, bigCnt = 0;
+        const routeCnt = [0, 0, 0]; // 0路/1路/2路
+        for (let p = 0; p < posCount; p++) {
+            const v = posSeries[p][i];
+            if (v % 2 === 1) oddCnt++;
+            if (v >= 5) bigCnt++;
+            routeCnt[v % 3]++;
+        }
+        patterns.push({ odd: oddCnt, even: posCount - oddCnt, big: bigCnt, small: posCount - bigCnt, route012: routeCnt });
+    }
+
+    // 各种模式频次统计
+    const patternStats = { oddEven: {}, bigSmall: {}, route: {} };
+    patterns.forEach(pt => {
+        const oeKey = pt.odd + ':' + pt.even;
+        patternStats.oddEven[oeKey] = (patternStats.oddEven[oeKey] || 0) + 1;
+        const bsKey = pt.big + ':' + pt.small;
+        patternStats.bigSmall[bsKey] = (patternStats.bigSmall[bsKey] || 0) + 1;
+        const rtKey = pt.route012.join(':');
+        patternStats.route[rtKey] = (patternStats.route[rtKey] || 0) + 1;
+    });
+    const latestPattern = patterns[N - 1];
+
+    // ---- 9. 综合智能评分 ----
+    // 权重：近期频次 30%、遗漏调整 25%、Z分数 20%、趋势动量 15%、模式分布 10%
+    const scores = [];
+    for (let p = 0; p < posCount; p++) {
+        const posScores = [];
+        const recentCounts = freqWindows[0] ? freqWindows[0].counts[p] : allCounts[p]; // 最近10期
+
+        // 归一化因子
+        const maxFreq = Math.max.apply(null, recentCounts);
+        const maxMiss = Math.max.apply(null, missing[p]);
+
+        for (let n = 0; n <= 9; n++) {
+            // (a) 近期频次分数 (30%)
+            const freqScore = maxFreq > 0 ? (recentCounts[n] / maxFreq) * 0.30 : 0;
+
+            // (b) 遗漏调整分数 (25%)：遗漏越大越有"回归"可能
+            // 使用泊松回归概率模型：P(至少出现1次) = 1 - e^(-λ)
+            const lambda = allCounts[p][n] / N; // 历史出现率
+            const missAdj = maxMiss > 0 ? 1 - Math.exp(-lambda * missing[p][n]) : 0;
+            const missScore = missAdj * 0.25;
+
+            // (c) Z分数 (20%)：修正偏差
+            const zAdj = Math.max(-2, Math.min(2, zScores[p][n]));
+            const zScoreNorm = ((zAdj + 2) / 4) * 0.20; // 归一化到[0, 0.20]
+
+            // (d) 趋势动量 (15%)：最近5期是否有升温趋势
+            const recent5 = posSeries[p].slice(-5);
+            let momentum = 0;
+            for (let i = 0; i < recent5.length; i++) {
+                if (recent5[i] === n) momentum += (i + 1) / 5; // 越近期权重越大
+            }
+            const momentumScore = Math.min(momentum / 3, 1) * 0.15;
+
+            // (e) 模式分布 (10%)：基于号码属性调整
+            // 如果已经连续多期奇数/偶数/大数/小数占主导，则反方向号码加分
+            const isOdd = n % 2 === 1;
+            const isBig = n >= 5;
+            const recent10Patterns = patterns.slice(-10);
+            let oddDom = 0, bigDom = 0;
+            recent10Patterns.forEach(pt => {
+                if (pt.odd >= posCount / 2) oddDom++;
+                if (pt.big >= posCount / 2) bigDom++;
+            });
+            // 如果奇数主导过多，偶数加分
+            let patternAdj = 0.05;
+            if (oddDom >= 7 && !isOdd) patternAdj = 0.10;
+            if (bigDom >= 7 && !isBig) patternAdj = 0.10;
+            if (oddDom >= 7 && !isOdd && bigDom >= 7 && !isBig) patternAdj = 0.10; // 两者都偏离
+
+            const totalScore = freqScore + missScore + zScoreNorm + momentumScore + patternAdj;
+            posScores.push({ num: n, score: parseFloat(totalScore.toFixed(4)), detail: { freqScore, missScore, zScoreNorm, momentumScore, patternAdj } });
+        }
+        posScores.sort((a, b) => b.score - a.score);
+        scores.push(posScores);
+    }
+
+    // ---- 10. 智能推荐组合 ----
+    // 从每位取TOP4，筛选合理组合
+    const topPerPos = scores.map(s => s.slice(0, 4).map(x => x.num));
+    const totalCombos = topPerPos.reduce((a, b) => a * b.length, 1);
+
+    // 生成推荐组合（每位独立排列，从scores中取TOP组合）
+    function generateCombos(tops, maxCombos) {
+        const result = [];
+        function backtrack(depth, current) {
+            if (result.length >= maxCombos) return;
+            if (depth === tops.length) {
+                result.push([...current]);
+                return;
+            }
+            for (const n of tops[depth]) {
+                current.push(n);
+                backtrack(depth + 1, current);
+                current.pop();
+            }
+        }
+        backtrack(0, []);
+        return result;
+    }
+
+    const topCombos = generateCombos(topPerPos, Math.min(totalCombos, 64));
+
+    // 对组合按概率评分排序
+    const scoredCombos = topCombos.map(combo => {
+        let totalScore = 0;
+        for (let p = 0; p < posCount; p++) {
+            const numScore = scores[p].find(s => s.num === combo[p]);
+            totalScore += numScore ? numScore.score : 0;
+        }
+        return { combo: combo, score: parseFloat(totalScore.toFixed(4)) };
+    });
+    scoredCombos.sort((a, b) => b.score - a.score);
+
+    // 选出最佳单式TOP8
+    const bestSingles = scoredCombos.slice(0, 8);
+
+    // ---- 11. 复式推荐（混合模式：每位基于评分阈值独立取 2~5 个号码）----
+    // 策略：每位先按评分降序，使用"评分落差阈值"动态决定每位选号数（2~5）。
+    //   - 计算相邻号码评分差：score[i] - score[i+1]
+    //   - 找到第一个显著落差（差 > 平均落差的 1.5 倍）作为切点，切点前都入选
+    //   - 限制每位 [2, 5]，总注数 ≤ 5^posCount
+    // 这样高分离度号码会多选，相近号码会少选，避免一刀切
+    function selectCompoundPerPos(posScoreList, minK, maxK) {
+        const sorted = posScoreList.slice(0, maxK); // 候选最多 maxK 个
+        if (sorted.length <= minK) return sorted.map(s => s.num);
+
+        // 评分落差数组
+        const drops = [];
+        for (let i = 0; i < sorted.length - 1; i++) {
+            drops.push(sorted[i].score - sorted[i + 1].score);
+        }
+        const avgDrop = drops.reduce((a, b) => a + b, 0) / drops.length;
+        const threshold = avgDrop * 1.5;
+
+        // 找第一个显著落差
+        let cutIdx = sorted.length; // 默认全选
+        for (let i = 0; i < drops.length; i++) {
+            if (drops[i] > threshold && (i + 1) >= minK) {
+                cutIdx = i + 1;
+                break;
+            }
+        }
+        // 保证至少 minK 个
+        if (cutIdx < minK) cutIdx = minK;
+        return sorted.slice(0, cutIdx).map(s => s.num);
+    }
+
+    const compoundPerPos = scores.map((s, p) => {
+        // 若指定了复式规格（每位的固定 k 或自定义数组），则按规格取前 k 个
+        if (compoundSpec) {
+            // compoundSpec 可以是数字（每位统一取 k 个）或数组（每位独立 k）
+            const k = Array.isArray(compoundSpec) ? (compoundSpec[p] || 2) : compoundSpec;
+            return s.slice(0, Math.max(2, Math.min(5, k))).map(x => x.num);
+        }
+        // 自动模式：基于评分落差阈值
+        return selectCompoundPerPos(s, 2, 5);
+    });
+    const compoundTotalCombos = compoundPerPos.reduce((a, b) => a * b.length, 1);
+    // 复式总分 = 该位所有入选号码评分之和 / 入选数 （归一化便于对比）
+    const compoundScore = compoundPerPos.reduce((sum, picks, p) => {
+        const s = picks.reduce((acc, n) => acc + (scores[p].find(x => x.num === n)?.score || 0), 0);
+        return sum + s / picks.length;
+    }, 0);
+    // 复式覆盖号码集（每位）
+    const compoundSets = compoundPerPos.map(picks => picks.slice().sort((a, b) => a - b));
+
+    return {
+        cfgName: cfg.name,
+        cfgEmoji: cfg.emoji,
+        cfgKey: cfg.key,
+        posLabels: cfg.positions.map(p => p.label),
+        posCount: posCount,
+        N: N,
+        latestPeriod: latest.period,
+        latestDate: latest.date,
+        latestNums: posSeries.map(s => s[N - 1]),
+        freqWindows: freqWindows,
+        missing: missing,
+        allCounts: allCounts,
+        zScores: zScores,
+        classification: classification,
+        chiSquareResults: chiSquareResults,
+        sumStats: sumStats,
+        spanDist: spanDist,
+        spans: spans.slice(-20),
+        patternStats: patternStats,
+        latestPattern: latestPattern,
+        scores: scores,
+        topPerPos: topPerPos,
+        totalCombos: totalCombos,
+        bestSingles: bestSingles,
+        compoundPerPos: compoundPerPos,
+        compoundTotalCombos: compoundTotalCombos,
+        compoundScore: parseFloat(compoundScore.toFixed(4)),
+        compoundSets: compoundSets
+    };
+}
+
+/**
+ * 卡方检验 P 值近似
+ */
+function chiSquarePValue(chi2, dof) {
+    // Wilson-Hilferty 变换近似
+    if (dof <= 0) return 1;
+    const x = Math.pow(chi2 / dof, 1 / 3);
+    const z = (x - (1 - 2 / (9 * dof))) / Math.sqrt(2 / (9 * dof));
+    // 标准正态累积分布函数近似
+    const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741;
+    const a4 = -1.453152027, a5 = 1.061405429;
+    const p = 0.3275911;
+    const sign = z < 0 ? -1 : 1;
+    const xAbs = Math.abs(z) / Math.sqrt(2);
+    const t = 1.0 / (1.0 + p * xAbs);
+    const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-xAbs * xAbs);
+    return sign > 0 ? 0.5 * (1 + y) : 0.5 * (1 - y);
+}
+
+/**
+ * 概率推荐算法 — 历史回测
+ * @param {Array} history 完整历史（按时间正序，旧→新）
+ * @param {Object} cfg 彩种配置
+ * @param {Object} options { trainSize, step, topK, hitMode }
+ *   - trainSize: 训练样本期数（默认200）
+ *   - step:      每隔多少期做一次预测（默认10，避免每次都跑）
+ *   - topK:      取推荐组合前K注用于命中判定（默认8）
+ *   - hitMode:   'exact' 严格位置命中 | 'any' 包含命中（默认 exact）
+ * @returns {Object} 回测统计结果
+ */
+function backtestProbabilityAnalysis(history, cfg, options) {
+    const opts = Object.assign({ trainSize: 200, step: 10, topK: 8, hitMode: 'exact' }, options || {});
+    const N = history.length;
+    const posCount = cfg.positions.length;
+    const minTrain = 50; // 训练样本下限
+    const results = []; // 每次预测的详细记录
+
+    // 从 trainSize 期开始，每次向前推进 step 期，预测下期
+    for (let i = Math.max(minTrain, opts.trainSize); i < N; i += opts.step) {
+        const train = history.slice(0, i);     // 训练集 [0..i-1]
+        const target = history[i];              // 待预测目标期
+
+        // 用训练集做概率分析（避免数据泄露：不使用 target 及之后的数据）
+        let analysis;
+        try {
+            analysis = computeProbabilityAnalysis(train, cfg);
+        } catch (e) {
+            continue; // 训练数据异常则跳过
+        }
+        if (!analysis.bestSingles || analysis.bestSingles.length === 0) continue;
+
+        // 取 TOP-K 推荐组合
+        const picks = analysis.bestSingles.slice(0, opts.topK).map(s => s.combo);
+
+        // 目标号码
+        const targetNums = cfg.positions.map(p => p.pick(target));
+
+        // 命中判定
+        let hitExact = false;   // 严格位置命中：存在一注组合与目标完全相同（按位）
+        let hitAny = false;     // 包含命中：存在一注组合的所有号码集合 ⊆ 目标号码集合（多注可中）
+        let hitPositions = new Array(posCount).fill(false); // 各位是否被任意推荐命中
+        let maxHitPos = 0;      // 单注最大命中位数
+
+        for (const combo of picks) {
+            let posHitCnt = 0;
+            for (let p = 0; p < posCount; p++) {
+                if (combo[p] === targetNums[p]) {
+                    posHitCnt++;
+                    hitPositions[p] = true;
+                }
+            }
+            if (posHitCnt === posCount) hitExact = true;
+            if (posHitCnt > maxHitPos) maxHitPos = posHitCnt;
+            // 包含命中：组合的所有号码都在目标号码集合中
+            const targetSet = targetNums.slice().sort();
+            const comboSet = combo.slice().sort();
+            if (comboSet.every((v, idx) => v === targetSet[idx])) hitAny = true;
+        }
+
+        // 复式命中判定（全位覆盖）：目标号码的每一位都落在复式该位的选号集合内
+        let compoundHit = false;
+        let compoundPosHit = new Array(posCount).fill(false);
+        const compoundPerPos = analysis.compoundPerPos;
+        if (compoundPerPos) {
+            compoundHit = true;
+            for (let p = 0; p < posCount; p++) {
+                if (compoundPerPos[p].indexOf(targetNums[p]) >= 0) {
+                    compoundPosHit[p] = true;
+                } else {
+                    compoundHit = false;
+                }
+            }
+        }
+        const compoundMissCount = compoundPosHit.filter(h => !h).length;
+
+        results.push({
+            targetPeriod: target.period,
+            targetDate: target.date,
+            targetNums: targetNums,
+            picks: picks,
+            hitExact: hitExact,
+            hitAny: hitAny,
+            maxHitPos: maxHitPos,
+            hitPositions: hitPositions,
+            compoundPerPos: compoundPerPos,
+            compoundHit: compoundHit,
+            compoundPosHit: compoundPosHit,
+            compoundMissCount: compoundMissCount,
+            compoundTotalCombos: analysis.compoundTotalCombos,
+            trainSize: train.length
+        });
+    }
+
+    // 汇总统计
+    const totalTests = results.length;
+    const exactHits = results.filter(r => r.hitExact).length;
+    const anyHits = results.filter(r => r.hitAny).length;
+    // 命中位数分布（单注最大命中位数）
+    const hitPosDist = new Array(posCount + 1).fill(0);
+    results.forEach(r => { hitPosDist[r.maxHitPos]++; });
+    // 各位命中频次
+    const posHitFreq = new Array(posCount).fill(0);
+    results.forEach(r => { r.hitPositions.forEach((h, p) => { if (h) posHitFreq[p]++; }); });
+
+    // 理论基准（随机猜测期望命中率）
+    // 严格命中：每注独立均匀分布概率 (1/10)^posCount
+    // 取 topK 注，期望至少命中 = 1 - (1 - p)^K
+    const pExactSingle = Math.pow(0.1, posCount);
+    const expectedExactRate = 1 - Math.pow(1 - pExactSingle, opts.topK);
+    // 至少命中 posCount-1 位 的概率
+    const pNMinus1Single = posCount * Math.pow(0.1, posCount - 1) * 0.9; // C(N, N-1) * p^(N-1) * (1-p)
+    const expectedNMinus1Rate = 1 - Math.pow(1 - pNMinus1Single, opts.topK);
+
+    // 复式命中统计
+    const compoundHits = results.filter(r => r.compoundHit).length;
+    // 复式缺位分布：缺0位=全中，缺1位=差1位...
+    const compoundMissDist = new Array(posCount + 1).fill(0);
+    results.forEach(r => { if (r.compoundMissCount !== undefined) compoundMissDist[r.compoundMissCount]++; });
+    // 复式各位置命中频次
+    const compoundPosHitFreq = new Array(posCount).fill(0);
+    results.forEach(r => { if (r.compoundPosHit) r.compoundPosHit.forEach((h, p) => { if (h) compoundPosHitFreq[p]++; }); });
+    // 平均复式注数
+    const avgCompoundCombos = totalTests > 0
+        ? results.reduce((s, r) => s + (r.compoundTotalCombos || 0), 0) / totalTests
+        : 0;
+    // 复式理论基准：每注严格命中概率 (k_p/10)，复式整体命中率 = Π (k_p/10)
+    // 由于每位 k 动态变化，取平均每位选号数近似
+    const avgKPerPos = totalTests > 0
+        ? results.reduce((acc, r) => {
+            if (r.compoundPerPos) r.compoundPerPos.forEach((picks, pi) => { acc[pi] = (acc[pi] || 0) + picks.length; });
+            return acc;
+        }, new Array(posCount).fill(0)).map(v => v / totalTests)
+        : new Array(posCount).fill(2);
+    const expectedCompoundRate = avgKPerPos.reduce((p, k) => p * (k / 10), 1);
+
+    return {
+        cfgName: cfg.name,
+        cfgEmoji: cfg.emoji,
+        cfgKey: cfg.key,
+        posCount: posCount,
+        posLabels: cfg.positions.map(p => p.label),
+        options: opts,
+        totalTests: totalTests,
+        exactHits: exactHits,
+        anyHits: anyHits,
+        exactHitRate: totalTests > 0 ? parseFloat((exactHits / totalTests * 100).toFixed(2)) : 0,
+        anyHitRate: totalTests > 0 ? parseFloat((anyHits / totalTests * 100).toFixed(2)) : 0,
+        hitPosDist: hitPosDist,
+        posHitFreq: posHitFreq,
+        posHitRate: posHitFreq.map(v => totalTests > 0 ? parseFloat((v / totalTests * 100).toFixed(2)) : 0),
+        expectedExactRate: parseFloat((expectedExactRate * 100).toFixed(4)),
+        expectedNMinus1Rate: parseFloat((expectedNMinus1Rate * 100).toFixed(4)),
+        compoundHits: compoundHits,
+        compoundHitRate: totalTests > 0 ? parseFloat((compoundHits / totalTests * 100).toFixed(2)) : 0,
+        compoundMissDist: compoundMissDist,
+        compoundPosHitFreq: compoundPosHitFreq,
+        compoundPosHitRate: compoundPosHitFreq.map(v => totalTests > 0 ? parseFloat((v / totalTests * 100).toFixed(2)) : 0),
+        avgCompoundCombos: parseFloat(avgCompoundCombos.toFixed(1)),
+        expectedCompoundRate: parseFloat((expectedCompoundRate * 100).toFixed(4)),
+        avgKPerPos: avgKPerPos.map(k => parseFloat(k.toFixed(2))),
+        // 取最近30条用于明细展示
+        recentResults: results.slice(-30).reverse()
+    };
+}
+
+/**
+ * 生成概率推荐回测结果 HTML
+ */
+function getBacktestHtml(bt) {
+    const dataJson = JSON.stringify(bt);
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>概率推荐回测 - ${bt.cfgName}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1b1b2f; color: #e0e0e0; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; line-height: 1.5; }
+.header { background: linear-gradient(135deg, #16213e, #0f3460); padding: 20px; border-radius: 12px; margin-bottom: 16px; text-align: center; border: 1px solid rgba(255,255,255,0.1); }
+.header h1 { font-size: 22px; color: #e94560; margin-bottom: 6px; }
+.header .sub { color: #a0a0b0; font-size: 13px; }
+.section { margin-bottom: 18px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; overflow: hidden; }
+.section-title { background: rgba(255,255,255,0.05); padding: 10px 16px; font-size: 14px; font-weight: 600; color: #feca57; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.section-body { padding: 14px 16px; }
+.stats-row { display: flex; gap: 14px; flex-wrap: wrap; }
+.stat-card { flex: 1; min-width: 130px; background: rgba(255,255,255,0.04); border-radius: 8px; padding: 14px; text-align: center; border: 1px solid rgba(255,255,255,0.06); }
+.stat-card .val { font-size: 24px; font-weight: bold; }
+.stat-card .lbl { font-size: 11px; color: #888; margin-top: 4px; }
+.stat-card.hit .val { color: #2ecc71; }
+.stat-card.miss .val { color: #e94560; }
+.stat-card.bench .val { color: #8ec5ff; }
+.stat-card.warn .val { color: #feca57; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { border: 1px solid rgba(255,255,255,0.1); padding: 6px 8px; text-align: center; }
+th { background: rgba(255,255,255,0.06); color: #8ec5ff; font-weight: 600; }
+.ball { display: inline-block; width: 22px; height: 22px; line-height: 22px; border-radius: 50%; text-align: center; font-weight: bold; font-size: 12px; color: #fff; margin: 0 1px; }
+.ball.red { background: #e94560; }
+.ball.blue { background: #0984e3; }
+.ball.green { background: #27ae60; }
+.ball.purple { background: #8e44ad; }
+.ball.orange { background: #f39c12; }
+.ball.gray { background: #555; }
+.tag-hit { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; background: rgba(46,204,113,0.2); color: #2ecc71; }
+.tag-miss { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; background: rgba(233,69,96,0.15); color: #e94560; }
+.tag-partial { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; background: rgba(254,202,87,0.2); color: #feca57; }
+.info-box { background: rgba(52,152,219,0.1); border: 1px solid rgba(52,152,219,0.3); padding: 10px 14px; border-radius: 6px; color: #3498db; font-size: 12px; margin: 8px 0; }
+.warn-box { background: rgba(231,76,60,0.1); border: 1px solid rgba(231,76,60,0.3); padding: 10px 14px; border-radius: 6px; color: #e74c3c; font-size: 12px; margin: 8px 0; }
+.success-box { background: rgba(46,204,113,0.1); border: 1px solid rgba(46,204,113,0.3); padding: 10px 14px; border-radius: 6px; color: #2ecc71; font-size: 12px; margin: 8px 0; }
+.bar-wrap { height: 18px; background: rgba(0,0,0,0.3); border-radius: 4px; overflow: hidden; position: relative; }
+.bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s; }
+.picks-cell { font-size: 11px; color: #aaa; max-width: 320px; word-break: break-all; }
+</style>
+</head>
+<body>
+<div class="header">
+    <h1>🧪 ${bt.cfgEmoji} ${bt.cfgName} — 概率推荐历史回测</h1>
+    <div class="sub">训练样本：${bt.options.trainSize} 期 | 步长：${bt.options.step} 期/次 | 推荐注数：TOP ${bt.options.topK} | 命中模式：${bt.options.hitMode === 'exact' ? '严格位置' : '包含'}</div>
+    <div class="sub" style="margin-top:6px;">共 ${bt.totalTests} 次独立预测</div>
+</div>
+
+<div class="section">
+    <div class="section-title">📊 总体命中率 vs 随机基准</div>
+    <div class="section-body">
+        <div class="stats-row">
+            <div class="stat-card hit"><div class="val">${bt.exactHitRate}%</div><div class="lbl">严格命中（${bt.exactHits}/${bt.totalTests}）</div></div>
+            <div class="stat-card warn"><div class="val">${bt.anyHitRate}%</div><div class="lbl">包含命中（${bt.anyHits}/${bt.totalTests}）</div></div>
+            <div class="stat-card bench"><div class="val">${bt.expectedExactRate}%</div><div class="lbl">随机严格基准</div></div>
+            <div class="stat-card bench"><div class="val">${bt.expectedNMinus1Rate}%</div><div class="lbl">随机(N-1位)基准</div></div>
+        </div>
+        <div id="verdict-box"></div>
+    </div>
+</div>
+
+<div class="section">
+    <div class="section-title">🎯 命中位数分布（单注最大命中位数）</div>
+    <div class="section-body">
+        <div id="hitpos-dist"></div>
+    </div>
+</div>
+
+<div class="section">
+    <div class="section-title">📍 各位置被任意推荐命中频次</div>
+    <div class="section-body">
+        <div id="pos-hit"></div>
+    </div>
+</div>
+
+<div class="section" style="border-color: rgba(142,197,255,0.4);">
+    <div class="section-title" style="color:#8ec5ff;">🎰 复式推荐命中率（全位覆盖）</div>
+    <div class="section-body">
+        <div class="stats-row" style="margin-bottom:14px;">
+            <div class="stat-card hit"><div class="val">${bt.compoundHitRate}%</div><div class="lbl">复式命中（${bt.compoundHits}/${bt.totalTests}）</div></div>
+            <div class="stat-card bench"><div class="val">${bt.expectedCompoundRate}%</div><div class="lbl">随机复式基准</div></div>
+            <div class="stat-card warn"><div class="val">${bt.avgCompoundCombos}</div><div class="lbl">平均复式注数</div></div>
+        </div>
+        <div id="compound-verdict"></div>
+        <div style="margin-top:14px;">
+            <div style="font-size:13px;color:#feca57;margin-bottom:8px;">缺位分布（缺0位=全中）</div>
+            <div id="compound-miss-dist"></div>
+        </div>
+        <div style="margin-top:14px;">
+            <div style="font-size:13px;color:#feca57;margin-bottom:8px;">复式各位置命中频次</div>
+            <div id="compound-pos-hit"></div>
+        </div>
+        <div class="info-box" style="margin-top:10px;">复式判定：目标号码的<b>每一位</b>都落在复式该位的选号集合内才算命中（全位覆盖）。随机基准 = Π(k_p/10)，其中 k_p 为第p位平均选号数。</div>
+    </div>
+</div>
+
+<div class="section">
+    <div class="section-title">📝 最近 ${bt.recentResults.length} 次预测明细</div>
+    <div class="section-body" style="overflow-x:auto;">
+        <table>
+            <thead><tr><th>目标期号</th><th>开奖号码</th><th>TOP${bt.options.topK} 推荐</th><th>单注最大命中</th><th>复式方案</th><th>复式缺位</th><th>复式命中</th></tr></thead>
+            <tbody id="detail-body"></tbody>
+        </table>
+    </div>
+</div>
+
+<div class="warn-box">
+    ⚠️ <b>统计学解读：</b>彩票开奖是独立同分布的均匀随机事件，理论期望命中率应接近"随机基准"。若实测命中率显著高于基准，可能是样本量不足导致的偶然现象；若接近或低于基准，则说明算法在长期统计上无超额预测能力。请理性看待回测结果。
+</div>
+
+<script>
+const BT = ${dataJson};
+const COLORS = ['red','blue','green','purple','orange'];
+
+// 1. 总体判定
+(function() {
+    const box = document.getElementById('verdict-box');
+    const diff = BT.exactHitRate - BT.expectedExactRate;
+    let html = '';
+    if (BT.totalTests < 20) {
+        html = '<div class="warn-box" style="margin-top:10px;">⚠️ 样本量过少（${bt.totalTests} < 20），统计意义有限，建议增加历史数据或缩小步长。</div>';
+    } else if (diff > 0.5) {
+        html = '<div class="success-box" style="margin-top:10px;">✅ 实测命中率 ' + BT.exactHitRate + '% 高于随机基准 ' + BT.expectedExactRate + '%（差值 +' + diff.toFixed(2) + '%）。但请注意：这可能源于小样本偶然性，不构成"算法有效"的充分证据。</div>';
+    } else if (diff < -0.3) {
+        html = '<div class="warn-box" style="margin-top:10px;">⚠️ 实测命中率 ' + BT.exactHitRate + '% 低于随机基准 ' + BT.expectedExactRate + '%（差值 ' + diff.toFixed(2) + '%），算法在该数据集上无超额预测能力。</div>';
+    } else {
+        html = '<div class="info-box" style="margin-top:10px;">ℹ️ 实测命中率 ' + BT.exactHitRate + '% 与随机基准 ' + BT.expectedExactRate + '% 接近（差值 ' + diff.toFixed(2) + '%），符合"独立均匀分布"零假设，算法无统计显著的预测优势。</div>';
+    }
+    box.innerHTML = html;
+})();
+
+// 2. 命中位数分布
+(function() {
+    const dist = BT.hitPosDist;
+    const maxV = Math.max.apply(null, dist);
+    let html = '<div style="display:flex;gap:10px;align-items:flex-end;height:140px;padding:10px 0;">';
+    for (let i = 0; i < dist.length; i++) {
+        const v = dist[i];
+        const h = maxV > 0 ? (v / maxV * 100) : 0;
+        const pct = BT.totalTests > 0 ? (v / BT.totalTests * 100).toFixed(1) : '0.0';
+        const color = i === BT.posCount ? '#2ecc71' : (i >= BT.posCount - 1 ? '#feca57' : '#8ec5ff');
+        html += '<div style="flex:1;display:flex;flex-direction:column;align-items:center;">';
+        html += '<div style="font-size:11px;color:#aaa;margin-bottom:4px;">' + v + ' (' + pct + '%)</div>';
+        html += '<div style="width:60%;height:' + h + '%;background:' + color + ';border-radius:3px 3px 0 0;min-height:2px;"></div>';
+        html += '<div style="font-size:12px;color:#ddd;margin-top:6px;">命中 ' + i + ' 位</div>';
+        html += '</div>';
+    }
+    html += '</div>';
+    html += '<div class="info-box" style="margin-top:8px;">"命中 N 位"表示在 TOP' + BT.options.topK + ' 推荐中，单注最大命中位数。' + BT.posCount + ' 位全中即严格命中。</div>';
+    document.getElementById('hitpos-dist').innerHTML = html;
+})();
+
+// 3. 各位置命中频次
+(function() {
+    let html = '<div style="display:flex;gap:14px;flex-wrap:wrap;">';
+    for (let p = 0; p < BT.posCount; p++) {
+        const rate = BT.posHitRate[p];
+        const color = COLORS[p % COLORS.length];
+        html += '<div style="flex:1;min-width:140px;background:rgba(255,255,255,0.04);border-radius:8px;padding:12px;text-align:center;">';
+        html += '<div style="font-size:11px;color:#aaa;margin-bottom:4px;">' + BT.posLabels[p] + '位</div>';
+        html += '<div style="font-size:22px;font-weight:bold;color:#' + (p===0?'e94560':p===1?'0984e3':p===2?'27ae60':p===3?'8e44ad':'f39c12') + ';">' + rate + '%</div>';
+        html += '<div style="font-size:10px;color:#888;margin-top:2px;">' + BT.posHitFreq[p] + '/' + BT.totalTests + ' 次</div>';
+        html += '<div class="bar-wrap" style="margin-top:6px;"><div class="bar-fill" style="width:' + rate + '%;background:#' + (p===0?'e94560':p===1?'0984e3':p===2?'27ae60':p===3?'8e44ad':'f39c12') + ';"></div></div>';
+        html += '</div>';
+    }
+    html += '</div>';
+    html += '<div class="info-box" style="margin-top:8px;">随机基准：每位 10%（每注推荐 ' + BT.options.topK + ' 个号码，期望覆盖率 ' + (BT.options.topK * 10) + '%，上限100%）</div>';
+    document.getElementById('pos-hit').innerHTML = html;
+})();
+
+// 3.5 复式判定 + 缺位分布 + 各位置命中
+(function() {
+    // 判定
+    const vBox = document.getElementById('compound-verdict');
+    const diff = BT.compoundHitRate - BT.expectedCompoundRate;
+    let vh = '';
+    if (BT.totalTests < 20) {
+        vh = '<div class="warn-box" style="margin-top:6px;">⚠️ 样本量过少，复式统计意义有限。</div>';
+    } else if (diff > 1) {
+        vh = '<div class="success-box" style="margin-top:6px;">✅ 复式实测 ' + BT.compoundHitRate + '% 高于随机基准 ' + BT.expectedCompoundRate + '%（+' + diff.toFixed(2) + '%）。注意小样本偶然性。</div>';
+    } else if (diff < -1) {
+        vh = '<div class="warn-box" style="margin-top:6px;">⚠️ 复式实测 ' + BT.compoundHitRate + '% 低于随机基准 ' + BT.expectedCompoundRate + '%（' + diff.toFixed(2) + '%），无超额能力。</div>';
+    } else {
+        vh = '<div class="info-box" style="margin-top:6px;">ℹ️ 复式实测 ' + BT.compoundHitRate + '% 与随机基准 ' + BT.expectedCompoundRate + '% 接近（差 ' + diff.toFixed(2) + '%），符合独立均匀分布假设。</div>';
+    }
+    vBox.innerHTML = vh;
+
+    // 缺位分布柱状图
+    const dist = BT.compoundMissDist;
+    const maxV = Math.max.apply(null, dist);
+    let dh = '<div style="display:flex;gap:10px;align-items:flex-end;height:120px;padding:8px 0;">';
+    for (let i = 0; i < dist.length; i++) {
+        const v = dist[i];
+        const h = maxV > 0 ? (v / maxV * 100) : 0;
+        const pct = BT.totalTests > 0 ? (v / BT.totalTests * 100).toFixed(1) : '0.0';
+        const color = i === 0 ? '#2ecc71' : (i === 1 ? '#feca57' : '#8ec5ff');
+        dh += '<div style="flex:1;display:flex;flex-direction:column;align-items:center;">';
+        dh += '<div style="font-size:11px;color:#aaa;margin-bottom:4px;">' + v + ' (' + pct + '%)</div>';
+        dh += '<div style="width:60%;height:' + h + '%;background:' + color + ';border-radius:3px 3px 0 0;min-height:2px;"></div>';
+        dh += '<div style="font-size:12px;color:#ddd;margin-top:4px;">缺 ' + i + ' 位</div>';
+        dh += '</div>';
+    }
+    dh += '</div>';
+    document.getElementById('compound-miss-dist').innerHTML = dh;
+
+    // 复式各位置命中频次
+    let ph = '<div style="display:flex;gap:14px;flex-wrap:wrap;">';
+    for (let p = 0; p < BT.posCount; p++) {
+        const rate = BT.compoundPosHitRate[p];
+        const avgK = BT.avgKPerPos[p];
+        const expectedRate = (avgK * 10).toFixed(1);
+        ph += '<div style="flex:1;min-width:140px;background:rgba(255,255,255,0.04);border-radius:8px;padding:12px;text-align:center;border-left:3px solid #' + (p===0?'e94560':p===1?'0984e3':p===2?'27ae60':p===3?'8e44ad':'f39c12') + ';">';
+        ph += '<div style="font-size:11px;color:#aaa;margin-bottom:4px;">' + BT.posLabels[p] + '位 (平均选 ' + avgK + ' 个)</div>';
+        ph += '<div style="font-size:22px;font-weight:bold;color:#' + (p===0?'e94560':p===1?'0984e3':p===2?'27ae60':p===3?'8e44ad':'f39c12') + ';">' + rate + '%</div>';
+        ph += '<div style="font-size:10px;color:#888;margin-top:2px;">' + BT.compoundPosHitFreq[p] + '/' + BT.totalTests + ' 次 | 基准 ' + expectedRate + '%</div>';
+        ph += '<div class="bar-wrap" style="margin-top:6px;"><div class="bar-fill" style="width:' + rate + '%;background:#' + (p===0?'e94560':p===1?'0984e3':p===2?'27ae60':p===3?'8e44ad':'f39c12') + ';"></div></div>';
+        ph += '</div>';
+    }
+    ph += '</div>';
+    document.getElementById('compound-pos-hit').innerHTML = ph;
+})();
+
+// 4. 明细表
+(function() {
+    let html = '';
+    BT.recentResults.forEach(r => {
+        const balls = r.targetNums.map((n, i) => '<span class="ball ' + COLORS[i % COLORS.length] + '">' + n + '</span>').join('');
+        const picksStr = r.picks.map(c => c.join('')).join(' | ');
+        const maxPosTag = r.maxHitPos === BT.posCount
+            ? '<span class="tag-hit">' + r.maxHitPos + '/' + BT.posCount + '</span>'
+            : (r.maxHitPos >= BT.posCount - 1 ? '<span class="tag-partial">' + r.maxHitPos + '/' + BT.posCount + '</span>' : '<span class="tag-miss">' + r.maxHitPos + '/' + BT.posCount + '</span>');
+        // 复式方案展示
+        const compoundStr = r.compoundPerPos ? r.compoundPerPos.map((picks, p) => picks.slice().sort((a,b)=>a-b).join('')).join('|') : '-';
+        const compoundMissTag = r.compoundMissCount === 0
+            ? '<span class="tag-hit">缺0</span>'
+            : (r.compoundMissCount === 1 ? '<span class="tag-partial">缺1</span>' : '<span class="tag-miss">缺' + r.compoundMissCount + '</span>');
+        const compoundHitTag = r.compoundHit ? '<span class="tag-hit">✓ 命中</span>' : '<span class="tag-miss">✗</span>';
+        html += '<tr>' +
+            '<td>' + r.targetPeriod + '<br><span style="color:#666;font-size:10px;">' + r.targetDate + '</span></td>' +
+            '<td>' + balls + '</td>' +
+            '<td class="picks-cell">' + picksStr + '</td>' +
+            '<td>' + maxPosTag + '</td>' +
+            '<td class="picks-cell">' + compoundStr + ' <span style="color:#666;font-size:10px;">(' + r.compoundTotalCombos + '注)</span></td>' +
+            '<td>' + compoundMissTag + '</td>' +
+            '<td>' + compoundHitTag + '</td>' +
+            '</tr>';
+    });
+    document.getElementById('detail-body').innerHTML = html;
+})();
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 012路趋势+奇偶比深度分析 - 核心计算
+ */
+function computeRoadAnalysis(history, cfg) {
+    const posCount = cfg.positions.length; // 3或5
+    const posNames = cfg.positions.map(p => p.label.replace('位', '')); // ['百','十','个'] 或 ['万','千','百','十','个']
+    
+    function getRoad(n) { return n % 3; }
+    function isOdd(n) { return n % 2 === 1; }
+    const roadNums = { 0: '0,3,6,9', 1: '1,4,7', 2: '2,5,8' };
+    const theoryPct = { 0: 40, 1: 30, 2: 30 };
+    const N = history.length;
+
+    // ========== 1. 基础统计 ==========
+    const roadStats = [];
+    for (let p = 0; p < posCount; p++) {
+        roadStats[p] = {};
+        for (let r = 0; r <= 2; r++) {
+            roadStats[p][r] = { total: 0, odd: 0, even: 0 };
+        }
+    }
+
+    for (let i = 0; i < N; i++) {
+        for (let p = 0; p < posCount; p++) {
+            const num = history[i].num[p];
+            const road = getRoad(num);
+            roadStats[p][road].total++;
+            if (isOdd(num)) roadStats[p][road].odd++;
+            else roadStats[p][road].even++;
+        }
+    }
+
+    // ========== 2. 分段趋势 ==========
+    const segments = [
+        { name: '近20%', count: Math.max(20, Math.floor(N * 0.2)) },
+        { name: '近33%', count: Math.floor(N * 0.33) },
+        { name: '近50%', count: Math.floor(N * 0.5) },
+        { name: '100%', count: N }
+    ];
+    const segData = [];
+    segments.forEach(seg => {
+        const segHist = history.slice(-seg.count);
+        const sd = { name: seg.name, count: seg.count, roads: [] };
+        for (let p = 0; p < posCount; p++) {
+            sd.roads[p] = [0, 0, 0];
+            for (let i = 0; i < segHist.length; i++) {
+                sd.roads[p][getRoad(segHist[i].num[p])]++;
+            }
+            // 转为百分比
+            sd.roads[p] = sd.roads[p].map(c => ((c / seg.count) * 100).toFixed(1));
+        }
+        segData.push(sd);
+    });
+
+    // ========== 3. 遗漏分析 ==========
+    const missData = [];
+    for (let p = 0; p < posCount; p++) {
+        missData[p] = {};
+        for (let r = 0; r <= 2; r++) {
+            let miss = 0;
+            for (let i = N - 1; i >= 0; i--) {
+                if (getRoad(history[i].num[p]) === r) break;
+                miss++;
+            }
+            const avgMiss = N / roadStats[p][r].total;
+            
+            // 最大遗漏和最大连出
+            let maxMiss = 0, maxStreak = 0, tempMiss = 0, tempStreak = 0;
+            for (let i = 0; i < N; i++) {
+                if (getRoad(history[i].num[p]) === r) {
+                    maxMiss = Math.max(maxMiss, tempMiss);
+                    tempMiss = 0;
+                    tempStreak++;
+                    maxStreak = Math.max(maxStreak, tempStreak);
+                } else {
+                    tempStreak = 0;
+                    tempMiss++;
+                }
+            }
+            maxMiss = Math.max(maxMiss, tempMiss);
+
+            missData[p][r] = { current: miss, avg: avgMiss.toFixed(1), max: maxMiss, maxStreak: maxStreak };
+        }
+    }
+
+    // ========== 4. 组合形态统计 ==========
+    const comboCount = {};
+    for (let i = 0; i < N; i++) {
+        let combo = '';
+        for (let p = 0; p < posCount; p++) {
+            combo += getRoad(history[i].num[p]);
+        }
+        comboCount[combo] = (comboCount[combo] || 0) + 1;
+    }
+    const sortedCombos = Object.entries(comboCount).sort((a, b) => b[1] - a[1]);
+
+    // ========== 5. 最近30期走势 ==========
+    const recentTrend = history.slice(-30).slice().reverse().map(item => ({
+        period: item.period,
+        nums: item.num.map((n, p) => ({ val: n, road: getRoad(n), odd: isOdd(n) })),
+        roadCombo: item.num.map(n => getRoad(n)).join('')
+    }));
+
+    // ========== 6. 趋势判断 ==========
+    const trendAdvice = [];
+    for (let p = 0; p < posCount; p++) {
+        const last10Count = [0, 0, 0];
+        for (let i = N - 10; i < N; i++) {
+            last10Count[getRoad(history[i].num[p])]++;
+        }
+        
+        trendAdvice[p] = {};
+        for (let r = 0; r <= 2; r++) {
+            const shortRate = last10Count[r] / 10;
+            const longRate = roadStats[p][r].total / N;
+            const theory = r === 0 ? 0.4 : 0.3;
+            
+            let status = 'normal';
+            if (shortRate > theory + 0.15) status = 'hot';
+            else if (shortRate < theory - 0.15) status = 'cold';
+            
+            const missNow = missData[p][r].current;
+            const avgM = parseFloat(missData[p][r].avg);
+            
+            trendAdvice[p][r] = {
+                status: status,
+                shortPct: (shortRate * 100).toFixed(1),
+                longPct: (longRate * 100).toFixed(1),
+                miss: missNow,
+                avgMiss: missData[p][r].avg,
+                alert: missNow > avgM * 2 ? '超漏' : missNow < avgM * 0.5 ? '活跃' : ''
+            };
+        }
+    }
+
+    return {
+        posCount: posCount,
+        posNames: posNames,
+        N: N,
+        roadStats: roadStats,
+        segData: segData,
+        missData: missData,
+        combos: sortedCombos.slice(0, 20), // TOP20组合
+        recentTrend: recentTrend,
+        trendAdvice: trendAdvice,
+        latestPeriod: history[N - 1]?.period || '',
+        firstPeriod: history[0]?.period || ''
+    };
+}
+
+/**
+ * 生成012路分析 HTML 报告
+ */
+function getRoadAnalysisHtml(result, cfg, N) {
+    const R = result;
+    const posColors = ['#ef4444', '#22c55e', '#3b82f6', '#f59e0b', '#8b5cf6'];
+    const roadColors = { 0: '#06b6d4', 1: '#8b5cf6', 2: '#f59e0b' };
+
+    let html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>012路趋势分析 - ${cfg.name}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Microsoft YaHei',sans-serif;background:#0f172a;color:#e2e8f0;padding:16px;line-height:1.6}
+.container{max-width:1400px;margin:0 auto}
+h1{text-align:center;font-size:22px;margin-bottom:18px;color:#38bdf8;border-bottom:2px solid #334155;padding-bottom:12px}
+h2{font-size:17px;color:#818cf8;margin:25px 0 12px;padding-left:10px;border-left:4px solid #6366f1}
+.card{background:#1e293b;border-radius:10px;padding:16px;margin-bottom:14px;box-shadow:0 2px 4px rgba(0,0,0,.3)}
+.card-title{font-size:13px;color:#94a3b8;margin-bottom:12px;text-transform:uppercase;letter-spacing:.5px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:#334155;padding:8px 6px;text-align:center;color:#cbd5e1;font-weight:600}
+td{padding:7px 6px;text-align:center;border-bottom:1px solid #1e293b}
+tr:hover td{background:rgba(99,102,241,.08)}
+.dev-up{color:#ef4444;font-weight:bold}.dev-down{color:#22c55e;font-weight:bold}
+.tag-hot{background:linear-gradient(135deg,#ef4444,#dc2626);color:white;padding:2px 7px;border-radius:4px;font-size:11px}
+.tag-cold{background:linear-gradient(135deg,#3b82f6,#2563eb);color:white;padding:2px 7px;border-radius:4px;font-size:11px}
+.tag-warm{background:#f59e0b;color:white;padding:2px 7px;border-radius:4px;font-size:11px}
+.tag-alert{background:linear-gradient(135deg,#8b5cf6,#7c3aed);color:white;padding:2px 7px;border-radius:4px;font-size:11px}
+.chart-bar{height:22px;border-radius:4px;display:flex;align-items:flex-end;justify-content:flex-end;padding-right:6px;color:white;font-size:11px;min-width:50px;transition:width .5s}
+.bar-0{background:linear-gradient(90deg,#06b6d4,#0891b2)}.bar-1{background:linear-gradient(90deg,#8b5cf6,#7c3aed)}.bar-2{background:linear-gradient(90deg,#f59e0b,#d97706)}
+.combo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(${R.posCount > 3 ? '90' : '75'}px,1fr));gap:8px;margin-top:10px}
+.combo-item{text-align:center;padding:10px 5px;border-radius:8px;cursor:pointer;transition:transform .2s}
+.combo-item:hover{transform:scale(1.05)}
+.combo-item.hot{background:linear-gradient(135deg,rgba(239,68,68,.25),rgba(220,38,38,.15));border:1px solid #ef4444}
+.combo-item.cold{background:linear-gradient(135deg,rgba(59,130,246,.25),rgba(37,99,235,.15));border:1px solid #3b82f6}
+.combo-item.normal{background:#334155;border:1px solid #475569}
+.combo-code{font-size:${R.posCount > 3 ? '14' : '16'}px;font-weight:bold;font-family:monospace}
+.combo-count{font-size:11px;color:#94a3b8;margin-top:3px}
+.road-cell{display:inline-block;width:26px;height:26px;line-height:26px;border-radius:50%;font-weight:bold;font-size:11px;color:white}
+.r0{background:linear-gradient(135deg,#06b6d4,#0891b2)}
+.r1{background:linear-gradient(135deg,#8b5cf6,#7c3aed)}
+.r2{background:linear-gradient(135deg,#f59e0b,#d97706)}
+.insight-box{background:linear-gradient(135deg,rgba(99,102,241,.12),rgba(139,92,246,.08));border:1px solid rgba(99,102,241,.3);border-radius:8px;padding:14px;margin-top:12px}
+.insight-title{color:#a78bfa;font-weight:bold;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.insight-list li{margin:6px 0;padding-left:14px;position:relative;list-style:none;font-size:13px}
+.insight-list li::before{content:'▸';position:absolute;left:0;color:#818cf8}
+.grid-${R.posCount}{display:grid;gap:14px;grid-template-columns:repeat(${R.posCount},1fr)}
+.summary-box{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.summary-item{flex:1;min-width:120px;background:#334155;padding:12px;border-radius:8px;text-align:center}
+.summary-value{font-size:24px;font-weight:bold;margin:4px 0}
+.summary-label{font-size:11px;color:#94a3b8}
+.timeline{overflow-x:auto}
+.timeline table{min-width:${R.posCount * 180 + 100}px}
+.footer{text-align:center;margin:25px 0 15px;padding:15px;color:#64748b;font-size:11px;border-top:1px solid #334155}
+.pos-header{padding:6px 10px;border-radius:6px;margin-bottom:10px;font-weight:bold;color:white}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>🛤️ ${cfg.name} 012路趋势 + 奇偶比深度分析 (${N}期)</h1>
+
+<!-- 第一部分：基础分布 -->
+<h2>一、各位012路基础分布</h2>
+<div class="grid-${R.posCount}">`;
+
+    // 各位分布卡片
+    for (let p = 0; p < R.posCount; p++) {
+        const color = posColors[p];
+        html += `<div class="card">
+<div class="pos-header" style="background:${color}">${R.posNames[p]}位 012路分布</div>
+<table>
+<tr><th>路别</th><th>号码</th><th>出现次数</th><th>占比</th><th>理论</th><th>偏差</th></tr>`;
+        for (let r = 0; r <= 2; r++) {
+            const s = R.roadStats[p][r];
+            const pct = ((s.total / N) * 100).toFixed(1);
+            const dev = (parseFloat(pct) - (r === 0 ? 40 : 30)).toFixed(1);
+            const sign = parseFloat(dev) >= 0 ? '+' : '';
+            const devClass = parseFloat(dev) >= 0 ? 'dev-up' : 'dev-down';
+            html += `<tr><td>${r}路</td><td>${roadNums[r]}</td><td>${s.total}</td><td>${pct}%</td><td>${r===0?'40':'30'}%</td><td class="${devClass}">${sign}${dev}%</td></tr>`;
+        }
+        html += `</table>
+<div style="margin-top:12px;">`;
+        for (let r = 0; r <= 2; r++) {
+            const pct = ((R.roadStats[p][r].total / N) * 100);
+            const barW = Math.max(pct / 45 * 100, 15);
+            html += `<div style="display:flex;align-items:center;margin:4px 0;">
+<span style="width:30px;font-size:11px;">${r}路:</span>
+<div class="chart-bar bar-${r}" style="width:${barW}%">${pct.toFixed(1)}%</div>
+</div>`;
+        }
+        html += `</div></div>`;
+    }
+
+    html += `</div>
+
+<!-- 第二部分：分段趋势 -->
+<h2>二、分段趋势演变</h2>
+<div class="card">
+<table>
+<tr><th rowspan="2">位置</th>`;
+    R.segData.forEach(seg => {
+        html += `<th colspan="3">${seg.name}<br/><small>${seg.count}期</small></th>`;
+    });
+    html += `</tr><tr>`;
+    R.segData.forEach(() => {
+        html += `<th>0路</th><th>1路</th><th>2路</th>`;
+    });
+    html += `</tr>`;
+
+    for (let p = 0; p < R.posCount; p++) {
+        html += `<tr style="color:${posColors[p]};font-weight:bold;"><td>${R.posNames[p]}位</td>`;
+        R.segData.forEach(seg => {
+            for (let r = 0; r <= 2; r++) {
+                html += `<td>${seg.roads[p][r]}%</td>`;
+            }
+        });
+        html += `</tr>`;
+    }
+    html += `</table>
+
+<div class="insight-box">
+<div class="insight-title">💡 趋势洞察</div>
+<ul class="insight-list">`;
+    
+    // 自动生成趋势洞察
+    for (let p = 0; p < R.posCount; p++) {
+        const firstSeg = R.segData[0];
+        const lastSeg = R.segData[R.segData.length - 1];
+        for (let r = 0; r <= 2; r++) {
+            const firstVal = parseFloat(firstSeg.roads[p][r]);
+            const lastVal = parseFloat(lastSeg.roads[p][r]);
+            const diff = lastVal - firstVal;
+            const theory = r === 0 ? 40 : 30;
+            if (Math.abs(diff) > 5) {
+                const direction = diff > 0 ? '走强↑' : '走弱↓';
+                html += `<li><strong>${R.posNames[p]}位${r}路</strong>：${direction}（从${firstVal.toFixed(1)}%到${lastVal.toFixed(1)}%，变化${diff > 0 ? '+' : ''}${diff.toFixed(1)}%）</li>`;
+            } else if (Math.abs(lastVal - theory) > 5) {
+                const status = lastVal > theory ? '偏热' : '偏冷';
+                html += `<li><strong>${R.posNames[p]}位${r}路</strong>：整体${status}（当前${lastVal.toFixed(1)}%，理论${theory}%）</li>`;
+            }
+        }
+    }
+    html += `</ul></div></div>`;
+
+    // 第三部分：奇偶比分析
+    html += `
+<h2>三、012路内奇偶比分析</h2>
+<div class="grid-${R.posCount}">`;
+    
+    for (let p = 0; p < R.posCount; p++) {
+        html += `<div class="card">
+<div class="pos-header" style="background:${posColors[p]}">${R.posNames[p]}位 - 奇偶详情</div>
+<table>
+<tr><th>路别</th><th>总次</th><th>奇数</th><th>偶数</th><th>奇占比</th><th>理论奇</th><th>偏差</th></tr>`;
+        
+        for (let r = 0; r <= 2; r++) {
+            const s = R.roadStats[p][r];
+            const oddPct = s.total > 0 ? ((s.odd / s.total) * 100).toFixed(1) : '0.0';
+            
+            // 该路的奇偶理论值
+            const numsInRoad = r === 0 ? [0,3,6,9] : r === 1 ? [1,4,7] : [2,5,8];
+            const oddsInRoad = numsInRoad.filter(n => n % 2 === 1).length;
+            const tOdd = ((oddsInRoad / numsInRoad.length) * 100).toFixed(1);
+            
+            const oddDev = (parseFloat(oddPct) - parseFloat(tOdd)).toFixed(1);
+            const sign = parseFloat(oddDev) >= 0 ? '+' : '';
+            const devClass = Math.abs(parseFloat(oddDev)) > 5 ? (parseFloat(oddDev) > 0 ? 'dev-up' : 'dev-down') : '';
+            const alertTag = Math.abs(parseFloat(oddDev)) > 6 ? '<span class="tag-alert">异常</span>' : '';
+            
+            html += `<tr><td>${r}路</td><td>${s.total}</td><td>${s.odd}</td><td>${s.even}</td><td>${oddPct}%</td><td>${tOdd}%</td><td class="${devClass}">${sign}${oddDev}% ${alertTag}</td></tr>`;
+        }
+        html += `</table></div>`;
+    }
+    html += `</div>`;
+
+    // 第四部分：遗漏分析
+    html += `
+<h2>四、遗漏与连出分析</h2>
+<div class="grid-${R.posCount}">`;
+    
+    for (let p = 0; p < R.posCount; p++) {
+        html += `<div class="card">
+<div class="pos-header" style="background:${posColors[p]}">${R.posNames[p]}位 遗漏状态</div>
+<table>
+<tr><th>路别</th><th>当前遗漏</th><th>平均遗漏</th><th>最大遗漏</th><th>最大连出</th><th>状态</th></tr>`;
+        
+        for (let r = 0; r <= 2; r++) {
+            const m = R.missData[p][r];
+            const avgM = parseFloat(m.avg);
+            let statusTag = '<span class="tag-warm">正常</span>';
+            if (m.current >= m.max * 0.9) statusTag = '<span class="tag-alert">⚠极值!</span>';
+            else if (m.current > avgM * 2) statusTag = '<span class="tag-alert">超漏</span>';
+            else if (m.current === 0) statusTag = '<span class="tag-hot">刚出</span>';
+            else if (m.current < avgM * 0.5) statusTag = '<span class="tag-warm">活跃</span>';
+            
+            html += `<tr><td>${r}路</td><td>${m.current}</td><td>${m.avg}</td><td>${m.max}</td><td>${m.maxStreak}</td><td>${statusTag}</td></tr>`;
+        }
+        html += `</table></div>`;
+    }
+    html += `</div>`;
+
+    // 预警信号
+    html += `<div class="insight-box" style="background:linear-gradient(135deg,rgba(245,158,11,.12),rgba(217,119,6,.08));border-color:#f59e0b;">
+<div class="insight-title" style="color:#f59e0b;">⚡ 关键预警信号</div>
+<ul class="insight-list">`;
+    
+    let hasAlert = false;
+    for (let p = 0; p < R.posCount; p++) {
+        for (let r = 0; r <= 2; r++) {
+            const m = R.missData[p][r];
+            const avgM = parseFloat(m.avg);
+            if (m.current > avgM * 2) {
+                hasAlert = true;
+                html += `<li><strong>${R.posNames[p]}位${r}路</strong> 当前遗漏<strong>${m.current}期</strong>（平均${m.avg}期），已达${(m.current/m.max*100).toFixed(0)}%历史最大遗漏！强烈关注</li>`;
+            }
+        }
+    }
+    if (!hasAlert) {
+        html += `<li>当前各位置各路遗漏均在正常范围内，无明显超漏信号</li>`;
+    }
+    html += `</ul></div>`;
+
+    // 第五部分：组合形态
+    html += `
+<h2>五、012路组合形态统计（TOP热/冷）</h2>
+<div class="card">
+<div class="combo-grid">`;
+    
+    const maxComboCount = R.combos.length > 0 ? R.combos[0][1] : 1;
+    R.combos.forEach(([combo, count]) => {
+        const pct = ((count / N) * 100).toFixed(2);
+        const ratio = count / maxComboCount;
+        let itemClass = 'normal';
+        if (ratio >= 0.7) itemClass = 'hot';
+        else if (ratio <= 0.25) itemClass = 'cold';
+        const tag = ratio >= 0.7 ? '★热' : ratio <= 0.25 ? '☆冷' '';
+        
+        html += `<div class="combo-item ${itemClass}">
+<div class="combo-code">${combo}</div>
+<div class="combo-count">${count}次(${pct}%) ${tag}</div>
+</div>`;
+    });
+    
+    html += `</div></div>`;
+
+    // 第六部分：走势图
+    html += `
+<h2>六、最近30期详细走势</h2>
+<div class="card timeline">
+<table>
+<tr><th>期号</th>`;
+    for (let p = 0; p < R.posCount; p++) {
+        html += `<th>${R.posNames[p]}位<br/><small>(号|路|奇偶)</small></th>`;
+    }
+    html += `<th>路组合</th></tr>`;
+
+    R.recentTrend.forEach(item => {
+        html += `<tr><td>${item.period}</td>`;
+        item.nums.forEach((n, idx) => {
+            const parity = n.odd ? '奇' : '偶';
+            html += `<td>${n.val}|<span class="road-cell r${n.road}">${n.road}</span>|${parity}</td>`;
+        });
+        html += `<td>`;
+        item.roadCombo.split('').forEach(r => {
+            html += `<span class="road-cell r${r}">${r}</span>`;
+        });
+        html += `</td></tr>`;
+    });
+    html += `</table></div>`;
+
+    // 第七部分：下期推荐
+    html += `
+<h2>七、下期预测参考</h2>
+<div class="grid-${R.posCount}">`;
+    
+    for (let p = 0; p < R.posCount; p++) {
+        html += `<div class="card" style="border-top:3px solid ${posColors[p]}">
+<div class="card-title" style="color:${posColors[p]}">${R.posNames[p]}位推荐</div>
+<div class="summary-box">`;
+
+        // 找出推荐的路
+        const advice = R.trendAdvice[p];
+        const recommendations = [];
+        for (let r = 0; r <= 2; r++) {
+            const a = advice[r];
+            recommendations.push({ road: r, ...a });
+        }
+        // 按综合评分排序：优先考虑超漏，其次考虑偏冷
+        recommendations.sort((a, b) => {
+            if (a.alert && !b.alert) return -1;
+            if (!a.alert && b.alert) return 1;
+            if (a.status === 'cold' && b.status !== 'cold') return -1;
+            if (a.status !== 'cold' && b.status === 'cold') return 1;
+            return a.miss - b.miss;
+        });
+
+        for (let i = 0; i < Math.min(2, recommendations.length); i++) {
+            const rec = recommendations[i];
+            const rc = roadColors[rec.road];
+            const label = i === 0 ? '首选' : '次选';
+            const tagClass = rec.alert ? 'tag-alert' : rec.status === 'cold' ? 'tag-cold' : rec.status === 'hot' ? 'tag-hot' : 'tag-warm';
+            html += `<div class="summary-item">
+<div class="summary-label">${label}路</div>
+<div class="summary-value" style="color:${rc}">${rec.road}路</div>
+<div style="font-size:10px;color:#94a3b8;">遗漏${rec.miss}(均${rec.avgMiss}) ${rec.alert}</div>
+<span class="${tagClass}" style="margin-top:4px;display:inline-block">${rec.status==='hot'?'偏热':rec.status==='cold'?'偏冷':'正常'}</span>
+</div>`;
+        }
+
+        html += `</div>
+<div style="margin-top:12px;padding:10px;background:#334155;border-radius:8px;font-size:12px;">
+<strong>推荐号码：</strong><br/>`;
+        recommendations.forEach((rec, idx) => {
+            const tagCls = idx === 0 ? 'tag-hot' : 'tag-warm';
+            html += `<span class="${tagCls}">${rec.road}路: ${roadNums[rec.road]}</span><br/>`;
+        });
+        html += `</div></div>`;
+    }
+    html += `</div>`;
+
+    // 综合推荐
+    html += `<div class="insight-box" style="background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(6,182,212,.08));border-color:#10b981;">
+<div class="insight-title" style="color:#10b981;">🎯 综合推荐</div>
+<p style="font-size:13px;line-height:1.8;">
+基于以上数据分析，下期推荐的<strong>012路组合形态</strong>：<br/>
+`;
+    
+    // 推荐组合逻辑
+    const topCombos = R.combos.slice(0, 3);
+    topCombos.forEach(([combo, count], idx) => {
+        const stars = idx === 0 ? '⭐' : idx === 1 ? '🌟' : '✨';
+        html += `${stars} <strong>${combo}</strong> (${count}次, ${((count/N)*100).toFixed(1)}%) &nbsp;&nbsp;`;
+    });
+    
+    html += `<br/><br/>
+<small style="color:#94a3b8;">数据范围：${R.firstPeriod} ~ ${R.latestPeriod} | 分析期数：${N}期<br/>
+本报告基于历史数据统计分析，仅供技术研究参考，不构成任何投注建议</small>
+</p></div>
+
+<div class="footer">
+<p>🛤️ 012路趋势分析 | ${cfg.name} | 数据驱动 · 智能分析</p>
+</div>
+</div>
+</body>
+</html>`;
+
+    return html;
+}
+
+/**
+ * 生成概率统计智能推荐 HTML
+ */
+function getProbabilityPickHtml(analysis) {
+    const A = analysis;
+    const dataJson = JSON.stringify(A);
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>概率统计智能推荐 - ${A.cfgName}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1b1b2f; color: #e0e0e0; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; line-height: 1.5; }
+.header { background: linear-gradient(135deg, #16213e, #0f3460); padding: 20px; border-radius: 12px; margin-bottom: 16px; text-align: center; border: 1px solid rgba(255,255,255,0.1); }
+.header h1 { font-size: 22px; color: #e94560; margin-bottom: 6px; }
+.header .sub { color: #a0a0b0; font-size: 13px; }
+.header .latest { margin-top: 12px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.latest .ball { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; font-weight: bold; font-size: 18px; color: #fff; }
+.ball.red { background: linear-gradient(135deg, #e94560, #c0392b); }
+.ball.blue { background: linear-gradient(135deg, #0984e3, #0652DD); }
+.ball.green { background: linear-gradient(135deg, #27ae60, #1e8449); }
+.ball.purple { background: linear-gradient(135deg, #8e44ad, #6c3483); }
+.ball.orange { background: linear-gradient(135deg, #f39c12, #d68910); }
+.section { margin-bottom: 18px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; overflow: hidden; }
+.section-title { background: rgba(255,255,255,0.05); padding: 10px 16px; font-size: 14px; font-weight: 600; color: #feca57; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.section-body { padding: 14px 16px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { border: 1px solid rgba(255,255,255,0.1); padding: 5px 8px; text-align: center; }
+th { background: rgba(255,255,255,0.06); color: #8ec5ff; font-weight: 600; font-size: 11px; white-space: nowrap; }
+td { font-size: 12px; }
+.hot { color: #e94560; font-weight: bold; }
+.cold { color: #0984e3; font-weight: bold; }
+.warm { color: #2ecc71; }
+.badge-hot { display: inline-block; background: rgba(233,69,96,0.2); color: #e94560; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+.badge-cold { display: inline-block; background: rgba(9,132,227,0.2); color: #0984e3; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+.badge-warm { display: inline-block; background: rgba(46,204,113,0.2); color: #2ecc71; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+.score-bar-wrap { height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; margin-top: 2px; overflow: hidden; }
+.score-bar { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #e94560, #feca57, #2ecc71); transition: width 0.4s; }
+.chart-bar-wrap { display: flex; align-items: flex-end; gap: 3px; height: 60px; padding: 0 4px; }
+.chart-bar-cell { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+.chart-bar { width: 70%; border-radius: 2px 2px 0 0; min-height: 1px; transition: height 0.3s; }
+.chart-label { font-size: 10px; color: #888; margin-top: 2px; }
+.chart-label-top { font-size: 9px; color: #e94560; font-weight: bold; }
+.warn-box { background: rgba(231,76,60,0.1); border: 1px solid rgba(231,76,60,0.3); padding: 10px 14px; border-radius: 6px; color: #e74c3c; font-size: 12px; margin: 8px 0; }
+.info-box { background: rgba(52,152,219,0.1); border: 1px solid rgba(52,152,219,0.3); padding: 10px 14px; border-radius: 6px; color: #3498db; font-size: 12px; margin: 8px 0; }
+.success-box { background: rgba(46,204,113,0.1); border: 1px solid rgba(46,204,113,0.3); padding: 10px 14px; border-radius: 6px; color: #2ecc71; font-size: 12px; margin: 8px 0; }
+.rec-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 12px; text-align: center; }
+.rec-card .rank { font-size: 11px; color: #888; }
+.rec-card .nums { font-size: 20px; font-weight: bold; color: #feca57; margin: 6px 0; letter-spacing: 4px; }
+.rec-card .score { font-size: 11px; color: #aaa; }
+.rec-card.top1 { border-color: rgba(233,69,96,0.5); background: rgba(233,69,96,0.08); }
+.rec-card.top1 .nums { color: #e94560; font-size: 24px; }
+.pos-tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; margin-right: 4px; }
+.pos-tag.pos0 { background: #e94560; color: #fff; }
+.pos-tag.pos1 { background: #0984e3; color: #fff; }
+.pos-tag.pos2 { background: #27ae60; color: #fff; }
+.pos-tag.pos3 { background: #8e44ad; color: #fff; }
+.pos-tag.pos4 { background: #f39c12; color: #fff; }
+.recommend-area { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+@media (max-width: 600px) { .recommend-area { grid-template-columns: repeat(2, 1fr); } }
+.highlight-num { display: inline-block; padding: 3px 7px; border-radius: 4px; font-weight: bold; }
+.stats-row { display: flex; gap: 16px; flex-wrap: wrap; }
+.stat-card { flex: 1; min-width: 120px; background: rgba(255,255,255,0.04); border-radius: 8px; padding: 12px; text-align: center; }
+.stat-card .val { font-size: 22px; font-weight: bold; color: #feca57; }
+.stat-card .lbl { font-size: 11px; color: #888; margin-top: 4px; }
+.btn-copy { display: inline-block; padding: 4px 12px; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; background: rgba(255,255,255,0.05); color: #bbb; cursor: pointer; font-size: 11px; transition: all 0.2s; }
+.btn-copy:hover { background: rgba(233,69,96,0.2); border-color: #e94560; color: #e94560; }
+.btn-copy.copied { background: rgba(46,204,113,0.2); border-color: #2ecc71; color: #2ecc71; }
+.btn-copy-sm { padding: 2px 8px; font-size: 10px; margin-top: 6px; }
+.copy-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<div class="header">
+    <h1>🧬 ${A.cfgEmoji} ${A.cfgName} — 概率统计智能推荐</h1>
+    <div class="sub">样本量：${A.N} 期 | 方法：多维度频率分析 + 遗漏回归 + Z分数检验 + 卡方检验</div>
+    <div class="latest">
+        <span style="color:#aaa">第 ${A.latestPeriod} 期 (${A.latestDate})：</span>
+        ${A.latestNums.map((n, i) => '<span class="ball ' + ['red','blue','green','purple','orange'][i] + '">' + n + '</span>').join('')}
+    </div>
+</div>
+
+<div id="prob-app">
+<!-- ===== 1. 频次分布对比 ===== -->
+<div class="section">
+    <div class="section-title">📊 多窗口频次分布（各位号码出现次数）</div>
+    <div class="section-body">
+        <div id="freq-tabs" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap"></div>
+        <div id="freq-charts"></div>
+    </div>
+</div>
+
+<!-- ===== 2. 遗漏值 & Z分数冷热 ===== -->
+<div class="section">
+    <div class="section-title">🎯 遗漏值 & Z分数冷热分析</div>
+    <div class="section-body">
+        <div class="grid-2" id="missing-z-grid"></div>
+    </div>
+</div>
+
+<!-- ===== 3. 卡方检验 ===== -->
+<div class="section">
+    <div class="section-title">📐 卡方拟合优度检验（H₀：每位号码均匀分布）</div>
+    <div class="section-body" id="chi-square-section"></div>
+</div>
+
+<!-- ===== 4. 和值分布 ===== -->
+<div class="section">
+    <div class="section-title">🔢 和值统计</div>
+    <div class="section-body">
+        <div class="stats-row" id="sum-stats"></div>
+        <div style="margin-top:10px;position:relative;height:32px;background:rgba(0,0,0,0.2);border-radius:4px;">
+            <div id="sum-indicator" style="position:absolute;top:0;left:0;width:4px;height:100%;background:#e94560;border-radius:2px;"></div>
+            <div style="position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:11px;color:#888;pointer-events:none;" id="sum-label"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ===== 5. 跨度分布 ===== -->
+<div class="section">
+    <div class="section-title">📏 跨度分布（${A.posCount}位号码最大值-最小值）</div>
+    <div class="section-body">
+        <div class="chart-bar-wrap" id="span-chart"></div>
+    </div>
+</div>
+
+<!-- ===== 6. 模式分布 ===== -->
+<div class="section">
+    <div class="section-title">🔍 模式分布：奇偶比 · 大小比 · 012路</div>
+    <div class="section-body">
+        <div class="grid-3" id="pattern-grid"></div>
+    </div>
+</div>
+
+<!-- ===== 7. 综合智能评分 ===== -->
+<div class="section">
+    <div class="section-title">🏆 综合智能评分（多维加权）</div>
+    <div class="section-body">
+        <div class="info-box" style="margin-top:0;">
+            评分权重：近期频次 30% + 遗漏回归 25% + Z分数修正 20% + 趋势动量 15% + 模式均衡 10%
+        </div>
+        <div id="score-tables"></div>
+    </div>
+</div>
+
+<!-- ===== 8. 智能推荐 ===== -->
+<div class="section" style="border-color: rgba(233,69,96,0.4);">
+    <div class="section-title" style="color:#e94560;">💎 智能推荐组合（基于概率评分）</div>
+    <div class="section-body">
+        <div class="copy-bar" id="copy-bar"></div>
+        <div id="recommend-area"></div>
+    </div>
+</div>
+
+<!-- ===== 9. 复式推荐 ===== -->
+<div class="section" style="border-color: rgba(142,197,255,0.4);">
+    <div class="section-title" style="color:#8ec5ff;">🎰 复式推荐（混合模式：每位动态选 2~5 个号码）</div>
+    <div class="section-body">
+        <div class="info-box" style="margin-top:0;">
+            每位基于评分落差阈值动态决定选号数（2~5），高分离度号码多选、相近号码少选。复式总注数 = 各位选号数之乘积。
+        </div>
+        <div id="compound-info" style="margin:12px 0;"></div>
+        <div id="compound-display" style="margin:12px 0;"></div>
+        <div class="copy-bar" id="compound-copy-bar"></div>
+        <div class="warn-box" style="margin-top:12px;">
+            ⚠️ <b>免责声明：</b>彩票本质是独立随机事件，任何统计方法都无法准确预测未来开奖结果。本推荐仅基于历史数据的概率统计模型，仅供娱乐参考，请理性购彩。
+        </div>
+    </div>
+</div>
+</div>
+
+<script>
+const A = ${dataJson};
+const COLORS = ['#e94560','#0984e3','#27ae60','#8e44ad','#f39c12'];
+const CLS_POS = ['pos0','pos1','pos2','pos3','pos4'];
+
+// ===== 1. 频次分布 =====
+(function() {
+    const tabsDiv = document.getElementById('freq-tabs');
+    const chartsDiv = document.getElementById('freq-charts');
+    const winLabels = ['最近10期','最近30期','最近50期','最近100期','全部' + A.N + '期'];
+
+    A.freqWindows.forEach((fw, wi) => {
+        const btn = document.createElement('button');
+        btn.textContent = winLabels[wi] || ('最近' + fw.window + '期');
+        btn.style.cssText = 'padding:4px 12px;border:1px solid rgba(255,255,255,0.2);border-radius:4px;background:' + (wi===0?'rgba(233,69,96,0.2)':'transparent') + ';color:#ddd;cursor:pointer;font-size:12px;';
+        btn.onclick = () => renderFreqCharts(wi, fw, btn);
+        tabsDiv.appendChild(btn);
+    });
+
+    function renderFreqCharts(wi, fw, activeBtn) {
+        tabsDiv.querySelectorAll('button').forEach(b => { b.style.background = 'transparent'; });
+        activeBtn.style.background = 'rgba(233,69,96,0.2)';
+        let html = '<div class="grid-3">';
+        for (let p = 0; p < A.posCount; p++) {
+            const counts = fw.counts[p];
+            const maxCnt = Math.max.apply(null, counts);
+            html += '<div style="background:rgba(0,0,0,0.2);border-radius:8px;padding:10px;">';
+            html += '<span class="pos-tag ' + CLS_POS[p] + '">' + A.posLabels[p] + '位</span>';
+            html += '<div class="chart-bar-wrap" style="height:40px;margin-top:6px;">';
+            for (let n = 0; n <= 9; n++) {
+                const h = maxCnt > 0 ? (counts[n] / maxCnt * 100) : 0;
+                const isTop = counts[n] === maxCnt && counts[n] > 0;
+                html += '<div class="chart-bar-cell" title="号码' + n + '：' + counts[n] + '次">';
+                html += '<div class="chart-bar" style="height:' + h + '%;background:' + (isTop ? COLORS[p] : 'rgba(255,255,255,0.25)') + ';"></div>';
+                html += '<div class="' + ('chart-label' + (isTop ? ' chart-label-top' : '')) + '">' + n + '</div>';
+                html += '</div>';
+            }
+            html += '</div><div style="font-size:10px;color:#aaa;margin-top:4px;text-align:center;">'
+                + counts.join(' | ') + '</div></div>';
+        }
+        html += '</div>';
+        html += '<div class="info-box" style="margin-top:10px;">理论均匀频率：每号 ' + (fw.window/10).toFixed(1) + ' 次（每号概率 1/10）</div>';
+        chartsDiv.innerHTML = html;
+    }
+    if (A.freqWindows.length > 0) {
+        renderFreqCharts(0, A.freqWindows[0], tabsDiv.querySelector('button'));
+    }
+})();
+
+// ===== 2. 遗漏值 & Z分数 =====
+(function() {
+    let html = '';
+    for (let p = 0; p < A.posCount; p++) {
+        html += '<div style="background:rgba(0,0,0,0.2);border-radius:8px;padding:10px;">';
+        html += '<div style="font-weight:600;margin-bottom:8px;"><span class="pos-tag ' + CLS_POS[p] + '">' + A.posLabels[p] + '位</span></div>';
+        html += '<table><thead><tr><th>号码</th><th>出现次数</th><th>理论期望</th><th>Z分数</th><th>分类</th><th>遗漏值</th></tr></thead><tbody>';
+        for (let n = 0; n <= 9; n++) {
+            const cnt = A.allCounts[p][n];
+            const z = A.zScores[p][n].toFixed(2);
+            const cls = A.classification[p][n];
+            const mis = A.missing[p][n];
+            const clsBadge = cls === '热' ? '<span class="badge-hot">热号</span>'
+                : cls === '冷' ? '<span class="badge-cold">冷号</span>'
+                : '<span class="badge-warm">温号</span>';
+            const zColor = z >= 1.5 ? '#e94560' : z <= -1.5 ? '#0984e3' : '#aaa';
+            const misColor = mis >= 15 ? '#e94560' : mis >= 8 ? '#feca57' : '#2ecc71';
+            html += '<tr>' +
+                '<td><span class="highlight-num" style="background:rgba(255,255,255,0.08);color:#feca57;font-size:14px;">' + n + '</span></td>' +
+                '<td>' + cnt + '</td>' +
+                '<td>' + (A.N/10).toFixed(1) + '</td>' +
+                '<td style="color:' + zColor + ';font-weight:bold;">' + z + '</td>' +
+                '<td>' + clsBadge + '</td>' +
+                '<td style="color:' + misColor + ';font-weight:bold;">' + mis + '期</td>' +
+                '</tr>';
+        }
+        html += '</tbody></table></div>';
+    }
+    document.getElementById('missing-z-grid').innerHTML = html;
+})();
+
+// ===== 3. 卡方检验 =====
+(function() {
+    let html = '';
+    for (let p = 0; p < A.posCount; p++) {
+        const cr = A.chiSquareResults[p];
+        const sigColor = cr.significant ? '#e94560' : '#2ecc71';
+        const sigText = cr.significant ? '⚠ 显著偏离均匀分布（p<0.05）' : '✅ 未显著偏离均匀分布（p≥0.05）';
+        html += '<div style="margin-bottom:8px;">';
+        html += '<span class="pos-tag ' + CLS_POS[p] + '">' + A.posLabels[p] + '位</span> ';
+        html += '<span>χ² = <b>' + cr.chi2 + '</b> (df=' + cr.dof + ') &nbsp; p = <b style="color:' + sigColor + '">' + cr.pValue + '</b></span>';
+        html += ' &nbsp; <span style="color:' + sigColor + ';font-size:11px;">' + sigText + '</span>';
+        html += '</div>';
+    }
+    html += '<div class="info-box" style="margin-top:4px;">卡方检验验证每位号码是否服从均匀分布(1/10)。若p<0.05，说明该位号码可能存在偏差；若p≥0.05，说明统计上未检测到显著偏差，符合随机分布。</div>';
+    document.getElementById('chi-square-section').innerHTML = html;
+})();
+
+// ===== 4. 和值 =====
+(function() {
+    const ss = A.sumStats;
+    let html = '<div class="stat-card"><div class="val">' + ss.latest + '</div><div class="lbl">最新和值</div></div>';
+    html += '<div class="stat-card"><div class="val">' + ss.mean + '</div><div class="lbl">实际均值</div></div>';
+    html += '<div class="stat-card"><div class="val">' + ss.theoreticalMean.toFixed(1) + '</div><div class="lbl">理论均值</div></div>';
+    html += '<div class="stat-card"><div class="val">' + ss.min + '~' + ss.max + '</div><div class="lbl">极值范围</div></div>';
+    html += '<div class="stat-card"><div class="val">' + ss.theoreticalStdDev + '</div><div class="lbl">理论标准差</div></div>';
+    document.getElementById('sum-stats').innerHTML = html;
+
+    // 和值指示器
+    const fullRange = A.posCount * 9;
+    const minRange = 0;
+    const ratio = (ss.latest - minRange) / (fullRange - minRange);
+    document.getElementById('sum-indicator').style.left = (ratio * 100) + '%';
+    document.getElementById('sum-label').textContent = '← 最新和值 ' + ss.latest + '（理论：每位4.5×' + A.posCount + '=' + ss.theoreticalMean.toFixed(1) + '）';
+})();
+
+// ===== 5. 跨度分布 =====
+(function() {
+    const maxSpan = Math.max.apply(null, A.spanDist);
+    let html = '';
+    for (let s = 0; s <= 9; s++) {
+        const cnt = A.spanDist[s];
+        const h = maxSpan > 0 ? (cnt / maxSpan * 100) : 0;
+        html += '<div class="chart-bar-cell" title="跨度' + s + '：' + cnt + '次">';
+        html += '<div class="chart-bar" style="height:' + h + '%;background:' + (h > 50 ? '#e94560' : 'rgba(255,255,255,0.3)') + ';"></div>';
+        html += '<div class="chart-label">' + s + (cnt > 0 ? '<br>' + cnt : '') + '</div>';
+        html += '</div>';
+    }
+    document.getElementById('span-chart').innerHTML = html;
+})();
+
+// ===== 6. 模式分布 =====
+(function() {
+    const ps = A.patternStats;
+    const buildTable = (title, data) => {
+        const sorted = Object.entries(data).sort((a, b) => b[1] - a[1]);
+        let t = '<table><thead><tr><th>模式</th><th>次数</th><th>占比</th></tr></thead><tbody>';
+        sorted.forEach(([k, v]) => {
+            const pct = (v/A.N*100).toFixed(1);
+            t += '<tr><td>' + k + '</td><td>' + v + '</td><td>' + pct + '%</td></tr>';
+        });
+        t += '</tbody></table>';
+        return t;
+    };
+
+    let html = '<div><div style="font-weight:600;margin-bottom:6px;color:#feca57;">奇:偶</div>' + buildTable('odd:even', ps.oddEven) + '</div>';
+    html += '<div><div style="font-weight:600;margin-bottom:6px;color:#feca57;">大:小（≥5为大）</div>' + buildTable('big:small', ps.bigSmall) + '</div>';
+    html += '<div><div style="font-weight:600;margin-bottom:6px;color:#feca57;">0路:1路:2路</div>' + buildTable('route', ps.route) + '</div>';
+    document.getElementById('pattern-grid').innerHTML = html;
+})();
+
+// ===== 7. 综合智能评分表 =====
+(function() {
+    let html = '';
+    for (let p = 0; p < A.posCount; p++) {
+        const scores = A.scores[p];
+        html += '<div style="margin-bottom:12px;">';
+        html += '<span class="pos-tag ' + CLS_POS[p] + '">' + A.posLabels[p] + '位</span>';
+        html += '<table style="margin-top:6px;"><thead><tr><th>排名</th><th>号码</th><th>综合评分</th><th>频次(30%)</th><th>遗漏(25%)</th><th>Z分数(20%)</th><th>动量(15%)</th><th>模式(10%)</th></tr></thead><tbody>';
+        scores.forEach((s, i) => {
+            const d = s.detail;
+            const barClass = i < 3 ? 'style="color:#e94560;font-weight:bold"' : '';
+            html += '<tr' + (i < 3 ? ' style="background:rgba(233,69,96,0.05)"' : '') + '>' +
+                '<td>' + (i + 1) + '</td>' +
+                '<td ' + barClass + '>' + s.num + '</td>' +
+                '<td style="font-weight:bold;color:#feca57;">' + s.score.toFixed(4) + '</td>' +
+                '<td>' + d.freqScore.toFixed(4) + '</td>' +
+                '<td>' + d.missScore.toFixed(4) + '</td>' +
+                '<td>' + d.zScoreNorm.toFixed(4) + '</td>' +
+                '<td>' + d.momentumScore.toFixed(4) + '</td>' +
+                '<td>' + d.patternAdj.toFixed(4) + '</td>' +
+                '</tr>';
+        });
+        html += '</tbody></table></div>';
+    }
+    document.getElementById('score-tables').innerHTML = html;
+})();
+
+// ===== 8. 智能推荐 =====
+(function() {
+    // 全部号码字符串，用于整体复制
+    const singlesTitle = '【' + A.cfgEmoji + A.cfgName + ' 概率推荐单式TOP8】\\n' +
+        '基础期号：第' + A.latestPeriod + '期（' + A.latestDate + '）\\n' +
+        '样本量：' + A.N + '期 | 每位TOP4组合 | 共' + A.totalCombos + '注取TOP8\\n' +
+        '----------------------------------------';
+    const allNumStr = singlesTitle + '\\n' + A.bestSingles.map(s => s.combo.join(' ')).join('\\n');
+
+    // 顶部全局复制按钮
+    const copyBar = document.getElementById('copy-bar');
+    copyBar.innerHTML = '<button class="btn-copy" id="btn-copy-all" title="复制全部推荐号码">📋 一键复制全部推荐号码</button>';
+    document.getElementById('btn-copy-all').onclick = () => {
+        navigator.clipboard.writeText(allNumStr).then(() => {
+            const btn = document.getElementById('btn-copy-all');
+            btn.textContent = '✅ 已复制！';
+            btn.classList.add('copied');
+            setTimeout(() => { btn.textContent = '📋 一键复制全部推荐号码'; btn.classList.remove('copied'); }, 2000);
+        });
+    };
+
+    let html = '';
+    A.bestSingles.forEach((s, i) => {
+        const isTop = i === 0;
+        const comboStr = s.combo.join(' ');
+        html += '<div class="rec-card' + (isTop ? ' top1' : '') + '">';
+        html += '<div class="rank">推荐 #' + (i + 1) + (isTop ? ' 🥇 最佳' : '') + '</div>';
+        html += '<div class="nums" id="combo-' + i + '">';
+        s.combo.forEach((n, pi) => {
+            html += '<span style="color:' + COLORS[pi % COLORS.length] + '">' + n + '</span>';
+            if (pi < s.combo.length - 1) html += ' ';
+        });
+        html += '</div>';
+        html += '<div class="score">综合评分：<b style="color:#feca57">' + s.score.toFixed(4) + '</b></div>';
+        html += '<button class="btn-copy btn-copy-sm" data-combo="' + comboStr + '" data-idx="' + i + '">📋 复制</button>';
+        html += '</div>';
+    });
+    html += '<div style="margin-top:12px;font-size:12px;color:#aaa;">每位选TOP4，共 ' + A.totalCombos + ' 种组合，按综合评分排序取TOP8</div>';
+    document.getElementById('recommend-area').innerHTML = '<div class="recommend-area">' + html + '</div>';
+
+    // 单个复制按钮事件
+    document.querySelectorAll('.btn-copy-sm').forEach(btn => {
+        btn.onclick = function(e) {
+            e.stopPropagation();
+            const comboText = this.getAttribute('data-combo');
+            navigator.clipboard.writeText(comboText).then(() => {
+                this.textContent = '✅ 已复制';
+                this.classList.add('copied');
+                setTimeout(() => { this.textContent = '📋 复制'; this.classList.remove('copied'); }, 2000);
+            });
+        };
+    });
+})();
+
+// ===== 9. 复式推荐 =====
+(function() {
+    if (!A.compoundPerPos) return;
+    const infoDiv = document.getElementById('compound-info');
+    const dispDiv = document.getElementById('compound-display');
+    const copyBar = document.getElementById('compound-copy-bar');
+
+    // 信息条
+    const perPosStr = A.compoundPerPos.map((p, i) => A.posLabels[i] + ':' + p.length + '个').join(' · ');
+    infoDiv.innerHTML = '<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;">' +
+        '<span style="background:rgba(142,197,255,0.15);color:#8ec5ff;padding:4px 12px;border-radius:4px;font-size:13px;">📋 ' + perPosStr + '</span>' +
+        '<span style="background:rgba(254,202,87,0.15);color:#feca57;padding:4px 12px;border-radius:4px;font-size:13px;">🔢 总注数：' + A.compoundTotalCombos + ' 注</span>' +
+        '<span style="background:rgba(46,204,113,0.15);color:#2ecc71;padding:4px 12px;border-radius:4px;font-size:13px;">⭐ 综合评分：' + A.compoundScore.toFixed(4) + '</span>' +
+        '</div>';
+
+    // 各位号码展示
+    let html = '<div style="display:flex;gap:12px;flex-wrap:wrap;">';
+    A.compoundPerPos.forEach((picks, p) => {
+        const color = COLORS[p % COLORS.length];
+        html += '<div style="flex:1;min-width:180px;background:rgba(0,0,0,0.2);border-radius:8px;padding:12px;border-left:3px solid ' + color + ';">';
+        html += '<div style="font-weight:600;margin-bottom:8px;"><span class="pos-tag ' + CLS_POS[p] + '">' + A.posLabels[p] + '位</span> <span style="color:#888;font-size:11px;">选 ' + picks.length + ' 个</span></div>';
+        html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+        // 按号码排序展示
+        picks.slice().sort((a, b) => a - b).forEach(n => {
+            const scoreObj = A.scores[p].find(s => s.num === n);
+            const score = scoreObj ? scoreObj.score.toFixed(4) : '?';
+            const rank = A.scores[p].findIndex(s => s.num === n) + 1;
+            html += '<div style="text-align:center;">';
+            html += '<div style="width:36px;height:36px;line-height:36px;border-radius:50%;background:' + color + ';color:#fff;font-weight:bold;font-size:16px;margin:0 auto;">' + n + '</div>';
+            html += '<div style="font-size:10px;color:#888;margin-top:2px;">#' + rank + '</div>';
+            html += '<div style="font-size:9px;color:#666;">' + score + '</div>';
+            html += '</div>';
+        });
+        html += '</div></div>';
+    });
+    html += '</div>';
+    dispDiv.innerHTML = html;
+
+    // 复制按钮
+    const compoundTitle = '【' + A.cfgEmoji + A.cfgName + ' 概率推荐复式方案】\\n' +
+        '基础期号：第' + A.latestPeriod + '期（' + A.latestDate + '）\\n' +
+        '样本量：' + A.N + '期 | 复式规格：' + A.compoundPerPos.map((picks, p) => A.posLabels[p] + '位' + picks.length + '个').join(' · ') + ' | 总注数：' + A.compoundTotalCombos + '注\\n' +
+        '综合评分：' + A.compoundScore.toFixed(4) + '\\n' +
+        '----------------------------------------';
+    const compoundNumStr = A.compoundPerPos.map((picks, p) => A.posLabels[p] + '位: ' + picks.slice().sort((a, b) => a - b).join(',')).join('\\n');
+    const compoundStr = compoundTitle + '\\n' + compoundNumStr;
+    copyBar.innerHTML = '<button class="btn-copy" id="btn-copy-compound">📋 一键复制复式方案</button>';
+    document.getElementById('btn-copy-compound').onclick = () => {
+        navigator.clipboard.writeText(compoundStr).then(() => {
+            const btn = document.getElementById('btn-copy-compound');
+            btn.textContent = '✅ 已复制！';
+            btn.classList.add('copied');
+            setTimeout(() => { btn.textContent = '📋 一键复制复式方案'; btn.classList.remove('copied'); }, 2000);
+        });
+    };
 })();
 </script>
 </body>
