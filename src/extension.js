@@ -1038,6 +1038,17 @@ function activate(context) {
             vscode.ViewColumn.One,
             { enableScripts: true, retainContextWhenHidden: true }
         );
+
+        // 监听来自 Webview 的消息（用于复制功能）
+        panel.webview.onDidReceiveMessage(async (message) => {
+            if (message.command === 'copy') {
+                await vscode.env.clipboard.writeText(message.text);
+                // 通知前端复制成功
+                panel.webview.postMessage({ command: 'copySuccess' });
+                return;
+            }
+        });
+
         panel.webview.html = getRoadAnalysisHtml(analysisResult, cfg, N);
     });
     context.subscriptions.push(roadAnalysisDisposable);
@@ -4430,7 +4441,7 @@ ${rec.formula}
 <td style="text-align:center;font-weight:bold;">${rankTag}</td>
 <td style="text-align:center;font-family:monospace;font-size:16px;font-weight:bold;color:#38bdf8;letter-spacing:3px;">
 ${comboStr}
-<button class="copy-btn" style="margin-left:6px;padding:2px 8px;font-size:10px;" onclick="copyText(this, '${comboStr}')">复制</button>
+<button class="copy-btn" style="margin-left:6px;padding:2px 8px;font-size:10px;" onclick="doCopy(this, '${comboStr}')">复制</button>
 </td>
 <td style="text-align:center;">`;
             roadStr.split('').forEach(r => {
@@ -4470,61 +4481,48 @@ ${comboStr}
 </div>
 
 <script>
-// Base64 解码
-function decodeBase64(str) {
-    try {
-        return atob(str);
-    } catch(e) {
-        return decodeURIComponent(Array.from(atob(str), c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+// 使用 VSCode 原生 API 复制（通过消息机制）
+function copyToClipboard(text) {
+    if (typeof acquireVsCodeApi !== 'undefined') {
+        const vscode = acquireVsCodeApi();
+        vscode.postMessage({ command: 'copy', text: text });
     }
 }
+
+// 监听复制成功消息
+window.addEventListener('message', (event) => {
+    const msg = event.data;
+    if (msg.command === 'copySuccess') {
+        // 找到所有复制按钮并显示成功状态
+        document.querySelectorAll('.copy-btn, .copy-all-btn').forEach(btn => {
+            if (btn.dataset.copied !== 'true') return;
+            btn.innerHTML = '✅ 已复制';
+            btn.classList.add('copied');
+            setTimeout(() => {
+                btn.innerHTML = btn.dataset.originalText || '📋 复制';
+                btn.classList.remove('copied');
+                btn.dataset.copied = 'false';
+            }, 1500);
+        });
+    }
+});
 
 // 从 data 属性复制
 function copyFromData(btn) {
     const text = decodeBase64(btn.getAttribute('data-copy'));
-    copyTextCore(btn, text);
+    doCopy(btn, text);
 }
 
-// 复制文本核心函数
-function copyTextCore(btn, text) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(function() {
-            showCopied(btn);
-        }).catch(function() {
-            fallbackCopy(text, btn);
-        });
-    } else {
-        fallbackCopy(text, btn);
-    }
+// Base64 解码
+function decodeBase64(str) {
+    try { return atob(str); } catch(e) { return str; }
 }
 
-// 显示已复制状态
-function showCopied(btn) {
-    const original = btn.innerHTML;
-    btn.innerHTML = '✅ 已复制';
-    btn.classList.add('copied');
-    setTimeout(function() {
-        btn.innerHTML = original;
-        btn.classList.remove('copied');
-    }, 1500);
-}
-
-// 降级复制方案
-function fallbackCopy(text, btn) {
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.style.position = 'fixed';
-    textarea.style.left = '-9999px';
-    document.body.appendChild(textarea);
-    textarea.select();
-    try {
-        document.execCommand('copy');
-        showCopied(btn);
-    } catch (err) {
-        btn.innerHTML = '❌ 失败';
-        setTimeout(function() { btn.innerHTML = '📋 复制'; }, 1500);
-    }
-    document.body.removeChild(textarea);
+// 执行复制并显示状态
+function doCopy(btn, text) {
+    btn.dataset.originalText = btn.innerHTML;
+    btn.dataset.copied = 'true';
+    copyToClipboard(text);
 }
 
 // 复制全部精选单注
@@ -4533,7 +4531,7 @@ function copyAllSingles() {
     const singlesData = document.getElementById('singlesData');
     const text = singlesData ? singlesData.getAttribute('data-singles') : '';
     if (text) {
-        copyTextCore(btn, text);
+        doCopy(btn, text);
     }
 }
 </script>

@@ -6,7 +6,8 @@ data/*
 # 忽略所有 vsix，但保留最新的一个（用 ! 规则例外）
 *.vsix
 # 最新版本安装包（由 publish.js 自动维护）
-!my-vscode-plugin-0.1.33.vsix
+!my-vscode-plugin-0.1.34.vsix
+# 最新版本安装包（由 publish.js 自动维护）
 # 最新版本安装包（由 publish.js 自动维护）
 # 最新版本安装包（由 publish.js 自动维护）
 # 最新版本安装包（由 publish.js 自动维护）
