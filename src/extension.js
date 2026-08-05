@@ -4515,10 +4515,12 @@ function copyAllSingles() {
     const btn = document.getElementById('copyAllSingleBtn');
     const singles = [`;
 
-    // 收集所有单注号码（内联到JS代码中）
-    R.singleRec.forEach((item) => {
-        html += `'${item.combo.join('')}',`;
-    });
+    // 收集所有单注号码（内联到JS数组中）
+    if (R.singleRec && Array.isArray(R.singleRec)) {
+        R.singleRec.forEach((item) => {
+            html += `'${item.combo.join('')}',`;
+        });
+    }
 
     html += `];
     const allText = singles.join('\\n');
