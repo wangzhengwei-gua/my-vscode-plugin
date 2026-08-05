@@ -3892,26 +3892,21 @@ function computeRoadAnalysis(history, cfg) {
         numScores[p].sort((a, b) => b.score - a.score);
     }
     
-    // 7.2 复式推荐
-    const topSmall = 2;
-    const topMedium = posCount === 3 ? 5 : 3;
+    // 7.2 复式推荐（多规格可选）
+    // 排三: 2/3/4/5 每位选号数，排五: 2/3 每位选号数（避免注数过大）
+    const complexOptions = posCount === 3 ? [2, 3, 4, 5] : [2, 3];
     
-    const complexRec = {
-        small: {
-            nums: numScores.map(ps => ps.slice(0, topSmall).map(x => x.num)),
-            count: 0,
-            formula: ''
-        },
-        medium: {
-            nums: numScores.map(ps => ps.slice(0, topMedium).map(x => x.num)),
-            count: 0,
-            formula: ''
-        }
-    };
-    complexRec.small.count = complexRec.small.nums.reduce((a, b) => a * b.length, 1);
-    complexRec.small.formula = complexRec.small.nums.map(arr => arr.join('')).join('*');
-    complexRec.medium.count = complexRec.medium.nums.reduce((a, b) => a * b.length, 1);
-    complexRec.medium.formula = complexRec.medium.nums.map(arr => arr.join('')).join('*');
+    const complexRec = complexOptions.map(size => {
+        const nums = numScores.map(ps => ps.slice(0, size).map(x => x.num));
+        const count = nums.reduce((a, b) => a * b.length, 1);
+        return {
+            size: size,
+            nums: nums,
+            count: count,
+            formula: nums.map(arr => arr.join('')).join('*'),
+            display: nums.map(arr => arr.join(','))
+        };
+    });
     
     // 7.3 精选单注推荐
     function generateTopSingles(numScoresArr, maxResults, posCnt) {
@@ -4337,53 +4332,36 @@ tr:hover td{background:rgba(99,102,241,.08)}
         html += `
 <h2>八、🎲 智能号码推荐</h2>
 
-<!-- 复式推荐 -->
+<!-- 复式推荐 - 多规格可选 -->
 <div class="card" style="border-left:4px solid #f59e0b;">
-<div class="card-title" style="color:#f59e0b;font-size:15px;">📋 复式推荐</div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:10px;">
+<div class="card-title" style="color:#f59e0b;font-size:15px;">📋 复式推荐（多规格可选）</div>
+<div style="display:grid;grid-template-columns:repeat(${Math.min(R.complexRec.length, 4)}, 1fr);gap:14px;margin-top:10px;">`;
 
-<!-- 小复式 -->
-<div style="background:#334155;border-radius:8px;padding:14px;">
+        const sizeLabels = { 2: '精简', 3: '标准', 4: '扩展', 5: '全覆盖' };
+        const sizeColors = { 2: '#38bdf8', 3: '#a78bfa', 4: '#f59e0b', 5: '#ef4444' };
+
+        R.complexRec.forEach((rec, idx) => {
+            const label = sizeLabels[rec.size] || rec.size + '码';
+            const color = sizeColors[rec.size] || '#94a3b8';
+            const tagClass = idx === 0 ? 'tag-hot' : idx < 2 ? 'tag-warm' : 'tag-alert';
+
+            html += `
+<div style="background:#334155;border-radius:8px;padding:14px;border-top:3px solid ${color};">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-<span style="font-weight:bold;color:#38bdf8;">精简复式</span><span class="tag-hot">${R.complexRec.small.count}注</span>
+<span style="font-weight:bold;color:${color};">${label}复式 (${rec.size}*${rec.size}${posCount===3?'':('×'+posCount+'位')})</span><span class="${tagClass}">${rec.count}注</span>
 </div>
-<div style="font-size:20px;font-family:monospace;font-weight:bold;text-align:center;padding:12px;background:#1e293b;border-radius:6px;margin-bottom:10px;letter-spacing:4px;">
-${R.complexRec.small.formula}
+<div style="font-size:${posCount > 3 ? '16' : '20'}px;font-family:monospace;font-weight:bold;text-align:center;padding:12px;background:#1e293b;border-radius:6px;margin-bottom:10px;letter-spacing:${posCount > 3 ? '2' : '4'}px;">
+${rec.formula}
 </div>
-<div style="font-size:11px;color:#94a3b8;line-height:1.8;">
-`;
-        for (let p = 0; p < R.posCount; p++) {
-            const nums = R.complexRec.small.nums[p];
-            const scores = nums.map(n => {
-                const item = (R.numScores[p] || []).find(x => x.num === n);
-                return item ? n + '(' + item.score.toFixed(2) + ')' : n;
-            });
-            html += `<div>${R.posNames[p]}位: <span style="color:${posColors[p]}">${nums.join(', ')}</span> [评分: ${scores.join(' ')}]</div>`;
-        }
-        html += `
-</div>
-</div>
+<div style="font-size:11px;color:#94a3b8;line-height:1.8;">`;
+            for (let p = 0; p < R.posCount; p++) {
+                const nums = rec.nums[p];
+                html += `<div>${R.posNames[p]}位: <span style="color:${posColors[p]}">${nums.join(', ')}</span></div>`;
+            }
+            html += `</div></div>`;
+        });
 
-<!-- 中复式 -->
-<div style="background:#334155;border-radius:8px;padding:14px;">
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-<span style="font-weight:bold;color:#a78bfa;">标准复式</span><span class="tag-warm">${R.complexRec.medium.count}注</span>
-</div>
-<div style="font-size:18px;font-family:monospace;font-weight:bold;text-align:center;padding:12px;background:#1e293b;border-radius:6px;margin-bottom:10px;letter-spacing:3px;">
-${R.complexRec.medium.formula}
-</div>
-<div style="font-size:11px;color:#94a3b8;line-height:1.8;">
-`;
-        for (let p = 0; p < R.posCount; p++) {
-            const nums = R.complexRec.medium.nums[p];
-            html += `<div>${R.posNames[p]}位: <span style="color:${posColors[p]}">${nums.join(', ')}</span></div>`;
-        }
-        html += `
-</div>
-</div>
-
-</div>
-</div>
+        html += `</div></div>
 
 <!-- 精选单注 -->
 <div class="card" style="border-left:4px solid #ef4444;margin-top:14px;">
@@ -4447,9 +4425,12 @@ ${R.complexRec.medium.formula}
 
 <div class="insight-box" style="margin-top:14px;background:linear-gradient(135deg,rgba(239,68,68,.08),rgba(245,158,11,.05));border-color:rgba(239,68,68,.3);">
 <div class="insight-title" style="color:#f59e0b;">💡 推荐说明</div>
-<ul class="insight-list">
-<li><strong>精简复式</strong>：每位取评分最高的2个号码，共 ${R.complexRec.small.count} 注，适合精准投注</li>
-<li><strong>标准复式</strong>：每位取评分最高的${posCount===3?'5':'3'}个号码，共 ${R.complexRec.medium.count} 注，覆盖面更广</li>
+<ul class="insight-list">`;
+        R.complexRec.forEach((rec) => {
+            const lbl = rec.size === 2 ? '精简' : rec.size === 3 ? '标准' : rec.size === 4 ? '扩展' : '全覆盖';
+            html += `<li><strong>${lbl}复式 (${rec.formula})</strong>：每位取评分最高的${rec.size}个号码，共 <strong>${rec.count}</strong> 注</li>`;
+        });
+        html += `
 <li><strong>精选单注</strong>：基于频次、遗漏回归、012路趋势、奇偶补偿、近期动量五维加权评分，结合历史热门形态和连号/和值优化</li>
 <li>评分越高代表该组合在当前数据特征下的出现概率越大</li>
 </ul>
