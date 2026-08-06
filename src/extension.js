@@ -1053,7 +1053,39 @@ function activate(context) {
     });
     context.subscriptions.push(roadAnalysisDisposable);
 
-    // 概率推荐历史回测命令
+    // ========== 大乐透智能精选 ==========
+    let smartFilterDisposable = vscode.commands.registerCommand('myPlugin.smartFilter', async () => {
+        // 创建Webview面板
+        const panel = vscode.window.createWebviewPanel(
+            'smartFilter',
+            '🎯 大乐透智能精选',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+
+        // 监听消息
+        panel.webview.onDidReceiveMessage(async (message) => {
+            if (message.command === 'runFilter') {
+                try {
+                    const result = await runSmartFilter(message.reds, message.blues, message.count);
+                    panel.webview.postMessage({ command: 'filterResult', data: result });
+                } catch (e) {
+                    panel.webview.postMessage({ command: 'error', message: e.message });
+                }
+                return;
+            }
+            if (message.command === 'copy') {
+                await vscode.env.clipboard.writeText(message.text);
+                panel.webview.postMessage({ command: 'copySuccess' });
+                return;
+            }
+        });
+
+        // 初始界面
+        panel.webview.html = getSmartFilterHtml();
+    });
+
+    context.subscriptions.push(smartFilterDisposable);
     let probBacktestDisposable = vscode.commands.registerCommand('myPlugin.probabilityBacktest', async () => {
         const pick = await vscode.window.showQuickPick(
             [
@@ -1409,6 +1441,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🤖 智能推荐', 'myPlugin.smartPick', '🤖'),
                 this.createItem('🧬 概率推荐', 'myPlugin.probabilityPick', '🧬'),
                 this.createItem('🛤️ 012路趋势', 'myPlugin.roadAnalysis', '🛤️'),
+                this.createItem('🎯 大乐透精选', 'myPlugin.smartFilter', '🎯'),
                 this.createItem('🧪 概率回测', 'myPlugin.probabilityBacktest', '🧪'),
                 this.createItem('📈 均线形态', 'myPlugin.maPatterns', '📈'),
                 this.createItem('🔮 预测记录', 'myPlugin.showPredictions', '🔮'),
@@ -1555,298 +1588,78 @@ h2 { color: #8ec5ff; margin-bottom: 8px; }
 </div>
 <div id="content"></div>
 <script>
-const DATA = ${dataJson};
-
-const ALL_PATTERNS = [
-    { name: '多头排列', signal: 'bull', desc: '短期均线在最上，中期在中间，长期在最下，三条均线同时向上移动的排列形态即为多头排列。技术含义：做多信号，继续看涨。' },
-    { name: '空头排列', signal: 'bear', desc: '三条均线同时以圆弧状向下运行，且从上到下时间越来越短，形成空头排列。技术含义：做空信号，继续看跌。' },
-    { name: '黄金交叉', signal: 'bull', desc: '短期均线由下向上穿越长期均线，且均线形式走平或向上。技术含义：看涨信号，两线交叉的角度越大，上涨的信号越强烈。' },
-    { name: '死亡交叉', signal: 'bear', desc: '短期均线由上向下穿越长期均线，且长期均线走势疲软。技术含义：看跌信号，两根均线的夹角越大，下跌越猛烈。' },
-    { name: '银山谷', signal: 'bull', desc: '短期均线和中期均线先后向上穿越长期均线，三根均线形成一个一角向上的不规则三角形，多出现在上涨的初期。技术含义：见底开始上涨的信号，后市看涨。' },
-    { name: '死亡谷', signal: 'bear', desc: '多出现在下跌的初期，短期均线和中期均线先后下穿长期均线，形成一个一角向下的不规则三角形。技术含义：看跌的信号，应提高警惕。' },
-    { name: '粘合向上发散', signal: 'bull', desc: '出现在上涨的初期或趋势继中，短期、中期以及长期均线缠绕粘连，后向上发散，上涨趋势明显。技术含义：买入上涨信号，投资者可在发散初期及时介入。' },
-    { name: '粘合向下发散', signal: 'bear', desc: '出现在横盘末期，短期、中期和长期均线缠绕粘连，横盘选择方向，后均线发散开始下跌走势。技术含义：下跌警告信号，应注意风险。' },
-    { name: '上山爬坡形', signal: 'bull', desc: '出现在上涨趋势中，短期、中期和长期均线基本都沿着一定坡度往上移。技术含义：看涨做多的信号，可逢低买入，等待上涨。' },
-    { name: '下山滑坡形', signal: 'bear', desc: '出现在跌势中，均线基本沿着一定的坡度往下移动，是后市看跌信号。技术含义：最好的策略还是敬而远之，下跌趋势中每次反弹都是逃跑的机会。' }
-];
-
-(function() {
-    let html = '';
-
-    // 总览区
-    const detected = DATA.summary.patternNames;
-    html += '<div class="summary-section">';
-    html += '<div class="summary-title">🎯 总览</div>';
-    html += '<div class="summary-stats">';
-    html += '<div class="summary-stat bull"><div class="summary-stat-num">' + DATA.summary.bullCount + '</div><div class="summary-stat-label">看涨信号</div></div>';
-    html += '<div class="summary-stat bear"><div class="summary-stat-num">' + DATA.summary.bearCount + '</div><div class="summary-stat-label">看跌信号</div></div>';
-    html += '<div class="summary-stat all"><div class="summary-stat-num">' + (DATA.summary.bullCount + DATA.summary.bearCount) + '</div><div class="summary-stat-label">总信号</div></div>';
-    html += '</div>';
-    if (detected.length > 0) {
-        html += '<div style="margin-top:8px;">';
-        html += '<div style="color:#aaa;font-size:11px;margin-bottom:4px;">已识别的形态：</div>';
-        detected.forEach(name => {
-            const p = ALL_PATTERNS.find(x => x.name === name);
-            if (p) {
-                html += '<span class="pattern-badge ' + p.signal + '">' + p.name + '</span>';
-            }
-        });
-        html += '</div>';
-    } else {
-        html += '<div style="color:#888;font-size:12px;margin-top:8px;">暂未识别到典型形态（市场处于震荡或无明显趋势）</div>';
-    }
-    html += '</div>';
-
-    // 推荐选号建议区：按位归类看涨/看跌号码
-    html += '<div class="suggest-section">';
-    html += '<div class="suggest-title">🎯 推荐选号建议</div>';
-    html += '<div class="suggest-hint">' +
-        '根据各位置识别到的均线形态自动归类：<b style="color:#ff6b6b;">看涨信号</b>的号码建议<b>优先选择</b>（趋势向上），' +
-        '<b style="color:#2ecc71;">看跌信号</b>的号码建议<b>避开</b>（趋势向下，已加删除线标记）。' +
-        '号码来源：该位置形态对应的 MA5/MA10/MA20 均线值四舍五入 + 最新一期实际号码。</div>';
-
-    DATA.posResults.forEach((pr, idx) => {
-        const bullNums = [];
-        const bearNums = [];
-        pr.patterns.forEach(p => {
-            if (p.numbers && p.numbers.length > 0) {
-                p.numbers.forEach(n => {
-                    if (p.signal === 'bull') {
-                        if (bullNums.indexOf(n) === -1) bullNums.push(n);
-                    } else {
-                        if (bearNums.indexOf(n) === -1) bearNums.push(n);
-                    }
-                });
-            }
-        });
-        // 排序
-        bullNums.sort((a, b) => a - b);
-        bearNums.sort((a, b) => a - b);
-
-        html += '<div class="suggest-row ' + (bullNums.length >= bearNums.length ? (bullNums.length > 0 ? 'bull' : 'neutral') : 'bear') + '">';
-        html += '<div class="suggest-row-label">' + pr.label + '位</div>';
-        html += '<div class="suggest-nums">';
-        if (bullNums.length === 0 && bearNums.length === 0) {
-            html += '<span class="suggest-empty">无形态信号，参考其他分析</span>';
-        } else {
-            if (bullNums.length > 0) {
-                html += '<span class="suggest-pos-tag">📈 优选</span>';
-                bullNums.forEach(n => {
-                    html += '<span class="suggest-big-ball bull">' + n + '</span>';
-                });
-            }
-            if (bearNums.length > 0) {
-                if (bullNums.length > 0) html += '<span style="color:#555;margin:0 4px;">|</span>';
-                html += '<span class="suggest-pos-tag">📉 避开</span>';
-                bearNums.forEach(n => {
-                    html += '<span class="suggest-big-ball bear">' + n + '</span>';
-                });
-            }
-        }
-
-        // 生成具体选号建议文字
-        if (bullNums.length > 0 || bearNums.length > 0) {
-            const latestNum = pr.maData && pr.maData.series ? pr.maData.series[pr.maData.series.length - 1] : null;
-            let suggest = '';
-            if (bullNums.length > 0 && bearNums.length === 0) {
-                // 纯看涨：号码往上走，选偏大或优选号码附近
-                suggest = '→ 该位看涨，号码有上升趋势，建议优先选上面红色号码';
-                if (latestNum !== null) {
-                    suggest += '（当前' + latestNum + '，下期可能 ≥' + latestNum + '）';
-                }
-            } else if (bearNums.length > 0 && bullNums.length === 0) {
-                // 纯看跌：号码往下走，选偏小或避开号码之外的小号
-                suggest = '→ 该位看跌，号码有下降趋势，建议避开上面绿色号码，选偏小号码';
-                if (latestNum !== null) {
-                    suggest += '（当前' + latestNum + '，下期可能 ≤' + latestNum + '）';
-                }
+(function(){
+    try { window.vscodeApi = acquireVsCodeApi(); } catch(e) { console.error('vscode api error:', e); }
+    
+    window.runFilter = function() {
+        try {
+            var reds = document.getElementById('redInput').value.trim();
+            var blues = document.getElementById('blueInput').value.trim();
+            var count = document.getElementById('countSelect').value;
+            if (!reds || !blues) { alert('请输入红球和蓝球号码'); return; }
+            document.getElementById('resultArea').style.display = 'block';
+            document.getElementById('resultsGrid').innerHTML = '<div class="loading"><div class="spinner"></div><p style="margin-top:10px">正在智能分析...</p></div>';
+            if (window.vscodeApi) {
+                window.vscodeApi.postMessage({command:'runFilter', reds:reds, blues:blues, count:+count});
             } else {
-                // 多空交织：信号矛盾，谨慎
-                suggest = '→ 该位多空信号交织，趋势不明，建议参考其他分析（转移统计/走势图）再定';
+                alert('VSCode API 未就绪');
             }
-            html += '<div class="suggest-tip">' + suggest + '</div>';
-        }
-        html += '</div>';
-        html += '</div>';
+        } catch(err) { console.error('error:', err); alert('出错: ' + err.message); }
+    };
+    
+    window.addEventListener('message', function(event) {
+        var msg = event.data;
+        if (!msg || !msg.command) return;
+        if (msg.command === 'filterResult') renderResult(msg.data);
+        if (msg.command === 'error') document.getElementById('resultsGrid').innerHTML = '<p style="color:#f44;padding:20px;text-align:center">❌ ' + (msg.message||'未知错误') + '</p>';
+        if (msg.command === 'copySuccess') showToast();
     });
-    html += '</div>';
-
-    // 每位详情
-    DATA.posResults.forEach((pr, idx) => {
-        html += '<div class="pos-section">';
-        html += '<div class="pos-title">';
-        html += '<span class="pos-name">🎯 ' + pr.label + '位</span>';
-        if (pr.patterns.length > 0) {
-            html += '<span style="font-size:11px;color:#888;">识别到 ' + pr.patterns.length + ' 个形态</span>';
-        }
-        html += '</div>';
-
-        if (pr.error) {
-            html += '<div class="pos-empty">' + pr.error + '</div>';
-        } else {
-            // 当前均线值
-            const cv = pr.maData.currentValues;
-            html += '<div style="margin-bottom:8px;font-size:11px;color:#aaa;">';
-            html += '当前 MA5=<b style="color:#f39c12;">' + cv.ma5.toFixed(2) + '</b>, ';
-            html += 'MA10=<b style="color:#9b59b6;">' + cv.ma10.toFixed(2) + '</b>, ';
-            html += 'MA20=<b style="color:#3498db;">' + cv.ma20.toFixed(2) + '</b>';
-            html += '</div>';
-
-            // 形态列表
-            if (pr.patterns.length > 0) {
-                pr.patterns.forEach(p => {
-                    html += '<div class="pattern-detail">';
-                    html += '<div class="name ' + p.signal + '">' +
-                        (p.signal === 'bull' ? '📈 ' : '📉 ') + p.name + '</div>';
-                    html += '<div class="desc-text">' + p.desc + '</div>';
-                    // 显示该形态对应的关键号码
-                    if (p.numbers && p.numbers.length > 0) {
-                        html += '<div class="pattern-numbers">';
-                        html += '<span class="pattern-numbers-label">对应号码：</span>';
-                        const labels = p.numbersLabel || [];
-                        p.numbers.forEach((num, ni) => {
-                            const lbl = labels[ni] || '';
-                            const isLatest = lbl === '最新' || lbl === '本期';
-                            const cls = isLatest ? 'num-ball latest' : 'num-ball ' + p.signal;
-                            html += '<span class="' + cls + '" title="' + lbl + '">' +
-                                (lbl ? '<span class="num-ball-label">' + lbl + '</span>' : '') +
-                                '<span class="num-ball-value">' + num + '</span></span>';
-                        });
-                        html += '</div>';
-                    }
-                    html += '</div>';
-                });
-            } else {
-                html += '<div style="color:#888;font-size:12px;padding:6px;">未识别到典型形态</div>';
-            }
-
-            // 走势图
-            html += '<div class="chart-wrap">';
-            html += '<div class="chart-title">📊 最近 20 期均线走势</div>';
-            html += '<div class="chart-svg-wrap">';
-            html += renderChart(pr.maData);
-            html += '</div></div>';
-        }
-        html += '</div>';
-    });
-
-    // 形态图例
-    html += '<div class="summary-section">';
-    html += '<div class="summary-title">📚 形态说明（10 种）</div>';
-    html += '<div style="color:#888;font-size:11px;margin-bottom:8px;line-height:1.6;">' +
-        '每种形态识别后会显示对应的<b style="color:#feca57;">关键号码</b>：' +
-        '<span style="color:#f39c12;">MA5≈</span> 表示短期均线四舍五入的号码、' +
-        '<span style="color:#9b59b6;">MA10≈</span> 中期、' +
-        '<span style="color:#3498db;">MA20≈</span> 长期，' +
-        '<span style="color:#feca57;">最新/本期</span> 为最近一期实际开奖号码。' +
-        '可根据这些号码作为该位的候选参考。</div>';
-    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;margin-top:8px;">';
-    ALL_PATTERNS.forEach(p => {
-        html += '<div class="pattern-detail">';
-        html += '<div class="name ' + p.signal + '">' +
-            (p.signal === 'bull' ? '📈 ' : '📉 ') + p.name + '</div>';
-        html += '<div class="desc-text">' + p.desc + '</div>';
-        html += '</div>';
-    });
-    html += '</div></div>';
-
-    document.getElementById('content').innerHTML = html;
-
-    function renderChart(maData) {
-        const series = maData.series;
-        const ma5 = maData.ma5;
-        const ma10 = maData.ma10;
-        const ma20 = maData.ma20;
-        const n = series.length;
-
-        // 图表尺寸
-        const W = Math.max(400, n * 22);
-        const H = 160;
-        const padL = 30, padR = 10, padT = 10, padB = 20;
-
-        // 计算 y 轴范围
-        const allVals = [...series, ...ma5.filter(v => v !== null), ...ma10.filter(v => v !== null), ...ma20.filter(v => v !== null)];
-        const minV = Math.min(...allVals);
-        const maxV = Math.max(...allVals);
-        const range = maxV - minV || 1;
-        const yMin = minV - range * 0.1;
-        const yMax = maxV + range * 0.1;
-
-        const xStep = (W - padL - padR) / (n - 1);
-        const yScale = (v) => padT + (H - padT - padB) * (1 - (v - yMin) / (yMax - yMin));
-
-        let svg = '<svg width="' + W + '" height="' + H + '" style="background:#1a1a1a;border-radius:4px;">';
-
-        // y 轴参考线
-        for (let k = 0; k <= 4; k++) {
-            const yVal = yMin + (yMax - yMin) * k / 4;
-            const y = yScale(yVal);
-            svg += '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="#333" stroke-width="0.5"/>';
-            svg += '<text x="2" y="' + (y + 3) + '" fill="#666" font-size="9">' + yVal.toFixed(1) + '</text>';
-        }
-
-        // 原始数据点
-        let ptsStr = '';
-        series.forEach((v, i) => {
-            const x = padL + i * xStep;
-            const y = yScale(v);
-            ptsStr += (i === 0 ? 'M' : 'L') + x + ',' + y + ' ';
+    
+    window.renderResult = function(data) {
+        if (!data) return;
+        document.getElementById('resultTitle').textContent = '🎯 精选 ' + (data.results||[]).length + ' 组单注';
+        
+        var rt = document.querySelector('#redScoresTable tbody');
+        if (rt && data.redScores) rt.innerHTML = data.redScores.map(function(r){return '<tr><td style="color:#ce9178;font-weight:bold">'+r.num+'</td><td>'+r.score+'</td><td>'+r.miss+'</td><td>'+r.avgMiss+'</td><td>'+r.freq5+'</td><td style="color:#888;font-size:11px">'+(r.reasons||[]).join(',')+'</td></tr>';}).join('');
+        
+        var bt = document.querySelector('#blueScoresTable tbody');
+        if (bt && data.blueScores) bt.innerHTML = data.blueScores.map(function(b){return '<tr><td style="color:#6a9fb5;font-weight:bold">'+b.num+'</td><td>'+b.score+'</td><td>'+b.miss+'</td><td>'+b.avgMiss+'</td><td>'+b.freq5+'</td><td style="color:#888;font-size:11px">'+(b.reasons||[]).join(',')+'</td></tr>';}).join('');
+        
+        var rfb = document.getElementById('redFreqBars');
+        if (rfb && data.stats && data.stats.redFreq) rfb.innerHTML = data.stats.redFreq.map(function(f){return '<div class="freq-bar"><span class="freq-label">'+f.num+'</span><div class="freq-track"><div class="freq-fill" style="width:'+f.pct+'%"></div></div><span class="freq-pct">'+f.count+'次('+f.pct+'%)</span></div>';}).join('');
+        
+        var bfb = document.getElementById('blueFreqBars');
+        if (bfb && data.stats && data.stats.blueFreq) bfb.innerHTML = data.stats.blueFreq.map(function(f){return '<div class="freq-bar"><span class="freq-label">'+f.num+'</span><div class="freq-track"><div class="freq-fill" style="width:'+f.pct+'%"></div></div><span class="freq-pct">'+f.count+'次('+f.pct+'%)</span></div>';}).join('');
+        
+        var rg = document.getElementById('resultsGrid');
+        if (rg && data.results) rg.innerHTML = data.results.map(function(r){
+            var redStr = r.reds.map(function(n){return String(n).padStart(2,'0');}).join(' ');
+            var blueStr = r.blues.map(function(n){return String(n).padStart(2,'0');}).join(' ');
+            var tags = [r.details.oddEven, r.details.bigSmall, r.details.sum, r.details.consecutive, r.details.zone];
+            var tagHtml = tags.map(function(t){return t && t.indexOf('优') >= 0 ? '<span class="tag good">'+t+'</span>' : '<span class="tag">'+t+'</span>';}).join('');
+            return '<div class="result-card"><div class="card-header"><span class="card-num">'+redStr+' + '+blueStr+'</span><span class="card-score">'+r.score+'分</span></div><div class="card-details">'+tagHtml+'</div><button onclick="copyOne(\''+redStr+' + '+blueStr+\')" style="margin-top:8px;padding:4px 10px;background:#0e639c;border:none;border-radius:4px;color:#fff;font-size:11px;cursor:pointer">复制</button></div>';
+        }).join('');
+        
+        window.currentResults = data.results;
+    };
+    
+    window.copyOne = function(text) { if(window.vscodeApi) window.vscodeApi.postMessage({command:'copy', text:text}); };
+    
+    window.copyAll = function() {
+        if (!window.currentResults) return;
+        var lines = window.currentResults.map(function(r, i){
+            var redStr = r.reds.map(function(n){return String(n).padStart(2,'0');}).join(' ');
+            var blueStr = r.blues.map(function(n){return String(n).padStart(2,'0');}).join(' ');
+            return String(i+1).padStart(2,'0')+'. '+redStr+' + '+blueStr;
         });
-        svg += '<path d="' + ptsStr + '" stroke="#888" stroke-width="1" fill="none" opacity="0.6"/>';
-
-        // 每个数据点画圆 + 标注号码
-        series.forEach((v, i) => {
-            const x = padL + i * xStep;
-            const y = yScale(v);
-            const isLatest = (i === n - 1);
-            if (isLatest) {
-                // 最新一期：高亮黄色大圆 + 号码
-                svg += '<circle cx="' + x + '" cy="' + y + '" r="5" fill="#feca57" stroke="#000" stroke-width="1"/>';
-                svg += '<text x="' + x + '" y="' + (y - 9) + '" fill="#feca57" font-size="11" font-weight="bold" text-anchor="middle">' + v + '</text>';
-            } else if (i % 2 === 0 || n <= 12) {
-                // 普通点：小圆 + 号码（数据少时全标，数据多时隔点标）
-                svg += '<circle cx="' + x + '" cy="' + y + '" r="3" fill="#aaa"/>';
-                svg += '<text x="' + x + '" y="' + (y - 7) + '" fill="#bbb" font-size="9" text-anchor="middle">' + v + '</text>';
-            } else {
-                svg += '<circle cx="' + x + '" cy="' + y + '" r="2" fill="#888"/>';
-            }
-        });
-
-        // MA5
-        svg += drawMALine(ma5, '#f39c12', padL, xStep, yScale);
-        // MA10
-        svg += drawMALine(ma10, '#9b59b6', padL, xStep, yScale);
-        // MA20
-        svg += drawMALine(ma20, '#3498db', padL, xStep, yScale);
-
-        // x 轴期号
-        for (let i = 0; i < n; i += Math.ceil(n / 10)) {
-            const x = padL + i * xStep;
-            svg += '<text x="' + x + '" y="' + (H - 5) + '" fill="#888" font-size="9" text-anchor="middle">' + (i + 1) + '</text>';
-        }
-
-        // 图例
-        svg += '<rect x="' + (W - 130) + '" y="5" width="125" height="40" fill="#000" opacity="0.5" rx="3"/>';
-        svg += '<text x="' + (W - 125) + '" y="18" fill="#f39c12" font-size="10">━ MA5 (短期)</text>';
-        svg += '<text x="' + (W - 125) + '" y="30" fill="#9b59b6" font-size="10">━ MA10 (中期)</text>';
-        svg += '<text x="' + (W - 125) + '" y="42" fill="#3498db" font-size="10">━ MA20 (长期)</text>';
-
-        svg += '</svg>';
-        return svg;
-    }
-
-    function drawMALine(ma, color, padL, xStep, yScale) {
-        let d = '';
-        let started = false;
-        ma.forEach((v, i) => {
-            if (v === null) return;
-            const x = padL + i * xStep;
-            const y = yScale(v);
-            d += (started ? 'L' : 'M') + x + ',' + y + ' ';
-            started = true;
-        });
-        return '<path d="' + d + '" stroke="' + color + '" stroke-width="1.5" fill="none"/>';
-    }
+        if (window.vscodeApi) window.vscodeApi.postMessage({command:'copy', text:lines.join(String.fromCharCode(10))});
+    };
+    
+    window.showToast = function() {
+        var t = document.getElementById('toast');
+        t.style.display = 'block';
+        setTimeout(function(){ t.style.display = 'none'; }, 2000);
+    };
 })();
 </script>
 </body>
@@ -3992,9 +3805,391 @@ function computeRoadAnalysis(history, cfg) {
     };
 }
 
+// ==================== 大乐透智能精选功能 ====================
+
 /**
- * 生成012路分析 HTML 报告（完整版 v1.39）
+ * 执行智能筛选算法
  */
+async function runSmartFilter(redInput, blueInput, targetCount) {
+    const path = require('path');
+    const fs = require('fs');
+
+    // 解析输入
+    const reds = redInput.split(/[,，\s]+/).map(s => parseInt(s.trim())).filter(n => n >= 1 && n <= 35);
+    const blues = blueInput.split(/[,，\s]+/).map(s => parseInt(s.trim())).filter(n => n >= 1 && n <= 12);
+
+    if (reds.length < 5 || reds.length > 20) throw new Error('红球数量需在5-20个之间');
+    if (blues.length < 2 || blues.length > 6) throw new Error('蓝球数量需在2-6个之间');
+    if (targetCount < 1 || targetCount > 100) throw new Error('输出注数需在1-100之间');
+
+    // 加载历史数据
+    const dataPath = path.join(getDataDir(), 'latest.json');
+    const rawData = JSON.parse(fs.readFileSync(dataPath, 'utf-8'));
+    const history = rawData.history || [];
+    const N = history.length;
+
+    // 核心计算函数
+    function calcMiss(num, isBlue = false) {
+        let miss = 0;
+        for (let i = 0; i < N; i++) {
+            const nums = isBlue ? history[i].back : history[i].front;
+            if (nums.includes(num)) break;
+            miss++;
+        }
+        return miss;
+    }
+
+    function calcAvgMiss(num, isBlue = false) {
+        let misses = [], currentMiss = 0;
+        for (let i = 0; i < N; i++) {
+            const nums = isBlue ? history[i].back : history[i].front;
+            if (nums.includes(num)) { if (currentMiss > 0) misses.push(currentMiss); currentMiss = 0; }
+            else currentMiss++;
+        }
+        misses.push(currentMiss);
+        return misses.reduce((a, b) => a + b, 0) / misses.length;
+    }
+
+    function recentFreq(num, period, isBlue = false) {
+        let count = 0;
+        const len = Math.min(period, N);
+        for (let i = 0; i < len; i++) {
+            const nums = isBlue ? history[i].back : history[i].front;
+            if (nums.includes(num)) count++;
+        }
+        return count / len;
+    }
+
+    // 红球评分
+    function scoreRed(num) {
+        const miss = calcMiss(num);
+        const avgMiss = calcAvgMiss(num);
+        const freq5 = recentFreq(num, 5);
+        const freq15 = recentFreq(num, 15);
+        let score = 0, reasons = [];
+        const missRatio = miss / avgMiss;
+
+        if (missRatio > 2) { score += 25; reasons.push(`超漏回归(${miss}期)`); }
+        else if (missRatio > 1.5) { score += 18; reasons.push(`高漏(${miss}期)`); }
+        else if (missRatio > 1.2) { score += 12; reasons.push(`中高漏(${miss}期)`); }
+        else if (missRatio > 0.8) { score += 6; reasons.push('正常'); }
+        else if (freq5 > 0) { score += 4; reasons.push('热号持续'); }
+        else { score += 8; reasons.push('温号回补'); }
+
+        if (freq5 >= 0.4) { score += 15; reasons.push('极热'); }
+        else if (freq5 >= 0.2) { score += 10; reasons.push('热号'); }
+        else if (freq15 <= 0.07 && miss > 10) { score += 12; reasons.push('冷号待开'); }
+
+        const lastFront = history[0]?.front || [];
+        for (const n of lastFront) { if (Math.abs(n - num) === 1) { score += 5; reasons.push('邻号'); break; } }
+        if (lastFront.includes(num)) { score += 6; reasons.push('重号'); }
+
+        return { num, score, miss, avgMiss: +avgMiss.toFixed(1), freq5: +freq5.toFixed(2), reasons };
+    }
+
+    // 蓝球评分
+    function scoreBlue(num) {
+        const miss = calcMiss(num, true);
+        const avgMiss = calcAvgMiss(num, true);
+        const freq5 = recentFreq(num, 5, true);
+        let score = 0, reasons = [];
+        const missRatio = miss / avgMiss;
+
+        if (missRatio > 2.5) { score += 28; reasons.push(`超漏回归(${miss}期)`); }
+        else if (missRatio > 1.8) { score += 20; reasons.push(`高漏(${miss}期)`); }
+        else if (missRatio > 1.2) { score += 14; reasons.push(`中漏(${miss}期)`); }
+        else if (freq5 > 0) { score += 10; reasons.push('热蓝'); }
+        else { score += 8; reasons.push('温蓝'); }
+
+        const lastBack = history[0]?.back || [];
+        if (lastBack.includes(num)) { score += 5; reasons.push('重号'); }
+
+        return { num, score, miss, avgMiss: +avgMiss.toFixed(1), freq5: +freq5.toFixed(2), reasons };
+    }
+
+    // 组合评分
+    function scoreCombo(redArr, blueArr) {
+        let comboScore = 0, details = {};
+
+        const oddCount = redArr.filter(n => n % 2 === 1).length;
+        const evenCount = 5 - oddCount;
+        if (oddCount >= 2 && evenCount >= 2) { comboScore += 15; details.oddEven = `${oddCount}:${evenCount}(优)`; }
+        else details.oddEven = `${oddCount}:${evenCount}`;
+
+        const bigCount = redArr.filter(n => n > 18).length;
+        const smallCount = 5 - bigCount;
+        if (bigCount >= 2 && smallCount >= 2) { comboScore += 15; details.bigSmall = `${bigCount}:${smallCount}(优)`; }
+        else details.bigSmall = `${bigCount}:${smallCount}`;
+
+        const sum = redArr.reduce((a, b) => a + b, 0);
+        if (sum >= 65 && sum <= 95) { comboScore += 20; details.sum = `${sum}(优)`; }
+        else if (sum >= 55 && sum <= 105) { comboScore += 10; details.sum = `${sum}`; }
+        else details.sum = `${sum}(偏)`;
+
+        const sorted = [...redArr].sort((a, b) => a - b);
+        let consecutive = 0;
+        for (let i = 0; i < sorted.length - 1; i++) { if (sorted[i+1] - sorted[i] === 1) consecutive++; }
+        if (consecutive === 1) { comboScore += 8; details.consecutive = `1对连号`; }
+        else if (consecutive >= 2) { comboScore += 5; details.consecutive = `${consecutive}对`; }
+        else details.consecutive = '无';
+
+        const tails = redArr.map(n => n % 10);
+        const uniqueTails = new Set(tails).size;
+        if (uniqueTails <= 3) { comboScore -= 5; details.tail = `尾${uniqueTails}(密集)`; }
+        else if (uniqueTails >= 4) { comboScore += 5; details.tail = `尾${uniqueTails}(散)`; }
+        else details.tail = `尾${uniqueTails}`;
+
+        const zones = [0, 0, 0];
+        for (const n of redArr) { if (n <= 11) zones[0]++; else if (n <= 22) zones[1]++; else zones[2]++; }
+        const zoneBalance = zones.filter(z => z >= 1).length;
+        if (zoneBalance === 3) { comboScore += 12; details.zone = `三区有号(优)`; }
+        else if (zoneBalance === 2) { comboScore += 5; details.zone = `两区`; }
+        else details.zone = `单区`;
+
+        const diffs = new Set();
+        for (let i = 0; i < redArr.length; i++) for (let j = i+1; j < redArr.length; j++) diffs.add(Math.abs(redArr[i] - redArr[j]));
+        const acValue = diffs.size;
+        if (acValue >= 7) { comboScore += 8; details.ac = `AC=${acValue}(优)`; }
+        else if (acValue >= 5) details.ac = `AC=${acValue}`;
+        else details.ac = `AC=${acValue}(低)`;
+
+        const blueOdd = blueArr.filter(b => b % 2 === 1).length;
+        if (blueOdd === 1) { comboScore += 5; details.blueOE = `1奇1偶(优)`; }
+        else details.blueOE = blueOdd === 2 ? '全奇' : '全偶';
+
+        return { comboScore, details };
+    }
+
+    // 加权随机选择
+    function weightedSelect(arr, count) {
+        if (arr.length <= count) return arr.map(x => x.num);
+        const weights = arr.map(x => x.score * x.score);
+        const selected = [], remaining = arr.map((x, i) => ({ ...x, weight: weights[i] }));
+        while (selected.length < count && remaining.length > 0) {
+            const tw = remaining.reduce((a, b) => a + b.weight, 0);
+            let r = Math.random() * tw;
+            for (let i = 0; i < remaining.length; i++) { r -= remaining[i].weight; if (r <= 0) { selected.push(remaining[i].num); remaining.splice(i, 1); break; } }
+        }
+        return selected;
+    }
+
+    // 评分所有号码
+    const redScores = reds.map(scoreRed).sort((a, b) => b.score - a.score);
+    const blueScores = blues.map(scoreBlue).sort((a, b) => b.score - a.score);
+
+    // 生成候选组合
+    const candidates = [];
+    for (let iter = 0; iter < 50000; iter++) {
+        const redArr = weightedSelect(redScores, 5);
+        const blueArr = weightedSelect(blueScores, 2);
+        const { comboScore, details } = scoreCombo(redArr, blueArr);
+        const redTotal = redArr.reduce((sum, n) => sum + (redScores.find(r => r.num === n)?.score || 0), 0);
+        const blueTotal = blueArr.reduce((sum, n) => sum + (blueScores.find(b => b.num === n)?.score || 0), 0);
+        candidates.push({ reds: [...redArr].sort((a,b)=>a-b), blues: [...blueArr].sort((a,b)=>a-b), totalScore: redTotal + blueTotal*1.5 + comboScore, details });
+    }
+
+    candidates.sort((a, b) => b.totalScore - a.totalScore);
+
+    // 去重取前N组
+    const seen = new Set(), results = [];
+    for (const c of candidates) {
+        const key = c.reds.join(',') + '|' + c.blues.join(',');
+        if (!seen.has(key)) { seen.add(key); results.push(c); if (results.length >= targetCount) break; }
+    }
+
+    // 统计频率
+    const allReds = results.flatMap(r => r.reds), allBlues = results.flatMap(r => r.blues);
+    const redFreq = {}, blueFreq = {};
+    for (const n of allReds) redFreq[n] = (redFreq[n]||0)+1;
+    for (const n of allBlues) blueFreq[n] = (blueFreq[n]||0)+1;
+
+    return {
+        input: { reds, blues, targetCount },
+        historyInfo: { totalPeriods: N, latest: history[0]?.period },
+        redScores: redScores.map(r => ({ num: r.num, score: r.score, miss: r.miss, avgMiss: r.avgMiss, freq5: r.freq5, reasons: r.reasons })),
+        blueScores: blueScores.map(b => ({ num: b.num, score: b.score, miss: b.miss, avgMiss: b.avgMiss, freq5: b.freq5, reasons: b.reasons })),
+        results: results.map(r => ({
+            reds: r.reds,
+            blues: r.blues,
+            score: Math.round(r.totalScore),
+            details: r.details
+        })),
+        stats: {
+            redFreq: Object.entries(redFreq).map(([n,c])=>({num:+n,count:c,pct:Math.round(c/targetCount*100)})).sort((a,b)=>b.count-a.count),
+            blueFreq: Object.entries(blueFreq).map(([n,c])=>({num:+n,count:c,pct:Math.round(c/targetCount*100)})).sort((a,b)=>b.count-a.count)
+        }
+    };
+}
+
+/**
+ * 生成智能精选界面 HTML
+ */
+function getSmartFilterHtml() {
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>大乐透智能精选</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Microsoft YaHei',sans-serif;background:#1e1e1e;color:#d4d4d4;padding:20px}
+.header{text-align:center;margin-bottom:24px}
+.header h1{color:#4ec9b0;font-size:28px;margin-bottom:6px}
+.header p{color:#888;font-size:13px}
+.form-section{background:#252526;border-radius:10px;padding:20px;margin-bottom:16px;border:1px solid #333}
+.form-section h3{color:#569cd6;font-size:15px;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.form-group{margin-bottom:14px}
+.form-group label{display:block;color:#9cdcfe;font-size:13px;margin-bottom:6px}
+.form-group input,.form-group select{width:100%;padding:10px 14px;background:#1e1e1e;border:1px solid #444;border-radius:6px;color:#d4d4d4;font-size:14px;outline:none;transition:border .2s}
+.form-group input:focus,.form-group select:focus{border-color:#007acc}
+.form-group input::placeholder{color:#555}
+.row{display:flex;gap:12px}
+.row .form-group{flex:1}
+.btn-run{width:100%;padding:13px;background:linear-gradient(135deg,#007acc,#005a9e);border:none;border-radius:8px;color:#fff;font-size:16px;font-weight:bold;cursor:pointer;transition:transform .2s,box-shadow .2s;margin-top:8px}
+.btn-run:hover{transform:translateY(-1px);box-shadow:0 4px 15px rgba(0,122,204,.4)}
+.btn-run:active{transform:translateY(0)}
+.result-area{display:none}
+.result-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.result-header h2{color:#4ec9b0;font-size:18px}
+.btn-copy-all{padding:7px 16px;background:#0e639c;border:none;border-radius:5px;color:#fff;font-size:13px;cursor:pointer}
+.btn-copy-all:hover{background:#1177bb}
+.results-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px;margin-bottom:20px}
+.result-card{background:#252526;border-radius:8px;padding:14px;border:1px solid #333;transition:border-color .2s}
+.result-card:hover{border-color:#007acc}
+.card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.card-num{color:#ce9178;font-size:17px;font-weight:bold;letter-spacing:1px}
+.card-score{color:#888;font-size:12px}
+.card-details{display:flex;flex-wrap:wrap;gap:6px;font-size:11px;color:#aaa}
+.tag{background:#333;padding:2px 8px;border-radius:3px}
+.tag.good{background:#1e4a1e;color:#9cdcfe}
+.stats-section{background:#252526;border-radius:10px;padding:16px;margin-top:16px;border:1px solid #333}
+.stats-section h3{color:#569cd6;font-size:14px;margin-bottom:12px}
+.freq-bars{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.freq-bar{display:flex;align-items:center;gap:8px}
+.freq-label{width:30px;text-align:right;color:#9cdcfe;font-size:12px}
+.freq-track{flex:1;height:18px;background:#1e1e1e;border-radius:3px;overflow:hidden}
+.freq-fill{height:100%;background:linear-gradient(90deg,#007acc,#4ec9b0);border-radius:3px;transition:width .5s}
+.freq-pct{width:40px;font-size:11px;color:#888}
+.scores-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:12px}
+.scores-table th{background:#333;color:#569cd6;padding:6px 8px;text-align:left}
+.scores-table td{padding:6px 8px;border-bottom:1px solid #333}
+.loading{text-align:center;padding:40px;color:#888}
+.spinner{display:inline-block;width:30px;height:30px;border:3px solid #333;border-top-color:#4ec9b0;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.toast{position:fixed;top:20px;right:20px;background:#1e4a1e;color:#9cdcfe;padding:10px 20px;border-radius:6px;z-index:999;display:none;animation:fadeIn .3s}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</head>
+<body>
+<div class="header"><h1>🎯 大乐透智能精选</h1><p>基于多维度历史数据分析，从复式中智能筛选最优单注</p></div>
+
+<div class="form-section" id="formSection">
+<h3>📋 输入复式号码</h3>
+<div class="form-group"><label>红球号码（5-20个，用空格或逗号分隔）</label><input type="text" id="redInput" placeholder="例如：5 10 11 12 13 16 18 19 20 23 24 25 26 27 28" value="5 10 11 12 13 16 18 19 20 23 24 25 26 27 28"></div>
+<div class="form-group"><label>蓝球号码（2-6个，用空格或逗号分隔）</label><input type="text" id="blueInput" placeholder="例如：3 4 5 6 10" value="3 4 5 6 10"></div>
+<div class="row"><div class="form-group"><label>输出注数</label><select id="countSelect"><option value="10">10 组</option><option value="20" selected>20 组</option><option value="30">30 组</option><option value="50">50 组</option><option value="100">100 组</option></select></div></div>
+<button class="btn-run" id="runBtn">🚀 开始智能筛选</button>
+</div>
+
+<div class="result-area" id="resultArea">
+<div class="result-header"><h2 id="resultTitle">筛选结果</h2><button class="btn-copy-all" id="copyAllBtn">📋 复制全部</button></div>
+
+<div class="stats-section">
+<h3>📊 号码评分分析</h3>
+<div style="display:flex;gap:20px">
+<div style="flex:1"><h4 style="color:#ce9178;font-size:13px;margin:8px 0">红球评分</h4><table class="scores-table" id="redScoresTable"><thead><tr><th>号码</th><th>得分</th><th>遗漏</th><th>均遗</th><th>近5期</th><th>特征</th></tr></thead><tbody></tbody></table></div>
+<div style="flex:1"><h4 style="color:#6a9fb5;font-size:13px;margin:8px 0">蓝球评分</h4><table class="scores-table" id="blueScoresTable"><thead><tr><th>号码</th><th>得分</th><th>遗漏</th><th>均遗</th><th>近5期</th><th>特征</th></tr></thead><tbody></tbody></table></div>
+</div>
+</div>
+
+<div class="stats-section">
+<h3>🔥 号码出现频率</h3>
+<div class="row"><div style="flex:1"><h4 style="color:#ce9178;font-size:13px;margin:8px 0">红球</h4><div class="freq-bars" id="redFreqBars"></div></div><div style="flex:1"><h4 style="color:#6a9fb5;font-size:13px;margin:8px 0">蓝球</h4><div class="freq-bars" id="blueFreqBars"></div></div></div>
+</div>
+
+<div class="results-grid" id="resultsGrid"></div>
+</div>
+
+<div class="toast" id="toast">✅ 已复制到剪贴板</div>
+
+<script>
+(function(){
+var vscode;
+try { vscode = acquireVsCodeApi(); } catch(e) { console.error('vscode api error:', e); }
+var currentResults = [];
+var runBtn = document.getElementById('runBtn');
+if (runBtn) {
+    runBtn.addEventListener('click', function() {
+        try {
+            var reds = document.getElementById('redInput').value.trim();
+            var blues = document.getElementById('blueInput').value.trim();
+            var count = document.getElementById('countSelect').value;
+            if (!reds || !blues) { alert('请输入红球和蓝球号码'); return; }
+            document.getElementById('resultArea').style.display = 'block';
+            document.getElementById('resultsGrid').innerHTML = '<div class=\"loading\"><div class=\"spinner\"></div><p style=\"margin-top:10px\">正在智能分析...</p></div>';
+            if (vscode) {
+                vscode.postMessage({ command: 'runFilter', reds: reds, blues: blues, count: +count });
+            } else { alert('VSCode API 未就绪'); }
+        } catch(err) { console.error('error:', err); alert('出错: ' + err.message); }
+    });
+}
+var copyAllBtn = document.getElementById('copyAllBtn');
+if (copyAllBtn) {
+    copyAllBtn.addEventListener('click', function() {
+        if (!currentResults.length) return;
+        var lines = currentResults.map(function(r, i) {
+            var redStr = r.reds.map(function(n) { return String(n).padStart(2, '0'); }).join(' ');
+            var blueStr = r.blues.map(function(n) { return String(n).padStart(2, '0'); }).join(' ');
+            return String(i + 1).padStart(2, '0') + '. ' + redStr + ' + ' + blueStr;
+        });
+        if (vscode) vscode.postMessage({ command: 'copy', text: lines.join(String.fromCharCode(10)) });
+    });
+}
+window.addEventListener('message', function(event) {
+    var msg = event.data;
+    if (!msg || !msg.command) return;
+    if (msg.command === 'filterResult') renderResult(msg.data);
+    if (msg.command === 'error') showError(msg.message || '未知错误');
+    if (msg.command === 'copySuccess') showToast();
+});
+function showError(msg) {
+    document.getElementById('resultsGrid').innerHTML = '<p style=\"color:#f44;padding:20px;text-align:center\">❌ ' + msg + '</p>';
+}
+function renderResult(data) {
+    if (!data) return;
+    document.getElementById('resultTitle').textContent = '🎯 精选 ' + (data.results || []).length + ' 组单注';
+    currentResults = data.results || [];
+    var rt = document.querySelector('#redScoresTable tbody');
+    if (rt && data.redScores) rt.innerHTML = data.redScores.map(function(r){return '<tr><td style=\"color:#ce9178;font-weight:bold\">'+r.num+'</td><td>'+r.score+'</td><td>'+r.miss+'</td><td>'+r.avgMiss+'</td><td>'+r.freq5+'</td><td style=\"color:#888;font-size:11px\">'+(r.reasons||[]).join(',')+'</td></tr>';}).join('');
+    var bt = document.querySelector('#blueScoresTable tbody');
+    if (bt && data.blueScores) bt.innerHTML = data.blueScores.map(function(b){return '<tr><td style=\"color:#6a9fb5;font-weight:bold\">'+b.num+'</td><td>'+b.score+'</td><td>'+b.miss+'</td><td>'+b.avgMiss+'</td><td>'+b.freq5+'</td><td style=\"color:#888;font-size:11px\">'+(b.reasons||[]).join(',')+'</td></tr>';}).join('');
+    var rfb = document.getElementById('redFreqBars');
+    if (rfb && data.stats && data.stats.redFreq) rfb.innerHTML = data.stats.redFreq.map(function(f){return '<div class=\"freq-bar\"><span class=\"freq-label\">'+f.num+'</span><div class=\"freq-track\"><div class=\"freq-fill\" style=\"width:'+f.pct+'%\"></div></div><span class=\"freq-pct\">'+f.count+'次('+f.pct+'%)</span></div>';}).join('');
+    var bfb = document.getElementById('blueFreqBars');
+    if (bfb && data.stats && data.stats.blueFreq) bfb.innerHTML = data.stats.blueFreq.map(function(f){return '<div class=\"freq-bar\"><span class=\"freq-label\">'+f.num+'</span><div class=\"freq-track\"><div class=\"freq-fill\" style=\"width:'+f.pct+'%\"></div></div><span class=\"freq-pct\">'+f.count+'次('+f.pct+'%)</span></div>';}).join('');
+    var rg = document.getElementById('resultsGrid');
+    if (rg && data.results) rg.innerHTML = data.results.map(function(r){
+        var redStr = r.reds.map(function(n){return String(n).padStart(2,'0');}).join(' ');
+        var blueStr = r.blues.map(function(n){return String(n).padStart(2,'0');}).join(' ');
+        var tags = [r.details.oddEven,r.details.bigSmall,r.details.sum,r.details.consecutive,r.details.zone];
+        var tagHtml = tags.map(function(t){return t&&t.indexOf('优')>=0?'<span class=\"tag good\">'+t+'</span>':'<span class=\"tag\">'+t+'</span>';}).join('');
+        var ct=redStr+' + '+blueStr;
+        return '<div class=\"result-card\"><div class=\"card-header\"><span class=\"card-num\">'+redStr+' + '+blueStr+'</span><span class=\"card-score\">'+r.score+'分</span></div><div class=\"card-details\">'+tagHtml+'</div><button data-copy=\"'+ct+'\" class=\"cb\" style=\"margin-top:8px;padding:4px 10px;background:#0e639c;border:none;border-radius:4px;color:#fff;font-size:11px;cursor:pointer\">复制</button></div>';
+    }).join('');
+    var cbs = rg.querySelectorAll('.cb');
+    for(var i=0;i<cbs.length;i++)(function(b){b.addEventListener('click',function(){if(vscode)vscode.postMessage({command:'copy',text:b.getAttribute('data-copy')});});})(cbs[i]);
+}
+function showToast() {
+    var t = document.getElementById('toast');
+    t.style.display = 'block';
+    setTimeout(function(){ t.style.display = 'none'; }, 2000);
+}
+})();
+</script>
+</body>
+</html>`;
+}
 function getRoadAnalysisHtml(result, cfg, N) {
     const R = result;
     const posCount = R.posCount || 3;
@@ -4104,7 +4299,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th{background:#334155;p
         recs.sort((a, b) => a.miss - b.miss);
         recs.slice(0, 2).forEach((rec, i) => {
             html += `<div style="padding:8px;background:#334155;border-radius:6px;margin:4px 0">
-<strong style="color:${roadColors[rec.road]}">${i===0?'首选':'次选'}: ${rec.road}路</strong> 遗漏${rec.current}(均${rec.avg})</div>`;
+<strong style="color:${roadColors[rec.road]}">${i===0?'首选':'次选'}: ${rec.road}路</strong> 遗漏${rec.miss}(均${rec.avgMiss})</div>`;
         });
         html += `</div>`;
     }
@@ -4188,7 +4383,7 @@ ${comboStr}<button class="copy-btn" style="margin-left:6px;padding:2px 8px;font-
 </div>
 
 <script>
-function decodeBase64(s){try{return atob(s)}catch(e){return s}}
+function decodeBase64(s){try{var b=atob(s);return decodeURIComponent(Array.from(b,function(c){return'%'+('00'+c.charCodeAt(0).toString(16)).slice(-2)}).join(''))}catch(e){return s}}
 function copyFromData(btn){var t=decodeBase64(btn.getAttribute('data-copy'));try{acquireVsCodeApi().postMessage({command:'copy',text:t})}catch(e){}btn.innerHTML='✅ 已复制';btn.classList.add('copied');setTimeout(function(){btn.innerHTML='📋 复制';btn.classList.remove('copied')},1500)}
 function copySingle(btn){var t=decodeBase64(btn.getAttribute('data-copy'));try{acquireVsCodeApi().postMessage({command:'copy',text:t})}catch(e){}btn.innerHTML='✅ 已复制';btn.classList.add('copied');setTimeout(function(){btn.innerHTML='复制';btn.classList.remove('copied')},1500)}
 function copyAllSingles(){var btn=document.getElementById('copyAllSingleBtn');var el=document.getElementById('singlesData');if(el){try{acquireVsCodeApi().postMessage({command:'copy',text:el.getAttribute('data-singles')})}catch(e){}}if(btn){btn.innerHTML='✅ 已复制';btn.classList.add('copied');setTimeout(function(){btn.innerHTML='📋 复制全部单注';btn.classList.remove('copied')},1500)}}

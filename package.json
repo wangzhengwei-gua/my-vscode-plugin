@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.1.39",
+    "version": "0.1.47",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -29,6 +29,7 @@
         "onCommand:myPlugin.probabilityPick",
         "onCommand:myPlugin.probabilityBacktest",
         "onCommand:myPlugin.roadAnalysis",
+        "onCommand:myPlugin.smartFilter",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -73,9 +74,13 @@
                 "command": "myPlugin.probabilityBacktest",
                 "title": "Probability Backtest"
             },
-            {
+                        {
                 "command": "myPlugin.roadAnalysis",
                 "title": "012路趋势分析"
+            },
+            {
+                "command": "myPlugin.smartFilter",
+                "title": "大乐透智能精选"
             }
         ],
         "viewsContainers": {
