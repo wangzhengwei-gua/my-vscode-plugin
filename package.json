@@ -29,7 +29,10 @@
         "onCommand:myPlugin.probabilityPick",
         "onCommand:myPlugin.probabilityBacktest",
         "onCommand:myPlugin.roadAnalysis",
+        "onCommand:myPlugin.pl3Formula",
+        "onCommand:myPlugin.pl5Formula",
         "onCommand:myPlugin.smartFilter",
+        "onCommand:myPlugin.ssqFilter",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -79,8 +82,20 @@
                 "title": "012路趋势分析"
             },
             {
+                "command": "myPlugin.pl3Formula",
+                "title": "排列三必背口诀"
+            },
+            {
+                "command": "myPlugin.pl5Formula",
+                "title": "排列五口诀"
+            },
+            {
                 "command": "myPlugin.smartFilter",
                 "title": "大乐透智能精选"
+            },
+            {
+                "command": "myPlugin.ssqFilter",
+                "title": "双色球智能精选"
             }
         ],
         "viewsContainers": {

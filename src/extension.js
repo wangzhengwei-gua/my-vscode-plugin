@@ -1023,9 +1023,8 @@ function activate(context) {
             return;
         }
 
-        // 按时间正序排列
-        const sortedHistory = history.slice().reverse();
-        const dataToAnalyze = limitPick.value > 0 ? sortedHistory.slice(-limitPick.value) : sortedHistory;
+        // history 已是升序（旧→新），直接取末尾即最新
+        const dataToAnalyze = limitPick.value > 0 ? history.slice(-limitPick.value) : history;
         const N = dataToAnalyze.length;
 
         // 执行012路分析
@@ -1052,6 +1051,61 @@ function activate(context) {
         panel.webview.html = getRoadAnalysisHtml(analysisResult, cfg, N);
     });
     context.subscriptions.push(roadAnalysisDisposable);
+
+    // ========== 排三口诀工具 ==========
+    let pl3FormulaDisposable = vscode.commands.registerCommand('myPlugin.pl3Formula', async () => {
+        // 先加载最新一期数据用于实战推导
+        const cfg = LOTTERY_TYPES.find(c => c.key === 'pl3');
+        let latest = null, history = [];
+        try {
+            if (cfg) {
+                history = loadLotteryData(cfg);
+                if (history.length > 0) latest = history[history.length - 1];
+            }
+        } catch (e) { /* 数据缺失也允许查看口诀 */ }
+
+        const panel = vscode.window.createWebviewPanel(
+            'pl3Formula',
+            '📜 排列三必背口诀',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.onDidReceiveMessage(async (message) => {
+            if (message.command === 'copy') {
+                await vscode.env.clipboard.writeText(message.text);
+                return;
+            }
+        });
+        panel.webview.html = getPl3FormulaHtml(latest, history);
+    });
+    context.subscriptions.push(pl3FormulaDisposable);
+
+    // ========== 排列五口诀工具 ==========
+    let pl5FormulaDisposable = vscode.commands.registerCommand('myPlugin.pl5Formula', async () => {
+        const cfg = LOTTERY_TYPES.find(c => c.key === 'pl5');
+        let latest = null, history = [];
+        try {
+            if (cfg) {
+                history = loadLotteryData(cfg);
+                if (history.length > 0) latest = history[history.length - 1];
+            }
+        } catch (e) { /* 数据缺失也允许查看口诀 */ }
+
+        const panel = vscode.window.createWebviewPanel(
+            'pl5Formula',
+            '🎲 排列五口诀',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.onDidReceiveMessage(async (message) => {
+            if (message.command === 'copy') {
+                await vscode.env.clipboard.writeText(message.text);
+                return;
+            }
+        });
+        panel.webview.html = getPl5FormulaHtml(latest, history);
+    });
+    context.subscriptions.push(pl5FormulaDisposable);
 
     // ========== 大乐透智能精选 ==========
     let smartFilterDisposable = vscode.commands.registerCommand('myPlugin.smartFilter', async () => {
@@ -1086,6 +1140,36 @@ function activate(context) {
     });
 
     context.subscriptions.push(smartFilterDisposable);
+
+    // 双色球智能精选命令
+    let ssqFilterDisposable = vscode.commands.registerCommand('myPlugin.ssqFilter', async () => {
+        const panel = vscode.window.createWebviewPanel(
+            'ssqFilter',
+            '🔴 双色球智能精选',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+
+        panel.webview.onDidReceiveMessage(async (message) => {
+            if (message.command === 'runFilter') {
+                try {
+                    const result = await runSsqFilter(message.reds, message.blues, message.count);
+                    panel.webview.postMessage({ command: 'filterResult', data: result });
+                } catch (e) {
+                    panel.webview.postMessage({ command: 'error', message: e.message });
+                }
+                return;
+            }
+            if (message.command === 'copy') {
+                await vscode.env.clipboard.writeText(message.text);
+                panel.webview.postMessage({ command: 'copySuccess' });
+                return;
+            }
+        });
+
+        panel.webview.html = getSsqFilterHtml();
+    });
+    context.subscriptions.push(ssqFilterDisposable);
     let probBacktestDisposable = vscode.commands.registerCommand('myPlugin.probabilityBacktest', async () => {
         const pick = await vscode.window.showQuickPick(
             [
@@ -1441,7 +1525,10 @@ class LotteryTreeDataProvider {
                 this.createItem('🤖 智能推荐', 'myPlugin.smartPick', '🤖'),
                 this.createItem('🧬 概率推荐', 'myPlugin.probabilityPick', '🧬'),
                 this.createItem('🛤️ 012路趋势', 'myPlugin.roadAnalysis', '🛤️'),
+                this.createItem('📜 排三口诀', 'myPlugin.pl3Formula', '📜'),
+                this.createItem('🎲 排五口诀', 'myPlugin.pl5Formula', '🎲'),
                 this.createItem('🎯 大乐透精选', 'myPlugin.smartFilter', '🎯'),
+                this.createItem('🔴 双色球精选', 'myPlugin.ssqFilter', '🔴'),
                 this.createItem('🧪 概率回测', 'myPlugin.probabilityBacktest', '🧪'),
                 this.createItem('📈 均线形态', 'myPlugin.maPatterns', '📈'),
                 this.createItem('🔮 预测记录', 'myPlugin.showPredictions', '🔮'),
@@ -3723,8 +3810,13 @@ function computeRoadAnalysis(history, cfg) {
     const complexRec = complexOptions.map(size => {
         const nums = numScores.map(ps => ps.slice(0, size).map(x => x.num));
         const count = nums.reduce((a, b) => a * b.length, 1);
-        // 生成多行格式的复制文本（带彩种标题）
-        const copyLines = `${cfg.name}：\n` + nums.map((arr, idx) => `${posNames[idx]}位：${arr.join(' ')}`).join('\n');
+        const sizeLabels = { 2: '精简', 3: '标准', 4: '扩展', 5: '全覆盖' };
+        const sizeLabel = sizeLabels[size] || (size + '码');
+        // 生成多行格式的复制文本（带彩种、规格、注数标题）
+        const copyLines = `${cfg.name} ${sizeLabel}复式（${size}×${size}${posCount > 3 ? '×' + posCount + '位' : ''}，${count}注）\n` +
+            `基础期号：第${history[history.length - 1].period}期（${history[history.length - 1].date}）\n` +
+            `样本量：${history.length}期\n` +
+            nums.map((arr, idx) => `${posNames[idx]}位：${arr.join(' ')}`).join('\n');
         return {
             size: size,
             nums: nums,
@@ -4079,10 +4171,69 @@ body{font-family:'Microsoft YaHei',sans-serif;background:#1e1e1e;color:#d4d4d4;p
 @keyframes spin{to{transform:rotate(360deg)}}
 .toast{position:fixed;top:20px;right:20px;background:#1e4a1e;color:#9cdcfe;padding:10px 20px;border-radius:6px;z-index:999;display:none;animation:fadeIn .3s}
 @keyframes fadeIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+.algo-section{background:#252526;border-radius:10px;padding:0;margin-bottom:16px;border:1px solid #333;overflow:hidden}
+.algo-summary{padding:12px 20px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#2d2d30}
+.algo-summary h3{color:#4ec9b0;font-size:14px;margin:0}
+.algo-toggle{color:#888;font-size:12px;transition:transform .2s}
+.algo-toggle.open{transform:rotate(90deg)}
+.algo-detail{display:none;padding:16px 20px;font-size:12px;line-height:1.8;color:#bbb;border-top:1px solid #333}
+.algo-detail.open{display:block}
+.algo-detail h4{color:#569cd6;font-size:13px;margin:12px 0 6px 0;padding-bottom:4px;border-bottom:1px solid #333}
+.algo-detail h4:first-child{margin-top:0}
+.algo-detail ul{margin:4px 0 8px 20px;padding:0}
+.algo-detail li{margin:3px 0}
+.algo-detail code{background:#1e1e1e;padding:1px 5px;border-radius:3px;color:#ce9178;font-family:Consolas,monospace}
+.algo-detail .formula{background:#1a1a2e;padding:8px 12px;border-radius:5px;color:#9cdcfe;margin:6px 0;font-family:Consolas,monospace;border-left:3px solid #4ec9b0}
 </style>
 </head>
 <body>
 <div class="header"><h1>🎯 大乐透智能精选</h1><p>基于多维度历史数据分析，从复式中智能筛选最优单注</p></div>
+
+<div class="algo-section">
+<div class="algo-summary" onclick="var d=document.getElementById('algoDetail');var t=document.querySelector('.algo-toggle');if(d.classList.contains('open')){d.classList.remove('open');t.classList.remove('open')}else{d.classList.add('open');t.classList.add('open')}">
+<h3>🧮 推荐算法说明（点击展开/收起）</h3><span class="algo-toggle">▶</span>
+</div>
+<div class="algo-detail" id="algoDetail">
+<h4>一、单球评分模型（红球 / 蓝球）</h4>
+<p>对用户输入的每个号码计算综合得分，含以下因子：</p>
+<ul>
+<li><b>遗漏回归分（主权重）</b>：计算号码当前遗漏期数 <code>miss</code> 与平均遗漏 <code>avgMiss</code> 的比值 <code>missRatio = miss / avgMiss</code>：
+  <div class="formula">missRatio &gt; 2.0 → 超漏回归 +25 分（泊松回归思想：长期未出则回归概率增大）<br>missRatio &gt; 1.5 → 高漏 +18 分<br>missRatio &gt; 1.2 → 中高漏 +12 分<br>missRatio &gt; 0.8 → 正常 +6 分<br>近期出现 → 热号持续 +4 分<br>否则 → 温号回补 +8 分</div></li>
+<li><b>热温冷判定</b>：基于近 5 期出现率 <code>freq5</code>：
+  <div class="formula">freq5 ≥ 0.4 → 极热 +15 分（5期内出现≥2次）<br>freq5 ≥ 0.2 → 热号 +10 分<br>freq15 ≤ 0.07 且 miss &gt; 10 → 冷号待开 +12 分</div></li>
+<li><b>邻号 +5 分</b>：与上一期开奖号码相差 ±1 的号码</li>
+<li><b>重号 +6 分</b>：上一期已开出的同号</li>
+</ul>
+
+<h4>二、组合形态评分（6维加权）</h4>
+<p>对每组 5红+2蓝 候选组合计算形态得分：</p>
+<ul>
+<li><b>奇偶比</b>：理想 2:3 或 3:2 → +15 分</li>
+<li><b>大小比</b>：&gt;18 为大，理想 2:3 或 3:2 → +15 分</li>
+<li><b>和值</b>：5 红理论均值 22.5×5=112.5，合理范围 65~95 → +20 分</li>
+<li><b>连号</b>：1 对连号 +8 分，≥2 对 +5 分</li>
+<li><b>尾数</b>：尾数种类 ≥4 散 +5 分，≤3 密集 -5 分</li>
+<li><b>三区分布</b>：1-12/13-24/25-35 三区有号 +12 分</li>
+<li><b>AC 值</b>：任意两号差值集合大小，≥7 为优 +8 分</li>
+<li><b>蓝球奇偶</b>：1 奇 1 偶 +5 分</li>
+</ul>
+
+<h4>三、组合生成与筛选</h4>
+<ul>
+<li><b>加权随机采样</b>：权重 = 单球得分²，按权重随机抽取 5 红 + 2 蓝共 5 万次</li>
+<li><b>总分 = 红球得分之和 + 蓝球得分×1.5 + 组合形态分</b></li>
+<li><b>去重 + 排序</b>：按总分降序去重，取前 N 组</li>
+</ul>
+
+<h4>四、统计依据</h4>
+<ul>
+<li><b>遗漏回归</b>：泊松过程模型，号码出现率 λ ≈ 历史频次/N，遗漏 k 期未出概率 e^(-λk)，回归概率 1-e^(-λk)</li>
+<li><b>形态约束</b>：基于历史开奖的奇偶/大小/和值/连号/AC 等形态分布规律</li>
+<li><b>权重平方</b>：得分高的号码被选中概率指数级提升，但保留随机性避免过拟合</li>
+</ul>
+<p style="color:#888;margin-top:10px">⚠️ 彩票本质是独立随机事件，本算法基于历史统计模型，仅供娱乐参考，不构成投注建议。</p>
+</div>
+</div>
 
 <div class="form-section" id="formSection">
 <h3>📋 输入复式号码</h3>
@@ -4186,6 +4337,1533 @@ function showToast() {
     setTimeout(function(){ t.style.display = 'none'; }, 2000);
 }
 })();
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 双色球智能精选（从红球复式+蓝球复式中智能筛选N组最优单注）
+ * 双色球规则：6红(1-33) + 1蓝(1-16)
+ */
+async function runSsqFilter(redInput, blueInput, targetCount) {
+    const path = require('path');
+    const fs = require('fs');
+
+    // 解析输入
+    const reds = redInput.split(/[,，\s]+/).map(s => parseInt(s.trim())).filter(n => n >= 1 && n <= 33);
+    const blues = blueInput.split(/[,，\s]+/).map(s => parseInt(s.trim())).filter(n => n >= 1 && n <= 16);
+
+    if (reds.length < 6 || reds.length > 20) throw new Error('红球数量需在6-20个之间');
+    if (blues.length < 2 || blues.length > 8) throw new Error('蓝球数量需在2-8个之间');
+    if (targetCount < 1 || targetCount > 100) throw new Error('输出注数需在1-100之间');
+
+    // 加载历史数据
+    const dataPath = path.join(getDataDir(), 'ssq.json');
+    const rawData = JSON.parse(fs.readFileSync(dataPath, 'utf-8'));
+    const history = rawData.history || [];
+    const N = history.length;
+
+    // 核心计算函数（红球在 red 数组，蓝球在 blue 数组）
+    function calcMiss(num, isBlue = false) {
+        let miss = 0;
+        for (let i = 0; i < N; i++) {
+            const nums = isBlue ? history[i].blue : history[i].red;
+            if (nums.includes(num)) break;
+            miss++;
+        }
+        return miss;
+    }
+
+    function calcAvgMiss(num, isBlue = false) {
+        let misses = [], currentMiss = 0;
+        for (let i = 0; i < N; i++) {
+            const nums = isBlue ? history[i].blue : history[i].red;
+            if (nums.includes(num)) { if (currentMiss > 0) misses.push(currentMiss); currentMiss = 0; }
+            else currentMiss++;
+        }
+        misses.push(currentMiss);
+        return misses.reduce((a, b) => a + b, 0) / misses.length;
+    }
+
+    function recentFreq(num, period, isBlue = false) {
+        let count = 0;
+        const len = Math.min(period, N);
+        for (let i = 0; i < len; i++) {
+            const nums = isBlue ? history[i].blue : history[i].red;
+            if (nums.includes(num)) count++;
+        }
+        return count / len;
+    }
+
+    // 红球评分（6个红球，1-33）
+    function scoreRed(num) {
+        const miss = calcMiss(num);
+        const avgMiss = calcAvgMiss(num);
+        const freq5 = recentFreq(num, 5);
+        const freq15 = recentFreq(num, 15);
+        let score = 0, reasons = [];
+        const missRatio = miss / avgMiss;
+
+        if (missRatio > 2) { score += 25; reasons.push('超漏回归(' + miss + '期)'); }
+        else if (missRatio > 1.5) { score += 18; reasons.push('高漏(' + miss + '期)'); }
+        else if (missRatio > 1.2) { score += 12; reasons.push('中高漏(' + miss + '期)'); }
+        else if (missRatio > 0.8) { score += 6; reasons.push('正常'); }
+        else if (freq5 > 0) { score += 4; reasons.push('热号持续'); }
+        else { score += 8; reasons.push('温号回补'); }
+
+        if (freq5 >= 0.4) { score += 15; reasons.push('极热'); }
+        else if (freq5 >= 0.2) { score += 10; reasons.push('热号'); }
+        else if (freq15 <= 0.07 && miss > 10) { score += 12; reasons.push('冷号待开'); }
+
+        const lastRed = history[0] && history[0].red ? history[0].red : [];
+        for (const n of lastRed) { if (Math.abs(n - num) === 1) { score += 5; reasons.push('邻号'); break; } }
+        if (lastRed.includes(num)) { score += 6; reasons.push('重号'); }
+
+        return { num, score, miss, avgMiss: +avgMiss.toFixed(1), freq5: +freq5.toFixed(2), reasons };
+    }
+
+    // 蓝球评分（1个蓝球，1-16）
+    function scoreBlue(num) {
+        const miss = calcMiss(num, true);
+        const avgMiss = calcAvgMiss(num, true);
+        const freq5 = recentFreq(num, 5, true);
+        let score = 0, reasons = [];
+        const missRatio = miss / avgMiss;
+
+        if (missRatio > 2.5) { score += 28; reasons.push('超漏回归(' + miss + '期)'); }
+        else if (missRatio > 1.8) { score += 20; reasons.push('高漏(' + miss + '期)'); }
+        else if (missRatio > 1.2) { score += 14; reasons.push('中漏(' + miss + '期)'); }
+        else if (freq5 > 0) { score += 10; reasons.push('热蓝'); }
+        else { score += 8; reasons.push('温蓝'); }
+
+        const lastBlue = history[0] && history[0].blue ? history[0].blue : [];
+        if (lastBlue.includes(num)) { score += 5; reasons.push('重号'); }
+
+        return { num, score, miss, avgMiss: +avgMiss.toFixed(1), freq5: +freq5.toFixed(2), reasons };
+    }
+
+    // 组合评分（双色球：6红1蓝）
+    function scoreCombo(redArr, blueArr) {
+        let comboScore = 0, details = {};
+
+        // 奇偶比（6红，理想 3:3 或 2:4/4:2）
+        const oddCount = redArr.filter(n => n % 2 === 1).length;
+        const evenCount = 6 - oddCount;
+        if (oddCount >= 2 && oddCount <= 4) { comboScore += 15; details.oddEven = oddCount + ':' + evenCount + '(优)'; }
+        else details.oddEven = oddCount + ':' + evenCount;
+
+        // 大小比（1-16为小，17-33为大，理想 3:3）
+        const bigCount = redArr.filter(n => n > 16).length;
+        const smallCount = 6 - bigCount;
+        if (bigCount >= 2 && bigCount <= 4) { comboScore += 15; details.bigSmall = bigCount + ':' + smallCount + '(优)'; }
+        else details.bigSmall = bigCount + ':' + smallCount;
+
+        // 和值（6红理论均值 102，合理范围 80-130）
+        const sum = redArr.reduce((a, b) => a + b, 0);
+        if (sum >= 80 && sum <= 130) { comboScore += 20; details.sum = sum + '(优)'; }
+        else if (sum >= 65 && sum <= 145) { comboScore += 10; details.sum = String(sum); }
+        else details.sum = sum + '(偏)';
+
+        // 连号
+        const sorted = [...redArr].sort((a, b) => a - b);
+        let consecutive = 0;
+        for (let i = 0; i < sorted.length - 1; i++) { if (sorted[i+1] - sorted[i] === 1) consecutive++; }
+        if (consecutive === 1) { comboScore += 8; details.consecutive = '1对连号'; }
+        else if (consecutive >= 2) { comboScore += 5; details.consecutive = consecutive + '对'; }
+        else details.consecutive = '无';
+
+        // 尾数分布
+        const tails = redArr.map(n => n % 10);
+        const uniqueTails = new Set(tails).size;
+        if (uniqueTails <= 3) { comboScore -= 5; details.tail = '尾' + uniqueTails + '(密集)'; }
+        else if (uniqueTails >= 5) { comboScore += 5; details.tail = '尾' + uniqueTails + '(散)'; }
+        else details.tail = '尾' + uniqueTails;
+
+        // 三区分布（1-11, 12-22, 23-33）
+        const zones = [0, 0, 0];
+        for (const n of redArr) { if (n <= 11) zones[0]++; else if (n <= 22) zones[1]++; else zones[2]++; }
+        const zoneBalance = zones.filter(z => z >= 1).length;
+        if (zoneBalance === 3) { comboScore += 12; details.zone = '三区有号(优)'; }
+        else if (zoneBalance === 2) { comboScore += 5; details.zone = '两区'; }
+        else details.zone = '单区';
+
+        // AC值
+        const diffs = new Set();
+        for (let i = 0; i < redArr.length; i++) for (let j = i+1; j < redArr.length; j++) diffs.add(Math.abs(redArr[i] - redArr[j]));
+        const acValue = diffs.size;
+        if (acValue >= 8) { comboScore += 8; details.ac = 'AC=' + acValue + '(优)'; }
+        else if (acValue >= 6) details.ac = 'AC=' + acValue;
+        else details.ac = 'AC=' + acValue + '(低)';
+
+        // 蓝球奇偶
+        if (blueArr.length > 0) {
+            const blueOdd = blueArr[0] % 2 === 1;
+            if (blueOdd && oddCount <= 3) { comboScore += 5; details.blueOE = '蓝奇红偶偏(优)'; }
+            else if (!blueOdd && oddCount >= 3) { comboScore += 5; details.blueOE = '蓝偶红奇偏(优)'; }
+            else details.blueOE = blueOdd ? '蓝奇' : '蓝偶';
+        }
+
+        return { comboScore, details };
+    }
+
+    // 加权随机选择
+    function weightedSelect(arr, count) {
+        if (arr.length <= count) return arr.map(x => x.num);
+        const weights = arr.map(x => x.score * x.score);
+        const selected = [], remaining = arr.map((x, i) => ({ ...x, weight: weights[i] }));
+        while (selected.length < count && remaining.length > 0) {
+            const tw = remaining.reduce((a, b) => a + b.weight, 0);
+            let r = Math.random() * tw;
+            for (let i = 0; i < remaining.length; i++) { r -= remaining[i].weight; if (r <= 0) { selected.push(remaining[i].num); remaining.splice(i, 1); break; } }
+        }
+        return selected;
+    }
+
+    // 评分所有号码
+    const redScores = reds.map(scoreRed).sort((a, b) => b.score - a.score);
+    const blueScores = blues.map(scoreBlue).sort((a, b) => b.score - a.score);
+
+    // 生成候选组合（双色球：6红1蓝）
+    const candidates = [];
+    for (let iter = 0; iter < 50000; iter++) {
+        const redArr = weightedSelect(redScores, 6);
+        const blueArr = weightedSelect(blueScores, 1);
+        const { comboScore, details } = scoreCombo(redArr, blueArr);
+        const redTotal = redArr.reduce((sum, n) => sum + (redScores.find(r => r.num === n) ? redScores.find(r => r.num === n).score : 0), 0);
+        const blueTotal = blueArr.reduce((sum, n) => sum + (blueScores.find(b => b.num === n) ? blueScores.find(b => b.num === n).score : 0), 0);
+        candidates.push({ reds: [...redArr].sort((a,b)=>a-b), blues: [...blueArr].sort((a,b)=>a-b), totalScore: redTotal + blueTotal * 1.5 + comboScore, details });
+    }
+
+    candidates.sort((a, b) => b.totalScore - a.totalScore);
+
+    // 去重取前N组
+    const seen = new Set(), results = [];
+    for (const c of candidates) {
+        const key = c.reds.join(',') + '|' + c.blues.join(',');
+        if (!seen.has(key)) { seen.add(key); results.push(c); if (results.length >= targetCount) break; }
+    }
+
+    // 统计频率
+    const allReds = results.flatMap(r => r.reds), allBlues = results.flatMap(r => r.blues);
+    const redFreq = {}, blueFreq = {};
+    for (const n of allReds) redFreq[n] = (redFreq[n]||0)+1;
+    for (const n of allBlues) blueFreq[n] = (blueFreq[n]||0)+1;
+
+    return {
+        input: { reds, blues, targetCount },
+        historyInfo: { totalPeriods: N, latest: history[0] ? history[0].period : '' },
+        redScores: redScores.map(r => ({ num: r.num, score: r.score, miss: r.miss, avgMiss: r.avgMiss, freq5: r.freq5, reasons: r.reasons })),
+        blueScores: blueScores.map(b => ({ num: b.num, score: b.score, miss: b.miss, avgMiss: b.avgMiss, freq5: b.freq5, reasons: b.reasons })),
+        results: results.map(r => ({
+            reds: r.reds,
+            blues: r.blues,
+            score: Math.round(r.totalScore),
+            details: r.details
+        })),
+        stats: {
+            redFreq: Object.entries(redFreq).map(([n,c])=>({num:+n,count:c,pct:Math.round(c/targetCount*100)})).sort((a,b)=>b.count-a.count),
+            blueFreq: Object.entries(blueFreq).map(([n,c])=>({num:+n,count:c,pct:Math.round(c/targetCount*100)})).sort((a,b)=>b.count-a.count)
+        }
+    };
+}
+
+/**
+ * 生成双色球智能精选界面 HTML
+ */
+function getSsqFilterHtml() {
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>双色球智能精选</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Microsoft YaHei',sans-serif;background:#1e1e1e;color:#d4d4d4;padding:20px}
+.header{text-align:center;margin-bottom:24px}
+.header h1{color:#e94560;font-size:28px;margin-bottom:6px}
+.header p{color:#888;font-size:13px}
+.form-section{background:#252526;border-radius:10px;padding:20px;margin-bottom:16px;border:1px solid #333}
+.form-section h3{color:#569cd6;font-size:15px;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.form-group{margin-bottom:14px}
+.form-group label{display:block;color:#9cdcfe;font-size:13px;margin-bottom:6px}
+.form-group input,.form-group select{width:100%;padding:10px 14px;background:#1e1e1e;border:1px solid #444;border-radius:6px;color:#d4d4d4;font-size:14px;outline:none;transition:border .2s}
+.form-group input:focus,.form-group select:focus{border-color:#007acc}
+.form-group input::placeholder{color:#555}
+.row{display:flex;gap:12px}
+.row .form-group{flex:1}
+.btn-run{width:100%;padding:13px;background:linear-gradient(135deg,#e94560,#c0392b);border:none;border-radius:8px;color:#fff;font-size:16px;font-weight:bold;cursor:pointer;transition:transform .2s,box-shadow .2s;margin-top:8px}
+.btn-run:hover{transform:translateY(-1px);box-shadow:0 4px 15px rgba(233,69,96,.4)}
+.btn-run:active{transform:translateY(0)}
+.result-area{display:none}
+.result-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.result-header h2{color:#e94560;font-size:18px}
+.btn-copy-all{padding:7px 16px;background:#0e639c;border:none;border-radius:5px;color:#fff;font-size:13px;cursor:pointer}
+.btn-copy-all:hover{background:#1177bb}
+.results-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px;margin-bottom:20px}
+.result-card{background:#252526;border-radius:8px;padding:14px;border:1px solid #333;transition:border-color .2s}
+.result-card:hover{border-color:#e94560}
+.card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.card-num{color:#ce9178;font-size:17px;font-weight:bold;letter-spacing:1px}
+.card-score{color:#888;font-size:12px}
+.card-details{display:flex;flex-wrap:wrap;gap:6px;font-size:11px;color:#aaa}
+.tag{background:#333;padding:2px 8px;border-radius:3px}
+.tag.good{background:#1e4a1e;color:#9cdcfe}
+.stats-section{background:#252526;border-radius:10px;padding:16px;margin-top:16px;border:1px solid #333}
+.stats-section h3{color:#569cd6;font-size:14px;margin-bottom:12px}
+.freq-bars{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.freq-bar{display:flex;align-items:center;gap:8px}
+.freq-label{width:30px;text-align:right;color:#9cdcfe;font-size:12px}
+.freq-track{flex:1;height:18px;background:#1e1e1e;border-radius:3px;overflow:hidden}
+.freq-fill{height:100%;background:linear-gradient(90deg,#e94560,#feca57);border-radius:3px;transition:width .5s}
+.freq-pct{width:40px;font-size:11px;color:#888}
+.scores-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:12px}
+.scores-table th{background:#333;color:#569cd6;padding:6px 8px;text-align:left}
+.scores-table td{padding:6px 8px;border-bottom:1px solid #333}
+.loading{text-align:center;padding:40px;color:#888}
+.spinner{display:inline-block;width:30px;height:30px;border:3px solid #333;border-top-color:#e94560;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.toast{position:fixed;top:20px;right:20px;background:#1e4a1e;color:#9cdcfe;padding:10px 20px;border-radius:6px;z-index:999;display:none;animation:fadeIn .3s}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+.algo-section{background:#252526;border-radius:10px;padding:0;margin-bottom:16px;border:1px solid #333;overflow:hidden}
+.algo-summary{padding:12px 20px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#2d2d30}
+.algo-summary h3{color:#e94560;font-size:14px;margin:0}
+.algo-toggle{color:#888;font-size:12px;transition:transform .2s}
+.algo-toggle.open{transform:rotate(90deg)}
+.algo-detail{display:none;padding:16px 20px;font-size:12px;line-height:1.8;color:#bbb;border-top:1px solid #333}
+.algo-detail.open{display:block}
+.algo-detail h4{color:#569cd6;font-size:13px;margin:12px 0 6px 0;padding-bottom:4px;border-bottom:1px solid #333}
+.algo-detail h4:first-child{margin-top:0}
+.algo-detail ul{margin:4px 0 8px 20px;padding:0}
+.algo-detail li{margin:3px 0}
+.algo-detail code{background:#1e1e1e;padding:1px 5px;border-radius:3px;color:#ce9178;font-family:Consolas,monospace}
+.algo-detail .formula{background:#1a1a2e;padding:8px 12px;border-radius:5px;color:#9cdcfe;margin:6px 0;font-family:Consolas,monospace;border-left:3px solid #e94560}
+</style>
+</head>
+<body>
+<div class="header"><h1>🔴 双色球智能精选</h1><p>基于多维度历史数据分析，从红球+蓝球复式中智能筛选最优单注（6红+1蓝）</p></div>
+
+<div class="algo-section">
+<div class="algo-summary" onclick="var d=document.getElementById('algoDetail');var t=document.querySelector('.algo-toggle');if(d.classList.contains('open')){d.classList.remove('open');t.classList.remove('open')}else{d.classList.add('open');t.classList.add('open')}">
+<h3>🧮 推荐算法说明（点击展开/收起）</h3><span class="algo-toggle">▶</span>
+</div>
+<div class="algo-detail" id="algoDetail">
+<h4>一、单球评分模型（红球 1-33 / 蓝球 1-16）</h4>
+<p>对用户输入的每个号码计算综合得分，含以下因子：</p>
+<ul>
+<li><b>遗漏回归分（主权重）</b>：计算号码当前遗漏期数 <code>miss</code> 与平均遗漏 <code>avgMiss</code> 的比值 <code>missRatio = miss / avgMiss</code>：
+  <div class="formula">missRatio &gt; 2.0 → 超漏回归 +25 分（泊松回归思想：长期未出则回归概率增大）<br>missRatio &gt; 1.5 → 高漏 +18 分<br>missRatio &gt; 1.2 → 中高漏 +12 分<br>missRatio &gt; 0.8 → 正常 +6 分<br>近期出现 → 热号持续 +4 分<br>否则 → 温号回补 +8 分</div></li>
+<li><b>热温冷判定</b>：基于近 5 期出现率 <code>freq5</code>：
+  <div class="formula">freq5 ≥ 0.4 → 极热 +15 分（5期内出现≥2次）<br>freq5 ≥ 0.2 → 热号 +10 分<br>freq15 ≤ 0.07 且 miss &gt; 10 → 冷号待开 +12 分</div></li>
+<li><b>邻号 +5 分</b>：与上一期红球开奖号码相差 ±1 的号码</li>
+<li><b>重号 +6 分</b>：上一期已开出的同号（红球对红球，蓝球对蓝球）</li>
+</ul>
+
+<h4>二、组合形态评分（双色球：6红+1蓝）</h4>
+<p>对每组 6红+1蓝 候选组合计算形态得分：</p>
+<ul>
+<li><b>奇偶比</b>：理想 2:4 / 3:3 / 4:2 → +15 分</li>
+<li><b>大小比</b>：1-16 为小，17-33 为大，理想 2:4~4:2 → +15 分</li>
+<li><b>和值</b>：6 红理论均值 17×6=102，合理范围 80~130 → +20 分</li>
+<li><b>连号</b>：1 对连号 +8 分，≥2 对 +5 分</li>
+<li><b>尾数</b>：尾数种类 ≥5 散 +5 分，≤3 密集 -5 分</li>
+<li><b>三区分布</b>：1-11 / 12-22 / 23-33 三区有号 +12 分</li>
+<li><b>AC 值</b>：任意两号差值集合大小，6 红共 C(6,2)=15 个差值，≥8 为优 +8 分</li>
+<li><b>蓝球奇偶互补</b>：蓝奇+红偶偏 或 蓝偶+红奇偏 → +5 分</li>
+</ul>
+
+<h4>三、组合生成与筛选</h4>
+<ul>
+<li><b>加权随机采样</b>：权重 = 单球得分²，按权重随机抽取 6 红 + 1 蓝共 5 万次</li>
+<li><b>总分 = 红球得分之和 + 蓝球得分×1.5 + 组合形态分</b></li>
+<li><b>去重 + 排序</b>：按总分降序去重，取前 N 组</li>
+</ul>
+
+<h4>四、统计依据</h4>
+<ul>
+<li><b>遗漏回归</b>：泊松过程模型，号码出现率 λ ≈ 历史频次/N，遗漏 k 期未出概率 e^(-λk)，回归概率 1-e^(-λk)</li>
+<li><b>形态约束</b>：基于历史开奖的奇偶/大小/和值/连号/AC/三区等形态分布规律</li>
+<li><b>权重平方</b>：得分高的号码被选中概率指数级提升，但保留随机性避免过拟合</li>
+</ul>
+<p style="color:#888;margin-top:10px">⚠️ 彩票本质是独立随机事件，本算法基于历史统计模型，仅供娱乐参考，不构成投注建议。</p>
+</div>
+</div>
+
+<div class="form-section" id="formSection">
+<h3>📋 输入复式号码</h3>
+<div class="form-group"><label>红球号码（6-20个，1-33，用空格或逗号分隔）</label><input type="text" id="redInput" placeholder="例如：1 5 8 12 15 18 20 23 25 27 28 30 31 33" value="1 5 8 12 15 18 20 23 25 27 28 30 31 33"></div>
+<div class="form-group"><label>蓝球号码（2-8个，1-16，用空格或逗号分隔）</label><input type="text" id="blueInput" placeholder="例如：3 5 8 10 12" value="3 5 8 10 12"></div>
+<div class="row"><div class="form-group"><label>输出注数</label><select id="countSelect"><option value="10">10 组</option><option value="20" selected>20 组</option><option value="30">30 组</option><option value="50">50 组</option><option value="100">100 组</option></select></div></div>
+<button class="btn-run" id="runBtn">🚀 开始智能筛选</button>
+</div>
+
+<div class="result-area" id="resultArea">
+<div class="result-header"><h2 id="resultTitle">筛选结果</h2><button class="btn-copy-all" id="copyAllBtn">📋 复制全部</button></div>
+
+<div class="stats-section">
+<h3>📊 号码评分分析</h3>
+<div style="display:flex;gap:20px">
+<div style="flex:1"><h4 style="color:#ce9178;font-size:13px;margin:8px 0">红球评分</h4><table class="scores-table" id="redScoresTable"><thead><tr><th>号码</th><th>得分</th><th>遗漏</th><th>均遗</th><th>近5期</th><th>特征</th></tr></thead><tbody></tbody></table></div>
+<div style="flex:1"><h4 style="color:#6a9fb5;font-size:13px;margin:8px 0">蓝球评分</h4><table class="scores-table" id="blueScoresTable"><thead><tr><th>号码</th><th>得分</th><th>遗漏</th><th>均遗</th><th>近5期</th><th>特征</th></tr></thead><tbody></tbody></table></div>
+</div>
+</div>
+
+<div class="stats-section">
+<h3>🔥 号码出现频率</h3>
+<div class="row"><div style="flex:1"><h4 style="color:#ce9178;font-size:13px;margin:8px 0">红球</h4><div class="freq-bars" id="redFreqBars"></div></div><div style="flex:1"><h4 style="color:#6a9fb5;font-size:13px;margin:8px 0">蓝球</h4><div class="freq-bars" id="blueFreqBars"></div></div></div>
+</div>
+
+<div class="results-grid" id="resultsGrid"></div>
+</div>
+
+<div class="toast" id="toast">✅ 已复制到剪贴板</div>
+
+<script>
+(function(){
+var vscode;
+try { vscode = acquireVsCodeApi(); } catch(e) { console.error('vscode api error:', e); }
+var currentResults = [];
+var runBtn = document.getElementById('runBtn');
+if (runBtn) {
+    runBtn.addEventListener('click', function() {
+        try {
+            var reds = document.getElementById('redInput').value.trim();
+            var blues = document.getElementById('blueInput').value.trim();
+            var count = document.getElementById('countSelect').value;
+            if (!reds || !blues) { alert('请输入红球和蓝球号码'); return; }
+            document.getElementById('resultArea').style.display = 'block';
+            document.getElementById('resultsGrid').innerHTML = '<div class="loading"><div class="spinner"></div><p style="margin-top:10px">正在智能分析...</p></div>';
+            if (vscode) {
+                vscode.postMessage({ command: 'runFilter', reds: reds, blues: blues, count: +count });
+            } else { alert('VSCode API 未就绪'); }
+        } catch(err) { console.error('error:', err); alert('出错: ' + err.message); }
+    });
+}
+var copyAllBtn = document.getElementById('copyAllBtn');
+if (copyAllBtn) {
+    copyAllBtn.addEventListener('click', function() {
+        if (!currentResults.length) return;
+        var lines = currentResults.map(function(r, i) {
+            var redStr = r.reds.map(function(n) { return String(n).padStart(2, '0'); }).join(' ');
+            var blueStr = r.blues.map(function(n) { return String(n).padStart(2, '0'); }).join(' ');
+            return String(i + 1).padStart(2, '0') + '. ' + redStr + ' + ' + blueStr;
+        });
+        if (vscode) vscode.postMessage({ command: 'copy', text: lines.join(String.fromCharCode(10)) });
+    });
+}
+window.addEventListener('message', function(event) {
+    var msg = event.data;
+    if (!msg || !msg.command) return;
+    if (msg.command === 'filterResult') renderResult(msg.data);
+    if (msg.command === 'error') showError(msg.message || '未知错误');
+    if (msg.command === 'copySuccess') showToast();
+});
+function showError(msg) {
+    document.getElementById('resultsGrid').innerHTML = '<p style="color:#f44;padding:20px;text-align:center">❌ ' + msg + '</p>';
+}
+function renderResult(data) {
+    if (!data) return;
+    document.getElementById('resultTitle').textContent = '🔴 精选 ' + (data.results || []).length + ' 组单注';
+    currentResults = data.results || [];
+    var rt = document.querySelector('#redScoresTable tbody');
+    if (rt && data.redScores) rt.innerHTML = data.redScores.map(function(r){return '<tr><td style="color:#ce9178;font-weight:bold">'+r.num+'</td><td>'+r.score+'</td><td>'+r.miss+'</td><td>'+r.avgMiss+'</td><td>'+r.freq5+'</td><td style="color:#888;font-size:11px">'+(r.reasons||[]).join(',')+'</td></tr>';}).join('');
+    var bt = document.querySelector('#blueScoresTable tbody');
+    if (bt && data.blueScores) bt.innerHTML = data.blueScores.map(function(b){return '<tr><td style="color:#6a9fb5;font-weight:bold">'+b.num+'</td><td>'+b.score+'</td><td>'+b.miss+'</td><td>'+b.avgMiss+'</td><td>'+b.freq5+'</td><td style="color:#888;font-size:11px">'+(b.reasons||[]).join(',')+'</td></tr>';}).join('');
+    var rfb = document.getElementById('redFreqBars');
+    if (rfb && data.stats && data.stats.redFreq) rfb.innerHTML = data.stats.redFreq.map(function(f){return '<div class="freq-bar"><span class="freq-label">'+f.num+'</span><div class="freq-track"><div class="freq-fill" style="width:'+f.pct+'%"></div></div><span class="freq-pct">'+f.count+'次('+f.pct+'%)</span></div>';}).join('');
+    var bfb = document.getElementById('blueFreqBars');
+    if (bfb && data.stats && data.stats.blueFreq) bfb.innerHTML = data.stats.blueFreq.map(function(f){return '<div class="freq-bar"><span class="freq-label">'+f.num+'</span><div class="freq-track"><div class="freq-fill" style="width:'+f.pct+'%"></div></div><span class="freq-pct">'+f.count+'次('+f.pct+'%)</span></div>';}).join('');
+    var rg = document.getElementById('resultsGrid');
+    if (rg && data.results) rg.innerHTML = data.results.map(function(r){
+        var redStr = r.reds.map(function(n){return String(n).padStart(2,'0');}).join(' ');
+        var blueStr = r.blues.map(function(n){return String(n).padStart(2,'0');}).join(' ');
+        var tags = [r.details.oddEven,r.details.bigSmall,r.details.sum,r.details.consecutive,r.details.zone];
+        var tagHtml = tags.map(function(t){return t&&t.indexOf('优')>=0?'<span class="tag good">'+t+'</span>':'<span class="tag">'+t+'</span>';}).join('');
+        var ct=redStr+' + '+blueStr;
+        return '<div class="result-card"><div class="card-header"><span class="card-num">'+redStr+' + '+blueStr+'</span><span class="card-score">'+r.score+'分</span></div><div class="card-details">'+tagHtml+'</div><button data-copy="'+ct+'" class="cb" style="margin-top:8px;padding:4px 10px;background:#0e639c;border:none;border-radius:4px;color:#fff;font-size:11px;cursor:pointer">复制</button></div>';
+    }).join('');
+    var cbs = rg.querySelectorAll('.cb');
+    for(var i=0;i<cbs.length;i++)(function(b){b.addEventListener('click',function(){if(vscode)vscode.postMessage({command:'copy',text:b.getAttribute('data-copy')});});})(cbs[i]);
+}
+function showToast() {
+    var t = document.getElementById('toast');
+    t.style.display = 'block';
+    setTimeout(function(){ t.style.display = 'none'; }, 2000);
+}
+})();
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 排三口诀实战工具 HTML
+ * 基于彩民流传的 4 类口诀，结合最新一期开奖做实战推导
+ */
+function getPl3FormulaHtml(latest, history) {
+    // 最新一期号码
+    const latestNums = latest ? latest.num : [0, 0, 0];
+    const latestPeriod = latest ? latest.period : '—';
+    const latestDate = latest ? latest.date : '—';
+    const [bai, shi, ge] = latestNums;
+
+    // ===== 1. 十位杀号口诀表 =====
+    const shiKillMap = {
+        0: 0, 1: 8, 2: 6, 3: 4, 4: 7,
+        5: 9, 6: 1, 7: 2, 8: 4, 9: 6
+    };
+    const shiKillNum = shiKillMap[shi] !== undefined ? shiKillMap[shi] : null;
+
+    // ===== 2. 互补配对 =====
+    const complementMap = { 0: 5, 1: 6, 2: 7, 3: 8, 4: 9, 5: 0, 6: 1, 7: 2, 8: 3, 9: 4 };
+    const complementResult = latestNums.map(n => complementMap[n]);
+
+    // 数字联动规则
+    const linkageRules = [
+        { name: '9追4、4恋9', test: (nums) => nums.includes(4) || nums.includes(9) ? '关注 4 或 9' : null },
+        { name: '遇5填0', test: (nums) => nums.includes(5) ? '关注 0' : null },
+        { name: '643金三角', test: (nums) => {
+            const cnt = [6,4,3].filter(n => nums.includes(n)).length;
+            return cnt >= 2 ? '关注 6/4/3 中缺失的号码' : null;
+        }},
+        { name: '7前后带1', test: (nums) => nums.includes(7) ? '关注 1' : null },
+        { name: '24配8', test: (nums) => (nums.includes(2) || nums.includes(4)) ? '关注 8' : null }
+    ];
+    const linkageHits = linkageRules.map(r => ({ name: r.name, result: r.test(latestNums) })).filter(r => r.result);
+
+    // ===== 3. 形态判断 =====
+    const oddCount = latestNums.filter(n => n % 2 === 1).length;
+    const evenCount = 3 - oddCount;
+    const bigCount = latestNums.filter(n => n >= 5).length;
+    const smallCount = 3 - bigCount;
+    const span = Math.max.apply(null, latestNums) - Math.min.apply(null, latestNums);
+    const sum = latestNums.reduce((a, b) => a + b, 0);
+    const isRepeat = new Set(latestNums).size < 3; // 有对子或豹子
+    const isLeopard = new Set(latestNums).size === 1; // 豹子
+
+    // 和值反弹判断（看最近5期）
+    let sumTrend = [];
+    if (history.length >= 6) {
+        for (let i = history.length - 5; i < history.length; i++) {
+            sumTrend.push(history[i].num.reduce((a, b) => a + b, 0));
+        }
+    }
+    const recentSmallCount = sumTrend.filter(s => s < 14).length; // 14以下算小和值
+    const sumRebound = recentSmallCount >= 3 ? '连续小和值，防反弹（和值可能变大）' : (recentSmallCount <= 1 ? '和值正常，无明显反弹信号' : '和值波动中，需结合其他指标');
+
+    // ===== 4. 试机号关联 =====
+    // 试机号是排三特有的"试开号码"，用户输入后做关联推导
+    // 页面上提供输入框，让用户输入试机号后实时推导
+
+    // ===== 5. 基于口诀生成推荐号码 =====
+    // 每位候选号码池：0-9，按口诀规则加减分
+    function genRecommendation() {
+        // 每位评分：基础0分，口诀命中加分
+        const posScores = [
+            new Array(10).fill(0), // 百位
+            new Array(10).fill(0), // 十位
+            new Array(10).fill(0)  // 个位
+        ];
+        const reasons = [[], [], []]; // 每位每个号码的命中理由
+
+        // 规则1：十位杀号 → 全位排除（杀号在该位直接扣大分，其他位轻度扣分）
+        if (shiKillNum !== null) {
+            for (let p = 0; p < 3; p++) {
+                posScores[p][shiKillNum] -= 30;
+                reasons[p][shiKillNum] = (reasons[p][shiKillNum] || []) ;
+                reasons[p][shiKillNum].push('十位杀号(口诀)');
+            }
+        }
+
+        // 规则2：互补配对 → 每位的互补数加分
+        for (let p = 0; p < 3; p++) {
+            const comp = complementMap[latestNums[p]];
+            posScores[p][comp] += 20;
+            reasons[p][comp] = (reasons[p][comp] || []);
+            reasons[p][comp].push('互补配对(' + latestNums[p] + '↔' + comp + ')');
+        }
+
+        // 规则3：数字联动 → 命中规则的号码在所有位加分
+        linkageHits.forEach(h => {
+            // 提取号码：从 result 字符串里提取数字
+            const nums = h.result.match(/\d/g) || [];
+            const uniqueNums = [...new Set(nums.map(Number))];
+            uniqueNums.forEach(n => {
+                for (let p = 0; p < 3; p++) {
+                    posScores[p][n] += 12;
+                    reasons[p][n] = (reasons[p][n] || []);
+                    reasons[p][n].push(h.name);
+                }
+            });
+        });
+
+        // 规则4：形态约束
+        // 奇偶比：推荐"一奇两偶"或"两奇一偶"
+        // 不强制每位，但奇偶极端的号码降权
+        // 大小比：推荐"一小两大"或"两大一小"
+        // 跨度：推荐跨度1-8，避免豹子
+
+        // 规则5：和值反弹
+        // 若连续小和值，则大号码（5-9）加分
+        if (recentSmallCount >= 3) {
+            for (let p = 0; p < 3; p++) {
+                for (let n = 5; n <= 9; n++) {
+                    posScores[p][n] += 8;
+                    reasons[p][n] = (reasons[p][n] || []);
+                    reasons[p][n].push('和值反弹(大号)');
+                }
+            }
+        } else if (recentSmallCount <= 1 && sumTrend.length >= 3) {
+            // 近期偏大，小号码略加分
+            for (let p = 0; p < 3; p++) {
+                for (let n = 0; n <= 4; n++) {
+                    posScores[p][n] += 5;
+                    reasons[p][n] = (reasons[p][n] || []);
+                    reasons[p][n].push('和值回落(小号)');
+                }
+            }
+        }
+
+        // 规则6：重号 +5（上期同位号码）
+        for (let p = 0; p < 3; p++) {
+            posScores[p][latestNums[p]] += 5;
+            reasons[p][latestNums[p]] = (reasons[p][latestNums[p]] || []);
+            reasons[p][latestNums[p]].push('重号');
+        }
+
+        // 规则7：邻号 +4（上期同位 ±1）
+        for (let p = 0; p < 3; p++) {
+            if (latestNums[p] > 0) {
+                posScores[p][latestNums[p] - 1] += 4;
+                reasons[p][latestNums[p] - 1] = (reasons[p][latestNums[p] - 1] || []);
+                reasons[p][latestNums[p] - 1].push('邻号');
+            }
+            if (latestNums[p] < 9) {
+                posScores[p][latestNums[p] + 1] += 4;
+                reasons[p][latestNums[p] + 1] = (reasons[p][latestNums[p] + 1] || []);
+                reasons[p][latestNums[p] + 1].push('邻号');
+            }
+        }
+
+        // 每位按分数排序，取 TOP 候选
+        const posRanked = posScores.map((scores, p) => {
+            return scores.map((s, n) => ({
+                num: n,
+                score: s,
+                reasons: reasons[p][n] || []
+            })).sort((a, b) => b.score - a.score);
+        });
+
+        // 单注推荐：每位取 TOP1，但要校验形态（奇偶/大小/跨度/和值）
+        // 生成多组候选（每位 TOP3 笛卡尔积），按形态得分排序
+        const candidates = [];
+        const topK = 3;
+        function backtrack(depth, current) {
+            if (depth === 3) {
+                // 形态校验
+                const cOdd = current.filter(n => n % 2 === 1).length;
+                const cBig = current.filter(n => n >= 5).length;
+                const cSpan = Math.max.apply(null, current) - Math.min.apply(null, current);
+                const cSum = current.reduce((a, b) => a + b, 0);
+                const isLeopard = new Set(current).size === 1;
+                let shapeScore = 0;
+                // 奇偶：1奇2偶 或 2奇1偶 加分
+                if (cOdd === 1 || cOdd === 2) shapeScore += 15;
+                // 大小：1大2小 或 2大1小 加分
+                if (cBig === 1 || cBig === 2) shapeScore += 15;
+                // 跨度 1-8 加分
+                if (cSpan >= 1 && cSpan <= 8) shapeScore += 10;
+                if (isLeopard) shapeScore -= 20; // 豹子降权
+                // 和值合理范围 8-20
+                if (cSum >= 8 && cSum <= 20) shapeScore += 10;
+                // 总分 = 各位口诀分 + 形态分
+                const formulaScore = current.reduce((sum, n, p) => sum + (posRanked[p].find(x => x.num === n) ? posRanked[p].find(x => x.num === n).score : 0), 0);
+                candidates.push({ combo: [...current], formulaScore, shapeScore, total: formulaScore + shapeScore });
+                return;
+            }
+            for (let i = 0; i < Math.min(topK, posRanked[depth].length); i++) {
+                current.push(posRanked[depth][i].num);
+                backtrack(depth + 1, current);
+                current.pop();
+            }
+        }
+        backtrack(0, []);
+        candidates.sort((a, b) => b.total - a.total);
+
+        // 去重取 TOP5 单注
+        const seen = new Set();
+        const topSingles = [];
+        for (const c of candidates) {
+            const key = c.combo.join('');
+            if (!seen.has(key)) { seen.add(key); topSingles.push(c); if (topSingles.length >= 5) break; }
+        }
+
+        // 复式推荐：每位生成 4 种规格（2×2×2 / 3×3×3 / 4×4×4 / 5×5×5）
+        // 规则：每位取评分前 k 个（排除负分太多的号码）
+        const compoundList = [];
+        for (let k = 2; k <= 5; k++) {
+            const perPos = posRanked.map(ranked => {
+                // 取评分前 k 个，过滤掉显著负分（< -10）的号码
+                const filtered = ranked.filter(x => x.score > -10);
+                return filtered.slice(0, k).map(x => x.num);
+            });
+            const totalCombos = perPos.reduce((a, b) => a * b.length, 1);
+            compoundList.push({
+                k: k,
+                label: k + '×' + k + '×' + k,
+                perPos: perPos,
+                totalCombos: totalCombos
+            });
+        }
+
+        return { topSingles, compoundList, posRanked };
+    }
+
+    const recommend = genRecommendation();
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>排列三必背口诀</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Microsoft YaHei',sans-serif;background:#1e1e1e;color:#d4d4d4;padding:20px;line-height:1.6}
+.header{text-align:center;margin-bottom:20px}
+.header h1{color:#feca57;font-size:26px;margin-bottom:6px}
+.header p{color:#888;font-size:13px}
+.latest-bar{display:flex;justify-content:center;align-items:center;gap:12px;background:#252526;padding:12px 20px;border-radius:10px;margin-bottom:20px;border:1px solid #333}
+.latest-bar .label{color:#888;font-size:13px}
+.latest-bar .balls{display:flex;gap:6px}
+.ball{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:16px;color:#fff}
+.ball.bai{background:#e94560}
+.ball.shi{background:#0984e3}
+.ball.ge{background:#27ae60}
+.section{background:#252526;border-radius:10px;padding:16px 20px;margin-bottom:16px;border:1px solid #333}
+.section-title{color:#feca57;font-size:15px;font-weight:bold;margin-bottom:12px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #333;padding-bottom:8px}
+.formula-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.formula-card{background:#1e1e1e;border-radius:8px;padding:14px;border-left:3px solid #feca57}
+.formula-card.kill{border-left-color:#e94560}
+.formula-card.ding{border-left-color:#27ae60}
+.formula-card.shape{border-left-color:#0984e3}
+.formula-card.try{border-left-color:#8e44ad}
+.formula-card h4{font-size:13px;margin-bottom:8px}
+.formula-card .desc{font-size:12px;color:#aaa;margin-bottom:8px}
+.formula-card .result{background:#2d2d30;padding:8px 12px;border-radius:5px;font-size:13px;color:#9cdcfe;font-weight:bold}
+.formula-card .result.hit{color:#2ecc71}
+.formula-card .result.warn{color:#feca57}
+.formula-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+.formula-table th{background:#333;color:#569cd6;padding:6px;text-align:center}
+.formula-table td{padding:6px;text-align:center;border-bottom:1px solid #333}
+.formula-table td.highlight{background:rgba(254,202,87,0.15);color:#feca57;font-weight:bold}
+.input-group{display:flex;gap:10px;align-items:center;margin-top:10px}
+.input-group input{flex:1;padding:8px 12px;background:#1e1e1e;border:1px solid #444;border-radius:5px;color:#d4d4d4;font-size:14px;outline:none}
+.input-group input:focus{border-color:#8e44ad}
+.input-group button{padding:8px 16px;background:#8e44ad;border:none;border-radius:5px;color:#fff;font-size:13px;cursor:pointer}
+.input-group button:hover{background:#6c3483}
+.try-result{margin-top:12px;display:none}
+.try-result.show{display:block}
+.disclaimer{background:rgba(231,76,60,0.1);border:1px solid rgba(231,76,60,0.3);padding:12px 16px;border-radius:8px;color:#e74c3c;font-size:12px;margin-top:16px}
+.tag{display:inline-block;padding:2px 8px;border-radius:3px;font-size:11px;margin:2px}
+.tag.hot{background:rgba(233,69,96,0.2);color:#e94560}
+.tag.cool{background:rgba(9,132,227,0.2);color:#0984e3}
+.tag.warn{background:rgba(254,202,87,0.2);color:#feca57}
+</style>
+</head>
+<body>
+<div class="header">
+<h1>📜 排列三必背口诀</h1>
+<p>彩民总结的 4 类高频实用口诀（杀号 / 定胆 / 形态 / 试机号），结合最新一期自动推导</p>
+</div>
+
+<div class="latest-bar">
+<span class="label">最新一期 第 ${latestPeriod} 期（${latestDate}）：</span>
+<div class="balls">
+<span class="ball bai">${bai}</span>
+<span class="ball shi">${shi}</span>
+<span class="ball ge">${ge}</span>
+</div>
+</div>
+
+<!-- ===== 1. 十位杀号口诀 ===== -->
+<div class="section">
+<div class="section-title">🔪 一、十位杀号口诀</div>
+<p style="color:#aaa;font-size:12px;margin-bottom:10px">规则：根据上期十位号码，杀掉（排除）对应的单个号码。</p>
+<table class="formula-table">
+<thead><tr><th>十位出</th><th>0</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th><th>9</th></tr></thead>
+<tbody><tr><td>杀号</td><td>0</td><td>8</td><td>6</td><td>4</td><td>7</td><td>9</td><td>1</td><td>2</td><td>4</td><td>6</td></tr></tbody>
+</table>
+<div class="formula-card kill" style="margin-top:12px">
+<h4>🎯 实战推导</h4>
+<div class="desc">上期十位 = <b style="color:#0984e3">${shi}</b></div>
+<div class="result ${shiKillNum !== null ? 'hit' : ''}">${shiKillNum !== null ? '本期杀号：' + shiKillNum + '（排除含此号码的组合）' : '无匹配口诀'}</div>
+</div>
+</div>
+
+<!-- ===== 2. 数字配对与定胆 ===== -->
+<div class="section">
+<div class="section-title">💎 二、数字配对与定胆口诀</div>
+<div class="formula-grid">
+<div class="formula-card ding">
+<h4>互补配对（0↔5, 1↔6, 2↔7, 3↔8, 4↔9）</h4>
+<div class="desc">上期号码的互补数，下期易出。</div>
+<div class="result hit">上期 [${bai},${shi},${ge}] → 互补关注 [${complementResult.join(',')}]</div>
+</div>
+<div class="formula-card ding">
+<h4>数字联动</h4>
+<div class="desc">9追4、4恋9、遇5填0、643金三角、7前后带1、24配8</div>
+${linkageHits.length > 0 ? '<div class="result hit">' + linkageHits.map(h => '【' + h.name + '】' + h.result).join('<br>') + '</div>' : '<div class="result warn">上期号码未命中联动规则</div>'}
+</div>
+</div>
+</div>
+
+<!-- ===== 3. 形态判断 ===== -->
+<div class="section">
+<div class="section-title">📐 三、形态判断口诀</div>
+<div class="formula-grid">
+<div class="formula-card shape">
+<h4>奇偶比</h4>
+<div class="desc">"一奇两偶走，两小一大守"</div>
+<div class="result">本期：${oddCount}奇${evenCount}偶 ${oddCount === 1 && evenCount === 2 ? '✓ 符合"一奇两偶"' : oddCount === 2 && evenCount === 1 ? '✓ 符合"两奇一偶"' : '⚠ 非常见形态'}</div>
+</div>
+<div class="formula-card shape">
+<h4>大小比</h4>
+<div class="desc">≥5 为大，&lt;5 为小</div>
+<div class="result">本期：${bigCount}大${smallCount}小 ${bigCount === 1 && smallCount === 2 ? '✓ 符合"一小两大"' : bigCount === 2 && smallCount === 1 ? '✓ 符合"两大一小"' : '⚠ 非常见形态'}</div>
+</div>
+<div class="formula-card shape">
+<h4>跨度</h4>
+<div class="desc">"跨度不出9，豹子难长寿"</div>
+<div class="result ${span <= 8 ? 'hit' : 'warn'}">本期跨度：${span} ${span <= 8 ? '✓ 在常见范围(0-8)' : '⚠ 跨度9较少见'} ${isLeopard ? '· 豹子号(罕见)' : isRepeat ? '· 有对子' : '· 六 different'}</div>
+</div>
+<div class="formula-card shape">
+<h4>和值反弹</h4>
+<div class="desc">"和值连续小后易变大"</div>
+<div class="result">本期和值：${sum}（${sum < 14 ? '小' : sum > 18 ? '大' : '中'}）<br>${sumRebound}</div>
+</div>
+</div>
+${sumTrend.length > 0 ? '<div style="margin-top:10px;font-size:12px;color:#888">最近5期和值：' + sumTrend.join(' → ') + '</div>' : ''}
+</div>
+
+<!-- ===== 4. 试机号关联 ===== -->
+<div class="section">
+<div class="section-title">🎲 四、试机号关联口诀</div>
+<p style="color:#aaa;font-size:12px;margin-bottom:10px">输入排列三试机号（3位数字），根据口诀推导下期可能形态。</p>
+<div class="input-group">
+<input type="text" id="tryInput" placeholder="输入试机号，如 386" maxlength="3">
+<button onclick="calcTry()">🔍 推导</button>
+</div>
+<div class="try-result" id="tryResult"></div>
+<table class="formula-table" style="margin-top:14px">
+<thead><tr><th>试机号</th><th>0</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th><th>9</th></tr></thead>
+<tbody><tr><td>口诀</td><td>多半无0</td><td>大半无1</td><td>必用2</td><td>选4/6</td><td>出6/9</td><td>伴1或9</td><td>有47随</td><td>见8还有0</td><td>出偶数</td><td>出1或7</td></tr></tbody>
+</table>
+</div>
+
+<!-- ===== 5. 口诀推荐号码 ===== -->
+<div class="section" style="border:1px solid rgba(254,202,87,0.4)">
+<div class="section-title" style="color:#feca57">🎯 五、口诀推荐号码</div>
+<p style="color:#aaa;font-size:12px;margin-bottom:12px">基于上述 4 类口诀规则综合评分，每位取 TOP3 候选 → 笛卡尔积 → 形态校验排序 → 取 TOP5 单注 + 复式方案</p>
+
+<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px" id="compoundDisplay"></div>
+<button class="copy-btn" style="margin-bottom:14px;padding:7px 16px;background:#0e639c;border:none;border-radius:5px;color:#fff;font-size:13px;cursor:pointer" onclick="copyAllCompound()">📋 复制全部 4 种复式方案</button>
+
+<h4 style="color:#feca57;font-size:14px;margin-bottom:10px">🏆 精选单注 TOP5（口诀分+形态分）</h4>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px" id="singlesGrid"></div>
+<button class="copy-btn" style="margin-top:12px;padding:7px 16px;background:#0e639c;border:none;border-radius:5px;color:#fff;font-size:13px;cursor:pointer" onclick="copyAllSingles()">📋 复制全部单注</button>
+
+<div style="margin-top:14px;background:#1e1e1e;border-radius:8px;padding:14px">
+<h4 style="color:#569cd6;font-size:13px;margin-bottom:10px">📊 每位候选号码评分明细</h4>
+<table class="formula-table">
+<thead><tr><th>排名</th><th>百位</th><th>分数</th><th>命中口诀</th><th>十位</th><th>分数</th><th>命中口诀</th><th>个位</th><th>分数</th><th>命中口诀</th></tr></thead>
+<tbody id="scoreTableBody"></tbody>
+</table>
+</div>
+</div>
+
+<div class="disclaimer">
+⚠️ <b>免责声明：</b>以上口诀来源于彩民经验总结，无统计学严格证明。彩票为独立随机事件，口诀仅供娱乐参考，请理性购彩。
+</div>
+
+<script>
+// ===== 渲染推荐号码 =====
+var recommend = ${JSON.stringify(recommend)};
+var posLabels = ['百位', '十位', '个位'];
+var ballColors = ['#e94560', '#0984e3', '#27ae60'];
+
+// 渲染复式方案（4 种规格）
+(function() {
+    var html = '';
+    recommend.compoundList.forEach(function(comp, idx) {
+        html += '<div style="flex:1;min-width:200px;background:#1e1e1e;border-radius:8px;padding:14px;border-left:3px solid ' + (idx === 0 ? '#2ecc71' : idx === 1 ? '#feca57' : idx === 2 ? '#e94560' : '#8e44ad') + '">';
+        html += '<h4 style="color:' + (idx === 0 ? '#2ecc71' : idx === 1 ? '#feca57' : idx === 2 ? '#e94560' : '#8e44ad') + ';font-size:13px;margin-bottom:6px">📋 ' + comp.label + '</h4>';
+        html += '<div style="font-size:11px;color:#888;margin-bottom:8px">总注数：<b style="color:#feca57">' + comp.totalCombos + '</b> 注</div>';
+        comp.perPos.forEach(function(picks, p) {
+            html += '<div style="margin:5px 0;display:flex;align-items:center;gap:6px">';
+            html += '<span style="color:' + ballColors[p] + ';font-weight:bold;font-size:12px;width:36px">' + posLabels[p] + '：</span>';
+            picks.forEach(function(n) {
+                html += '<span style="display:inline-block;width:24px;height:24px;line-height:24px;text-align:center;border-radius:50%;background:' + ballColors[p] + ';color:#fff;font-weight:bold;font-size:12px">' + n + '</span>';
+            });
+            html += '</div>';
+        });
+        html += '<button class="copy-btn" style="margin-top:8px;padding:5px 12px;background:#0e639c;border:none;border-radius:4px;color:#fff;font-size:11px;cursor:pointer" onclick="copyOneCompound(' + idx + ', this)">📋 复制</button>';
+        html += '</div>';
+    });
+    document.getElementById('compoundDisplay').innerHTML = html;
+})();
+
+// 渲染单注 TOP5
+(function() {
+    var html = '';
+    recommend.topSingles.forEach(function(item, i) {
+        var combo = item.combo;
+        var isTop = i === 0;
+        html += '<div style="background:#1e1e1e;border-radius:8px;padding:12px;text-align:center;border:1px solid ' + (isTop ? 'rgba(233,69,96,0.5)' : '#333') + (isTop ? ';background:rgba(233,69,96,0.08)' : '') + '">';
+        html += '<div style="font-size:11px;color:#888;margin-bottom:6px">推荐 #' + (i + 1) + (isTop ? ' 🥇 最佳' : '') + '</div>';
+        html += '<div style="font-size:22px;font-weight:bold;letter-spacing:4px;margin-bottom:6px">';
+        combo.forEach(function(n, p) {
+            html += '<span style="color:' + ballColors[p] + '">' + n + '</span>';
+            if (p < 2) html += ' ';
+        });
+        html += '</div>';
+        html += '<div style="font-size:11px;color:#aaa">口诀分:' + item.formulaScore + ' | 形态分:' + item.shapeScore + ' | 总分:' + item.total + '</div>';
+        html += '<button class="copy-btn" style="margin-top:6px;padding:3px 10px;background:#0e639c;border:none;border-radius:4px;color:#fff;font-size:11px;cursor:pointer" onclick="copySingle(' + String.fromCharCode(39) + combo.join('') + String.fromCharCode(39) + ', this)">复制</button>';
+        html += '</div>';
+    });
+    document.getElementById('singlesGrid').innerHTML = html;
+})();
+
+// 渲染评分明细表
+(function() {
+    var html = '';
+    var maxRank = 5;
+    for (var i = 0; i < maxRank; i++) {
+        var bai = recommend.posRanked[0][i] || {num:'-',score:0,reasons:[]};
+        var shi = recommend.posRanked[1][i] || {num:'-',score:0,reasons:[]};
+        var ge = recommend.posRanked[2][i] || {num:'-',score:0,reasons:[]};
+        html += '<tr>';
+        html += '<td style="color:#feca57;font-weight:bold">' + (i + 1) + '</td>';
+        html += '<td style="color:#e94560;font-weight:bold;font-size:14px">' + bai.num + '</td>';
+        html += '<td>' + bai.score + '</td>';
+        html += '<td style="font-size:11px;color:#888">' + (bai.reasons || []).join(',') + '</td>';
+        html += '<td style="color:#0984e3;font-weight:bold;font-size:14px">' + shi.num + '</td>';
+        html += '<td>' + shi.score + '</td>';
+        html += '<td style="font-size:11px;color:#888">' + (shi.reasons || []).join(',') + '</td>';
+        html += '<td style="color:#27ae60;font-weight:bold;font-size:14px">' + ge.num + '</td>';
+        html += '<td>' + ge.score + '</td>';
+        html += '<td style="font-size:11px;color:#888">' + (ge.reasons || []).join(',') + '</td>';
+        html += '</tr>';
+    }
+    document.getElementById('scoreTableBody').innerHTML = html;
+})();
+
+// 复制函数
+function copySingle(combo, btn) {
+    var text = '排三口诀推荐：' + combo.split('').join(' ');
+    copyToClipboard(text);
+    if (btn) { var old = btn.innerHTML; btn.innerHTML = '✅ 已复制'; setTimeout(function(){ btn.innerHTML = old; }, 1500); }
+}
+function copyAllSingles() {
+    var lines = recommend.topSingles.map(function(item, i) {
+        return String(i + 1).padStart(2, '0') + '. ' + item.combo.join(' ') + ' (总分' + item.total + ')';
+    });
+    copyToClipboard('排三口诀推荐单注TOP' + recommend.topSingles.length + '\\n' + lines.join('\\n'));
+}
+function copyOneCompound(idx, btn) {
+    var comp = recommend.compoundList[idx];
+    var parts = comp.perPos.map(function(picks, p) {
+        return posLabels[p] + '：' + picks.join(' ');
+    });
+    var text = '排三口诀 ' + comp.label + ' 复式（' + comp.totalCombos + '注）\\n' + parts.join('\\n');
+    copyToClipboard(text);
+    if (btn) { var old = btn.innerHTML; btn.innerHTML = '✅ 已复制'; setTimeout(function(){ btn.innerHTML = old; }, 1500); }
+}
+function copyAllCompound() {
+    var lines = ['排三口诀复式方案（4 种规格）'];
+    recommend.compoundList.forEach(function(comp) {
+        lines.push('\\n【' + comp.label + ' · ' + comp.totalCombos + '注】');
+        comp.perPos.forEach(function(picks, p) {
+            lines.push('  ' + posLabels[p] + '：' + picks.join(' '));
+        });
+    });
+    copyToClipboard(lines.join('\\n'));
+}
+function copyToClipboard(text) {
+    try { acquireVsCodeApi().postMessage({ command: 'copy', text: text }); } catch(e) {}
+}
+
+function calcTry() {
+    var input = document.getElementById('tryInput').value.trim();
+    var resultDiv = document.getElementById('tryResult');
+    if (!input || input.length < 1 || !/^\\d+$/.test(input)) {
+        resultDiv.className = 'try-result';
+        resultDiv.innerHTML = '<p style="color:#f44;padding:8px">请输入有效的数字</p>';
+        resultDiv.classList.add('show');
+        return;
+    }
+    var rules = {
+        '0': '多半没有0（下期可能不出0）',
+        '1': '大半不见1（下期可能不出1）',
+        '2': '一定要用2（下期关注2）',
+        '3': '不如选4/6（下期关注4或6）',
+        '4': '常会出6/9（下期关注6或9）',
+        '5': '常伴1或9（下期关注1或9）',
+        '6': '多有47随（下期关注4或7）',
+        '7': '试8见还有0（下期关注8或0）',
+        '8': '常出偶数字（下期关注偶数0/2/4/6/8）',
+        '9': '能减出1或7（下期关注1或7）'
+    };
+    var html = '<div style="background:#1e1e1e;border-radius:8px;padding:14px;border-left:3px solid #8e44ad">';
+    html += '<h4 style="color:#8e44ad;margin-bottom:10px">试机号 ' + input + ' 推导结果</h4>';
+    var digits = input.split('');
+    var seen = {};
+    digits.forEach(function(d) {
+        if (!seen[d] && rules[d]) {
+            html += '<div style="margin:6px 0;padding:6px 10px;background:#2d2d30;border-radius:4px">';
+            html += '<span style="color:#feca57;font-weight:bold">试机号含 ' + d + '：</span>';
+            html += '<span style="color:#9cdcfe">' + rules[d] + '</span>';
+            html += '</div>';
+            seen[d] = true;
+        }
+    });
+    html += '</div>';
+    resultDiv.innerHTML = html;
+    resultDiv.classList.add('show');
+}
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 排列五口诀实战工具 HTML
+ * 排五规则：5 位数字（万千百十个），每位置 0-9
+ */
+function getPl5FormulaHtml(latest, history) {
+    const latestNums = latest ? latest.num : [0, 0, 0, 0, 0];
+    const latestPeriod = latest ? latest.period : '—';
+    const latestDate = latest ? latest.date : '—';
+    const [wan, qian, bai, shi, ge] = latestNums;
+
+    // ===== 1. 趣味联想口诀 =====
+    // 数字联动规则
+    const linkageRules = [
+        { name: '聚堆喜对配8', test: (nums) => {
+            // 检测连号或对子
+            const sorted = [...nums].sort();
+            let consecutive = 0, pairs = 0;
+            for (let i = 0; i < sorted.length - 1; i++) {
+                if (sorted[i+1] - sorted[i] === 1) consecutive++;
+                if (sorted[i+1] === sorted[i]) pairs++;
+            }
+            if (consecutive > 0 || pairs > 0) return '有聚堆/对子，关注配8';
+            return null;
+        }},
+        { name: '9449好朋友', test: (nums) => {
+            const has9 = nums.includes(9), has4 = nums.includes(4);
+            if (has9 && has4) return '9和4已联动，竖连99后易出7';
+            if (has9) return '有9，关注4';
+            if (has4) return '有4，关注9';
+            return null;
+        }},
+        { name: '50中间有座桥', test: (nums) => {
+            if (nums.includes(5)) return '有5，关注0';
+            if (nums.includes(0)) return '有0，关注5';
+            return null;
+        }},
+        { name: '643金三角', test: (nums) => {
+            const cnt = [6,4,3].filter(n => nums.includes(n)).length;
+            if (cnt >= 2) return '643金三角命中' + cnt + '个，关注缺失号码';
+            return null;
+        }},
+        { name: '7前7后常有1', test: (nums) => nums.includes(7) ? '有7，关注1' : null },
+        { name: '8998似双碟', test: (nums) => {
+            if (nums.includes(8) && nums.includes(9)) return '8和9对称出现，关注延续';
+            return null;
+        }}
+    ];
+    const linkageHits = linkageRules.map(r => ({ name: r.name, result: r.test(latestNums) })).filter(r => r.result);
+
+    // ===== 2. 杀号技巧口诀 =====
+    // 基础杀尾
+    const periodTail = parseInt(String(latestPeriod).slice(-1));
+    const sumTail = latestNums.reduce((a, b) => a + b, 0) % 10;
+    const squareSumTail = latestNums.reduce((a, b) => a + b * b, 0) % 10;
+    // 计算杀尾
+    const calcKill1 = (bai * 7 + ge * 5) % 10;
+    const prevShi = history.length >= 2 ? (history[history.length - 2].num[3] || 0) : 0;
+    const currShi = shi;
+    const calcKill2 = (prevShi + currShi) % 10;
+    const span = Math.max.apply(null, latestNums) - Math.min.apply(null, latestNums);
+    const sum = latestNums.reduce((a, b) => a + b, 0);
+    const calcKill3 = Math.floor((sum + span) / 3) % 10;
+    const calcKill4 = Math.floor((sum + span) / 4) % 10;
+    const calcKill5 = Math.floor((sum + span) / 5) % 10;
+    // 对应杀号 0-9 → 8527419630
+    const correspondMap = [8,5,2,7,4,1,9,6,3,0];
+    const killByCorrespond = latestNums.map(n => correspondMap[n]);
+    // 位置杀号：上期第4位（index 3）
+    const killPos4 = shi;
+    // 跨质号（跨度是否质数 2,3,5,7）
+    const isSpanPrime = [2,3,5,7].includes(span);
+
+    // ===== 3. 组合选号口诀 =====
+    const oddCount = latestNums.filter(n => n % 2 === 1).length;
+    const evenCount = 5 - oddCount;
+    const bigCount = latestNums.filter(n => n >= 5).length;
+    const smallCount = 5 - bigCount;
+    const isRepeat = new Set(latestNums).size < 5;
+    const isLeopard = new Set(latestNums).size === 1;
+
+    // 最近5期和值
+    let sumTrend = [];
+    if (history.length >= 6) {
+        for (let i = history.length - 5; i < history.length; i++) {
+            sumTrend.push(history[i].num.reduce((a, b) => a + b, 0));
+        }
+    }
+    // 排五和值合理范围 9-16，避开 5-7 和 17-20
+    const sumStatus = sum < 8 ? '偏低(避开5-7区)' : sum > 16 ? '偏高(避开17-20区)' : '在重点区(9-16)';
+
+    // ===== 4. 推荐号码生成 =====
+    function genRecommendation() {
+        const posScores = [
+            new Array(10).fill(0),
+            new Array(10).fill(0),
+            new Array(10).fill(0),
+            new Array(10).fill(0),
+            new Array(10).fill(0)
+        ];
+        const reasons = [[], [], [], [], []];
+        const posLabels5 = ['万位', '千位', '百位', '十位', '个位'];
+
+        // 规则1：杀号 → 对应号码在所有位降权
+        const allKillNums = [periodTail, sumTail, squareSumTail, calcKill1, calcKill2, calcKill3, calcKill4, calcKill5, killPos4];
+        const killCount = {};
+        allKillNums.forEach(n => { killCount[n] = (killCount[n] || 0) + 1; });
+        Object.entries(killCount).forEach(([n, cnt]) => {
+            const num = +n;
+            for (let p = 0; p < 5; p++) {
+                posScores[p][num] -= cnt * 8;
+                reasons[p][num] = (reasons[p][num] || []);
+                reasons[p][num].push('杀尾×' + cnt);
+            }
+        });
+        // 对应杀号
+        killByCorrespond.forEach(n => {
+            for (let p = 0; p < 5; p++) {
+                posScores[p][n] -= 5;
+                reasons[p][n] = (reasons[p][n] || []);
+                reasons[p][n].push('对应杀号');
+            }
+        });
+
+        // 规则2：数字联动 → 命中规则的号码在所有位加分
+        linkageHits.forEach(h => {
+            const nums = h.result.match(/\d/g) || [];
+            const uniqueNums = [...new Set(nums.map(Number))];
+            uniqueNums.forEach(n => {
+                for (let p = 0; p < 5; p++) {
+                    posScores[p][n] += 10;
+                    reasons[p][n] = (reasons[p][n] || []);
+                    reasons[p][n].push(h.name);
+                }
+            });
+        });
+
+        // 规则3：50 桥（互补）→ 5 和 0 互相加分
+        if (latestNums.includes(5)) {
+            for (let p = 0; p < 5; p++) {
+                posScores[p][0] += 15;
+                reasons[p][0] = (reasons[p][0] || []);
+                reasons[p][0].push('50桥(5→0)');
+            }
+        }
+        if (latestNums.includes(0)) {
+            for (let p = 0; p < 5; p++) {
+                posScores[p][5] += 15;
+                reasons[p][5] = (reasons[p][5] || []);
+                reasons[p][5].push('50桥(0→5)');
+            }
+        }
+
+        // 规则4：奇偶大小形态约束
+        // 推荐 2奇1偶 + 2大1小 的变体（5位：2-3奇，2-3大）
+        // 偏好"中和"形态，极端形态降权
+        // 不强制每位，整体约束
+
+        // 规则5：和值范围约束
+        // 排五和值重点 9-16，避开 5-7 和 17-20
+        // 若当前和值偏低，大号码（5-9）加分
+        if (sum < 9) {
+            for (let p = 0; p < 5; p++) {
+                for (let n = 5; n <= 9; n++) {
+                    posScores[p][n] += 6;
+                    reasons[p][n] = (reasons[p][n] || []);
+                    reasons[p][n].push('和值回升');
+                }
+            }
+        } else if (sum > 16) {
+            for (let p = 0; p < 5; p++) {
+                for (let n = 0; n <= 4; n++) {
+                    posScores[p][n] += 6;
+                    reasons[p][n] = (reasons[p][n] || []);
+                    reasons[p][n].push('和值回落');
+                }
+            }
+        }
+
+        // 规则6：重号 +5（上期同位）
+        for (let p = 0; p < 5; p++) {
+            posScores[p][latestNums[p]] += 5;
+            reasons[p][latestNums[p]] = (reasons[p][latestNums[p]] || []);
+            reasons[p][latestNums[p]].push('重号');
+        }
+
+        // 规则7：邻号 +4（上期同位 ±1）
+        for (let p = 0; p < 5; p++) {
+            if (latestNums[p] > 0) {
+                posScores[p][latestNums[p] - 1] += 4;
+                reasons[p][latestNums[p] - 1] = (reasons[p][latestNums[p] - 1] || []);
+                reasons[p][latestNums[p] - 1].push('邻号');
+            }
+            if (latestNums[p] < 9) {
+                posScores[p][latestNums[p] + 1] += 4;
+                reasons[p][latestNums[p] + 1] = (reasons[p][latestNums[p] + 1] || []);
+                reasons[p][latestNums[p] + 1].push('邻号');
+            }
+        }
+
+        // 每位排序
+        const posRanked = posScores.map((scores, p) => {
+            return scores.map((s, n) => ({
+                num: n,
+                score: s,
+                reasons: reasons[p][n] || []
+            })).sort((a, b) => b.score - a.score);
+        });
+
+        // 单注推荐：每位取 TOP3，笛卡尔积（5^5=3125 太多，取 TOP2 = 32 组合理）
+        const candidates = [];
+        const topK = 2;
+        function backtrack(depth, current) {
+            if (depth === 5) {
+                const cOdd = current.filter(n => n % 2 === 1).length;
+                const cBig = current.filter(n => n >= 5).length;
+                const cSpan = Math.max.apply(null, current) - Math.min.apply(null, current);
+                const cSum = current.reduce((a, b) => a + b, 0);
+                const isLeopard = new Set(current).size === 1;
+                let shapeScore = 0;
+                // 奇偶：2-3奇 加分
+                if (cOdd >= 2 && cOdd <= 3) shapeScore += 12;
+                // 大小：2-3大 加分
+                if (cBig >= 2 && cBig <= 3) shapeScore += 12;
+                // 跨度合理范围
+                if (cSpan >= 2 && cSpan <= 8) shapeScore += 8;
+                if (isLeopard) shapeScore -= 25;
+                // 和值重点区 9-16
+                if (cSum >= 9 && cSum <= 16) shapeScore += 15;
+                else if (cSum >= 5 && cSum <= 7) shapeScore -= 8;
+                else if (cSum >= 17 && cSum <= 20) shapeScore -= 8;
+                const formulaScore = current.reduce((sum, n, p) => sum + (posRanked[p].find(x => x.num === n) ? posRanked[p].find(x => x.num === n).score : 0), 0);
+                candidates.push({ combo: [...current], formulaScore, shapeScore, total: formulaScore + shapeScore });
+                return;
+            }
+            for (let i = 0; i < Math.min(topK, posRanked[depth].length); i++) {
+                current.push(posRanked[depth][i].num);
+                backtrack(depth + 1, current);
+                current.pop();
+            }
+        }
+        backtrack(0, []);
+        candidates.sort((a, b) => b.total - a.total);
+
+        // 去重取 TOP5
+        const seen = new Set();
+        const topSingles = [];
+        for (const c of candidates) {
+            const key = c.combo.join('');
+            if (!seen.has(key)) { seen.add(key); topSingles.push(c); if (topSingles.length >= 5) break; }
+        }
+
+        // 复式：每位 TOP k（k=2,3,4,5）
+        const compoundList = [];
+        for (let k = 2; k <= 5; k++) {
+            const perPos = posRanked.map(ranked => {
+                const filtered = ranked.filter(x => x.score > -15);
+                return filtered.slice(0, k).map(x => x.num);
+            });
+            const totalCombos = perPos.reduce((a, b) => a * b.length, 1);
+            compoundList.push({
+                k: k,
+                label: posLabels5.map(() => k).join('×'),
+                perPos: perPos,
+                totalCombos: totalCombos
+            });
+        }
+
+        return { topSingles, compoundList, posRanked };
+    }
+
+    const recommend = genRecommendation();
+    const posLabels5 = ['万位', '千位', '百位', '十位', '个位'];
+    const ballColors5 = ['#e94560', '#0984e3', '#27ae60', '#8e44ad', '#f39c12'];
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>排列五口诀</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Microsoft YaHei',sans-serif;background:#1e1e1e;color:#d4d4d4;padding:20px;line-height:1.6}
+.header{text-align:center;margin-bottom:20px}
+.header h1{color:#0984e3;font-size:26px;margin-bottom:6px}
+.header p{color:#888;font-size:13px}
+.latest-bar{display:flex;justify-content:center;align-items:center;gap:12px;background:#252526;padding:12px 20px;border-radius:10px;margin-bottom:20px;border:1px solid #333}
+.latest-bar .label{color:#888;font-size:13px}
+.latest-bar .balls{display:flex;gap:5px}
+.ball{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:15px;color:#fff}
+.ball.wan{background:#e94560}
+.ball.qian{background:#0984e3}
+.ball.bai{background:#27ae60}
+.ball.shi{background:#8e44ad}
+.ball.ge{background:#f39c12}
+.section{background:#252526;border-radius:10px;padding:16px 20px;margin-bottom:16px;border:1px solid #333}
+.section-title{color:#0984e3;font-size:15px;font-weight:bold;margin-bottom:12px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #333;padding-bottom:8px}
+.formula-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.formula-card{background:#1e1e1e;border-radius:8px;padding:14px;border-left:3px solid #0984e3}
+.formula-card h4{font-size:13px;margin-bottom:8px}
+.formula-card .desc{font-size:12px;color:#aaa;margin-bottom:8px}
+.formula-card .result{background:#2d2d30;padding:8px 12px;border-radius:5px;font-size:13px;color:#9cdcfe;font-weight:bold}
+.formula-card .result.hit{color:#2ecc71}
+.formula-card .result.warn{color:#feca57}
+.formula-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+.formula-table th{background:#333;color:#569cd6;padding:6px;text-align:center}
+.formula-table td{padding:6px;text-align:center;border-bottom:1px solid #333}
+.disclaimer{background:rgba(231,76,60,0.1);border:1px solid rgba(231,76,60,0.3);padding:12px 16px;border-radius:8px;color:#e74c3c;font-size:12px;margin-top:16px}
+</style>
+</head>
+<body>
+<div class="header">
+<h1>🎲 排列五口诀</h1>
+<p>彩民总结的 3 类高频实用口诀（数字关联 / 杀号 / 组合选号），结合最新一期自动推导</p>
+</div>
+
+<div class="latest-bar">
+<span class="label">最新一期 第 ${latestPeriod} 期（${latestDate}）：</span>
+<div class="balls">
+<span class="ball wan">${wan}</span>
+<span class="ball qian">${qian}</span>
+<span class="ball bai">${bai}</span>
+<span class="ball shi">${shi}</span>
+<span class="ball ge">${ge}</span>
+</div>
+</div>
+
+<!-- ===== 1. 趣味联想口诀 ===== -->
+<div class="section">
+<div class="section-title">🎯 一、趣味联想口诀（数字关联）</div>
+<div class="formula-grid">
+${linkageRules.map(r => {
+    const result = r.test(latestNums);
+    return '<div class="formula-card"><h4>' + r.name + '</h4><div class="desc">' + (
+        r.name === '聚堆喜对配8' ? '号码易聚堆(连号)、出对子，遇3配8' :
+        r.name === '9449好朋友' ? '9和4常联动，竖连99后易出7' :
+        r.name === '50中间有座桥' ? '遇5填0，遇0填5' :
+        r.name === '643金三角' ? '6、4、3易组合' :
+        r.name === '7前7后常有1' ? '7前后或斜连易带1' :
+        '8和9常对称出现'
+    ) + '</div><div class="result ' + (result ? 'hit' : 'warn') + '">' + (result || '未命中') + '</div></div>';
+}).join('')}
+</div>
+</div>
+
+<!-- ===== 2. 杀号技巧口诀 ===== -->
+<div class="section">
+<div class="section-title">🔪 二、杀号技巧口诀</div>
+<h4 style="color:#e94560;font-size:13px;margin-bottom:8px">基础杀尾</h4>
+<table class="formula-table">
+<thead><tr><th>杀尾类型</th><th>计算方法</th><th>结果</th></tr></thead>
+<tbody>
+<tr><td>期号尾</td><td>当期期号 ${latestPeriod} 的尾数</td><td style="color:#e94560;font-weight:bold">${periodTail}</td></tr>
+<tr><td>和值尾</td><td>上期和值 ${sum} 的尾数</td><td style="color:#e94560;font-weight:bold">${sumTail}</td></tr>
+<tr><td>平方和尾</td><td>各位平方和 ${latestNums.map(n => n + '²').join('+')} = ${latestNums.reduce((a, b) => a + b * b, 0)} 的尾数</td><td style="color:#e94560;font-weight:bold">${squareSumTail}</td></tr>
+</tbody>
+</table>
+
+<h4 style="color:#e94560;font-size:13px;margin:12px 0 8px">计算杀尾</h4>
+<table class="formula-table">
+<thead><tr><th>杀尾类型</th><th>计算方法</th><th>结果</th></tr></thead>
+<tbody>
+<tr><td>百×7+个×5</td><td>${bai}×7+${ge}×5 = ${bai * 7 + ge * 5} 取尾</td><td style="color:#e94560;font-weight:bold">${calcKill1}</td></tr>
+<tr><td>上两期十位和</td><td>上期十${prevShi}+本期十${currShi} = ${prevShi + currShi} 取尾</td><td style="color:#e94560;font-weight:bold">${calcKill2}</td></tr>
+<tr><td>(和值+跨度)÷3</td><td>(${sum}+${span})÷3 = ${Math.floor((sum + span) / 3)} 取尾</td><td style="color:#e94560;font-weight:bold">${calcKill3}</td></tr>
+<tr><td>(和值+跨度)÷4</td><td>(${sum}+${span})÷4 = ${Math.floor((sum + span) / 4)} 取尾</td><td style="color:#e94560;font-weight:bold">${calcKill4}</td></tr>
+<tr><td>(和值+跨度)÷5</td><td>(${sum}+${span})÷5 = ${Math.floor((sum + span) / 5)} 取尾</td><td style="color:#e94560;font-weight:bold">${calcKill5}</td></tr>
+</tbody>
+</table>
+
+<h4 style="color:#e94560;font-size:13px;margin:12px 0 8px">对应杀号（0-9 → 8527419630）</h4>
+<table class="formula-table">
+<thead><tr><th>上期号码</th><th>${wan}</th><th>${qian}</th><th>${bai}</th><th>${shi}</th><th>${ge}</th></tr></thead>
+<tbody><tr><td>对应杀号</td><td style="color:#e94560;font-weight:bold">${killByCorrespond[0]}</td><td style="color:#e94560;font-weight:bold">${killByCorrespond[1]}</td><td style="color:#e94560;font-weight:bold">${killByCorrespond[2]}</td><td style="color:#e94560;font-weight:bold">${killByCorrespond[3]}</td><td style="color:#e94560;font-weight:bold">${killByCorrespond[4]}</td></tr></tbody>
+</table>
+
+<h4 style="color:#e94560;font-size:13px;margin:12px 0 8px">位置杀号</h4>
+<div style="font-size:13px;color:#aaa">杀上期第4位（十位）：<b style="color:#e94560">${killPos4}</b> | 跨度 ${span} ${isSpanPrime ? '是质数' : '非质数'} ${isSpanPrime ? '→ 可杀跨质号' : ''}</div>
+</div>
+
+<!-- ===== 3. 组合选号口诀 ===== -->
+<div class="section">
+<div class="section-title">📐 三、组合选号口诀</div>
+<div class="formula-grid">
+<div class="formula-card">
+<h4>奇偶大小</h4>
+<div class="desc">常见 2奇1偶 + 2大1小（如 005、227）</div>
+<div class="result">本期：${oddCount}奇${evenCount}偶 / ${bigCount}大${smallCount}小 ${oddCount >= 2 && oddCount <= 3 && bigCount >= 2 && bigCount <= 3 ? '✓ 符合常见形态' : '⚠ 非常见形态'}</div>
+</div>
+<div class="formula-card">
+<h4>和值范围</h4>
+<div class="desc">重点 9-16，避开 5-7 和 17-20</div>
+<div class="result ${sum >= 9 && sum <= 16 ? 'hit' : 'warn'}">本期和值：${sum}（${sumStatus}）</div>
+</div>
+<div class="formula-card">
+<h4>聚堆/对子</h4>
+<div class="desc">连号或对子频繁</div>
+<div class="result">${isLeopard ? '⚠ 豹子号(罕见)' : isRepeat ? '有对子' : '无重复'}</div>
+</div>
+<div class="formula-card">
+<h4>跨度</h4>
+<div class="desc">常见 2-8</div>
+<div class="result ${span >= 2 && span <= 8 ? 'hit' : 'warn'}">本期跨度：${span} ${span >= 2 && span <= 8 ? '✓ 常见范围' : '⚠ 偏极端'}</div>
+</div>
+</div>
+${sumTrend.length > 0 ? '<div style="margin-top:10px;font-size:12px;color:#888">最近5期和值：' + sumTrend.join(' → ') + '</div>' : ''}
+</div>
+
+<!-- ===== 4. 口诀推荐号码 ===== -->
+<div class="section" style="border:1px solid rgba(9,132,227,0.4)">
+<div class="section-title" style="color:#0984e3">🎯 四、口诀推荐号码</div>
+<p style="color:#aaa;font-size:12px;margin-bottom:12px">基于上述 3 类口诀规则综合评分，每位取 TOP2 候选 → 笛卡尔积 → 形态校验排序 → 取 TOP5 单注 + 4 种复式方案</p>
+
+<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px" id="compoundDisplay"></div>
+<button class="copy-btn" style="margin-bottom:14px;padding:7px 16px;background:#0e639c;border:none;border-radius:5px;color:#fff;font-size:13px;cursor:pointer" onclick="copyAllCompound()">📋 复制全部 4 种复式方案</button>
+
+<h4 style="color:#0984e3;font-size:14px;margin-bottom:10px">🏆 精选单注 TOP5（口诀分+形态分）</h4>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px" id="singlesGrid"></div>
+<button class="copy-btn" style="margin-top:12px;padding:7px 16px;background:#0e639c;border:none;border-radius:5px;color:#fff;font-size:13px;cursor:pointer" onclick="copyAllSingles()">📋 复制全部单注</button>
+
+<div style="margin-top:14px;background:#1e1e1e;border-radius:8px;padding:14px">
+<h4 style="color:#569cd6;font-size:13px;margin-bottom:10px">📊 每位候选号码评分明细（TOP5）</h4>
+<table class="formula-table">
+<thead><tr><th>排名</th><th>万位</th><th>分数</th><th>口诀</th><th>千位</th><th>分数</th><th>口诀</th><th>百位</th><th>分数</th><th>口诀</th><th>十位</th><th>分数</th><th>口诀</th><th>个位</th><th>分数</th><th>口诀</th></tr></thead>
+<tbody id="scoreTableBody"></tbody>
+</table>
+</div>
+</div>
+
+<div class="disclaimer">
+⚠️ <b>免责声明：</b>以上口诀来源于彩民经验总结，无统计学严格证明。彩票为独立随机事件，口诀仅供娱乐参考，请理性购彩。
+</div>
+
+<script>
+var recommend = ${JSON.stringify(recommend)};
+var posLabels = ${JSON.stringify(posLabels5)};
+var ballColors = ${JSON.stringify(ballColors5)};
+
+// 渲染复式方案
+(function() {
+    var html = '';
+    recommend.compoundList.forEach(function(comp, idx) {
+        var color = idx === 0 ? '#2ecc71' : idx === 1 ? '#feca57' : idx === 2 ? '#0984e3' : '#8e44ad';
+        html += '<div style="flex:1;min-width:200px;background:#1e1e1e;border-radius:8px;padding:12px;border-left:3px solid ' + color + '">';
+        html += '<h4 style="color:' + color + ';font-size:12px;margin-bottom:6px">📋 ' + comp.label + '</h4>';
+        html += '<div style="font-size:11px;color:#888;margin-bottom:6px">总注数：<b style="color:#feca57">' + comp.totalCombos + '</b> 注</div>';
+        comp.perPos.forEach(function(picks, p) {
+            html += '<div style="margin:3px 0;display:flex;align-items:center;gap:4px">';
+            html += '<span style="color:' + ballColors[p] + ';font-weight:bold;font-size:11px;width:32px">' + posLabels[p] + '：</span>';
+            picks.forEach(function(n) {
+                html += '<span style="display:inline-block;width:20px;height:20px;line-height:20px;text-align:center;border-radius:50%;background:' + ballColors[p] + ';color:#fff;font-weight:bold;font-size:11px;margin:0 1px">' + n + '</span>';
+            });
+            html += '</div>';
+        });
+        html += '<button class="copy-btn" style="margin-top:6px;padding:4px 10px;background:#0e639c;border:none;border-radius:4px;color:#fff;font-size:10px;cursor:pointer" onclick="copyOneCompound(' + idx + ', this)">📋 复制</button>';
+        html += '</div>';
+    });
+    document.getElementById('compoundDisplay').innerHTML = html;
+})();
+
+// 渲染单注 TOP5
+(function() {
+    var html = '';
+    recommend.topSingles.forEach(function(item, i) {
+        var isTop = i === 0;
+        html += '<div style="background:#1e1e1e;border-radius:8px;padding:10px;text-align:center;border:1px solid ' + (isTop ? 'rgba(9,132,227,0.5)' : '#333') + (isTop ? ';background:rgba(9,132,227,0.08)' : '') + '">';
+        html += '<div style="font-size:11px;color:#888;margin-bottom:4px">推荐 #' + (i + 1) + (isTop ? ' 🥇 最佳' : '') + '</div>';
+        html += '<div style="font-size:20px;font-weight:bold;letter-spacing:3px;margin-bottom:4px">';
+        item.combo.forEach(function(n, p) {
+            html += '<span style="color:' + ballColors[p] + '">' + n + '</span>';
+            if (p < 4) html += ' ';
+        });
+        html += '</div>';
+        html += '<div style="font-size:11px;color:#aaa">口诀:' + item.formulaScore + ' | 形态:' + item.shapeScore + ' | 总:' + item.total + '</div>';
+        html += '<button class="copy-btn" style="margin-top:4px;padding:3px 10px;background:#0e639c;border:none;border-radius:4px;color:#fff;font-size:11px;cursor:pointer" onclick="copySingle(' + String.fromCharCode(39) + item.combo.join('') + String.fromCharCode(39) + ', this)">复制</button>';
+        html += '</div>';
+    });
+    document.getElementById('singlesGrid').innerHTML = html;
+})();
+
+// 渲染评分明细表
+(function() {
+    var html = '';
+    for (var i = 0; i < 5; i++) {
+        html += '<tr><td style="color:#feca57;font-weight:bold">' + (i + 1) + '</td>';
+        for (var p = 0; p < 5; p++) {
+            var item = recommend.posRanked[p][i] || { num: '-', score: 0, reasons: [] };
+            html += '<td style="color:' + ballColors[p] + ';font-weight:bold;font-size:13px">' + item.num + '</td>';
+            html += '<td>' + item.score + '</td>';
+            html += '<td style="font-size:10px;color:#888">' + (item.reasons || []).join(',') + '</td>';
+        }
+        html += '</tr>';
+    }
+    document.getElementById('scoreTableBody').innerHTML = html;
+})();
+
+function copySingle(combo, btn) {
+    copyToClipboard('排五口诀推荐：' + combo.split('').join(' '));
+    if (btn) { var old = btn.innerHTML; btn.innerHTML = '✅ 已复制'; setTimeout(function(){ btn.innerHTML = old; }, 1500); }
+}
+function copyAllSingles() {
+    var lines = recommend.topSingles.map(function(item, i) {
+        return String(i + 1).padStart(2, '0') + '. ' + item.combo.join(' ') + ' (总分' + item.total + ')';
+    });
+    copyToClipboard('排五口诀推荐单注TOP' + recommend.topSingles.length + '\\n' + lines.join('\\n'));
+}
+function copyOneCompound(idx, btn) {
+    var comp = recommend.compoundList[idx];
+    var parts = comp.perPos.map(function(picks, p) {
+        return posLabels[p] + '：' + picks.join(' ');
+    });
+    copyToClipboard('排五口诀 ' + comp.label + ' 复式（' + comp.totalCombos + '注）\\n' + parts.join('\\n'));
+    if (btn) { var old = btn.innerHTML; btn.innerHTML = '✅ 已复制'; setTimeout(function(){ btn.innerHTML = old; }, 1500); }
+}
+function copyAllCompound() {
+    var lines = ['排五口诀复式方案（4 种规格）'];
+    recommend.compoundList.forEach(function(comp) {
+        lines.push('\\n【' + comp.label + ' · ' + comp.totalCombos + '注】');
+        comp.perPos.forEach(function(picks, p) {
+            lines.push('  ' + posLabels[p] + '：' + picks.join(' '));
+        });
+    });
+    copyToClipboard(lines.join('\\n'));
+}
+function copyToClipboard(text) {
+    try { acquireVsCodeApi().postMessage({ command: 'copy', text: text }); } catch(e) {}
+}
 </script>
 </body>
 </html>`;
@@ -4307,10 +5985,18 @@ table{width:100%;border-collapse:collapse;font-size:12px}th{background:#334155;p
 
     // ========== 第八部分：智能号码推荐 + 复制功能 ==========
     if (R.complexRec && R.singleRec) {
+        // 合并所有复式规格的复制文本，用于一键复制全部
+        const allComplexText = R.complexRec.map(rec => rec.copyText).join('\n\n');
+        const allComplexB64 = Buffer.from(allComplexText).toString('base64');
+
         html += `<h2>八、🎲 智能号码推荐</h2>
 
 <div class="card" style="border-left:4px solid #f59e0b">
-<h3 style="color:#f59e0b;font-size:15px;margin-bottom:14px">📋 复式推荐（多规格可选）</h3>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+<h3 style="color:#f59e0b;font-size:15px;margin:0">📋 复式推荐（多规格可选）</h3>
+<button class="copy-all-btn" id="copyAllComplexBtn" onclick="copyAllComplex()">📋 一键复制全部复式</button>
+<span id="allComplexData" data-copy="${allComplexB64}" style="display:none"></span>
+</div>
 <div style="display:grid;grid-template-columns:repeat(${Math.min(R.complexRec.length,4)},1fr);gap:14px">`;
 
         const sizeLabels = { 2: '精简', 3: '标准', 4: '扩展', 5: '全覆盖' };
@@ -4387,6 +6073,7 @@ function decodeBase64(s){try{var b=atob(s);return decodeURIComponent(Array.from(
 function copyFromData(btn){var t=decodeBase64(btn.getAttribute('data-copy'));try{acquireVsCodeApi().postMessage({command:'copy',text:t})}catch(e){}btn.innerHTML='✅ 已复制';btn.classList.add('copied');setTimeout(function(){btn.innerHTML='📋 复制';btn.classList.remove('copied')},1500)}
 function copySingle(btn){var t=decodeBase64(btn.getAttribute('data-copy'));try{acquireVsCodeApi().postMessage({command:'copy',text:t})}catch(e){}btn.innerHTML='✅ 已复制';btn.classList.add('copied');setTimeout(function(){btn.innerHTML='复制';btn.classList.remove('copied')},1500)}
 function copyAllSingles(){var btn=document.getElementById('copyAllSingleBtn');var el=document.getElementById('singlesData');if(el){try{acquireVsCodeApi().postMessage({command:'copy',text:el.getAttribute('data-singles')})}catch(e){}}if(btn){btn.innerHTML='✅ 已复制';btn.classList.add('copied');setTimeout(function(){btn.innerHTML='📋 复制全部单注';btn.classList.remove('copied')},1500)}}
+function copyAllComplex(){var btn=document.getElementById('copyAllComplexBtn');var el=document.getElementById('allComplexData');if(el){try{acquireVsCodeApi().postMessage({command:'copy',text:decodeBase64(el.getAttribute('data-copy'))})}catch(e){}}if(btn){btn.innerHTML='✅ 已复制';btn.classList.add('copied');setTimeout(function(){btn.innerHTML='📋 一键复制全部复式';btn.classList.remove('copied')},1500)}}
 </script>
 </body></html>`;
 
