@@ -1771,9 +1771,8 @@ h2 { color: #8ec5ff; margin-bottom: 8px; }
     };
     
     window.showToast = function() {
-        var t = document.getElementById('toast');
-        t.style.display = 'block';
-        setTimeout(function(){ t.style.display = 'none'; }, 2000);
+        var t = document.getElementById('copyToast') || document.getElementById('toast');
+        if (t) { t.classList.add('show'); t.style.display = 'block'; setTimeout(function(){ t.classList.remove('show'); t.style.display = 'none'; }, 2000); }
     };
 })();
 </script>
@@ -2041,9 +2040,9 @@ h2 { color: #8ec5ff; margin-bottom: 8px; }
 .trend-match-info { color: #666; font-size: 11px; margin-left: 8px; }
 
 /* Toast 复制提示 */
-.copy-toast { position: fixed; top: 20px; right: 20px; background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff; padding: 12px 24px; border-radius: 8px; z-index: 9999; display: none; animation: copySlideIn .3s ease; box-shadow: 0 4px 15px rgba(46,204,113,0.4); font-size: 14px; font-weight: bold; }
-.copy-toast.show { display: block; }
-@keyframes copySlideIn { from { opacity: 0; transform: translateX(50px); } to { opacity: 1; transform: translateX(0); } }
+.copy-toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff; padding: 12px 32px; border-radius: 24px; z-index: 9999; display: none; box-shadow: 0 4px 20px rgba(46,204,113,0.5); font-size: 14px; font-weight: bold; }
+.copy-toast.show { display: block; animation: copySlideUp .3s ease; }
+@keyframes copySlideUp { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 .copy-btn-flash { animation: btnFlash 0.4s ease; }
 @keyframes btnFlash { 0% { transform: scale(1); } 50% { transform: scale(1.1); box-shadow: 0 0 12px rgba(46,204,113,0.6); } 100% { transform: scale(1); } }
 
@@ -3444,9 +3443,9 @@ th { background: rgba(255,255,255,0.06); color: #8ec5ff; font-weight: 600; }
 .bar-wrap { height: 18px; background: rgba(0,0,0,0.3); border-radius: 4px; overflow: hidden; position: relative; }
 .bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s; }
 .picks-cell { font-size: 11px; color: #aaa; max-width: 320px; word-break: break-all; }
-.copy-toast { position: fixed; top: 20px; right: 20px; background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff; padding: 12px 24px; border-radius: 8px; z-index: 9999; display: none; animation: copySlideIn .3s ease; box-shadow: 0 4px 15px rgba(46,204,113,0.4); font-size: 14px; font-weight: bold; }
-.copy-toast.show { display: block; }
-@keyframes copySlideIn { from { opacity: 0; transform: translateX(50px); } to { opacity: 1; transform: translateX(0); } }
+.copy-toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff; padding: 12px 32px; border-radius: 24px; z-index: 9999; display: none; box-shadow: 0 4px 20px rgba(46,204,113,0.5); font-size: 14px; font-weight: bold; }
+.copy-toast.show { display: block; animation: copySlideUp .3s ease; }
+@keyframes copySlideUp { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 </style>
 </head>
 <body>
@@ -4222,7 +4221,10 @@ body{font-family:'Microsoft YaHei',sans-serif;background:#1e1e1e;color:#d4d4d4;p
 .loading{text-align:center;padding:40px;color:#888}
 .spinner{display:inline-block;width:30px;height:30px;border:3px solid #333;border-top-color:#4ec9b0;border-radius:50%;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-.toast{position:fixed;top:20px;right:20px;background:#1e4a1e;color:#9cdcfe;padding:10px 20px;border-radius:6px;z-index:999;display:none;animation:fadeIn .3s}
+.toast{position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,#1e4a1e,#2ecc71);color:#fff;padding:12px 32px;border-radius:24px;z-index:999;display:none;animation:fadeIn .3s;box-shadow:0 4px 20px rgba(46,204,113,0.5);font-size:14px;font-weight:bold}
+.copy-toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff; padding: 12px 32px; border-radius: 24px; z-index: 9999; display: none; box-shadow: 0 4px 20px rgba(46,204,113,0.5); font-size: 14px; font-weight: bold; }
+.copy-toast.show { display: block; animation: copySlideUp .3s ease; }
+@keyframes copySlideUp { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 @keyframes fadeIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
 .algo-section{background:#252526;border-radius:10px;padding:0;margin-bottom:16px;border:1px solid #333;overflow:hidden}
 .algo-summary{padding:12px 20px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#2d2d30}
@@ -4386,9 +4388,8 @@ function renderResult(data) {
     for(var i=0;i<cbs.length;i++)(function(b){b.addEventListener('click',function(){if(vscode)vscode.postMessage({command:'copy',text:b.getAttribute('data-copy')});});})(cbs[i]);
 }
 function showToast() {
-    var t = document.getElementById('toast');
-    t.style.display = 'block';
-    setTimeout(function(){ t.style.display = 'none'; }, 2000);
+    var t = document.getElementById('copyToast') || document.getElementById('toast');
+    if (t) { t.classList.add('show'); t.style.display = 'block'; setTimeout(function(){ t.classList.remove('show'); t.style.display = 'none'; }, 2000); }
 }
 })();
 </script>
@@ -4678,7 +4679,10 @@ body{font-family:'Microsoft YaHei',sans-serif;background:#1e1e1e;color:#d4d4d4;p
 .loading{text-align:center;padding:40px;color:#888}
 .spinner{display:inline-block;width:30px;height:30px;border:3px solid #333;border-top-color:#e94560;border-radius:50%;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-.toast{position:fixed;top:20px;right:20px;background:#1e4a1e;color:#9cdcfe;padding:10px 20px;border-radius:6px;z-index:999;display:none;animation:fadeIn .3s}
+.toast{position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,#1e4a1e,#2ecc71);color:#fff;padding:12px 32px;border-radius:24px;z-index:999;display:none;animation:fadeIn .3s;box-shadow:0 4px 20px rgba(46,204,113,0.5);font-size:14px;font-weight:bold}
+.copy-toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff; padding: 12px 32px; border-radius: 24px; z-index: 9999; display: none; box-shadow: 0 4px 20px rgba(46,204,113,0.5); font-size: 14px; font-weight: bold; }
+.copy-toast.show { display: block; animation: copySlideUp .3s ease; }
+@keyframes copySlideUp { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 @keyframes fadeIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
 .algo-section{background:#252526;border-radius:10px;padding:0;margin-bottom:16px;border:1px solid #333;overflow:hidden}
 .algo-summary{padding:12px 20px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#2d2d30}
@@ -4842,9 +4846,8 @@ function renderResult(data) {
     for(var i=0;i<cbs.length;i++)(function(b){b.addEventListener('click',function(){if(vscode)vscode.postMessage({command:'copy',text:b.getAttribute('data-copy')});});})(cbs[i]);
 }
 function showToast() {
-    var t = document.getElementById('toast');
-    t.style.display = 'block';
-    setTimeout(function(){ t.style.display = 'none'; }, 2000);
+    var t = document.getElementById('copyToast') || document.getElementById('toast');
+    if (t) { t.classList.add('show'); t.style.display = 'block'; setTimeout(function(){ t.classList.remove('show'); t.style.display = 'none'; }, 2000); }
 }
 })();
 </script>
@@ -5125,9 +5128,9 @@ body{font-family:'Microsoft YaHei',sans-serif;background:#1e1e1e;color:#d4d4d4;p
 .tag.hot{background:rgba(233,69,96,0.2);color:#e94560}
 .tag.cool{background:rgba(9,132,227,0.2);color:#0984e3}
 .tag.warn{background:rgba(254,202,87,0.2);color:#feca57}
-.copy-toast { position: fixed; top: 20px; right: 20px; background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff; padding: 12px 24px; border-radius: 8px; z-index: 9999; display: none; animation: copySlideIn .3s ease; box-shadow: 0 4px 15px rgba(46,204,113,0.4); font-size: 14px; font-weight: bold; }
-.copy-toast.show { display: block; }
-@keyframes copySlideIn { from { opacity: 0; transform: translateX(50px); } to { opacity: 1; transform: translateX(0); } }
+.copy-toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff; padding: 12px 32px; border-radius: 24px; z-index: 9999; display: none; box-shadow: 0 4px 20px rgba(46,204,113,0.5); font-size: 14px; font-weight: bold; }
+.copy-toast.show { display: block; animation: copySlideUp .3s ease; }
+@keyframes copySlideUp { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 </style>
 </head>
 <body>
@@ -5707,9 +5710,9 @@ body{font-family:'Microsoft YaHei',sans-serif;background:#1e1e1e;color:#d4d4d4;p
 .formula-table th{background:#333;color:#569cd6;padding:6px;text-align:center}
 .formula-table td{padding:6px;text-align:center;border-bottom:1px solid #333}
 .disclaimer{background:rgba(231,76,60,0.1);border:1px solid rgba(231,76,60,0.3);padding:12px 16px;border-radius:8px;color:#e74c3c;font-size:12px;margin-top:16px}
-.copy-toast { position: fixed; top: 20px; right: 20px; background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff; padding: 12px 24px; border-radius: 8px; z-index: 9999; display: none; animation: copySlideIn .3s ease; box-shadow: 0 4px 15px rgba(46,204,113,0.4); font-size: 14px; font-weight: bold; }
-.copy-toast.show { display: block; }
-@keyframes copySlideIn { from { opacity: 0; transform: translateX(50px); } to { opacity: 1; transform: translateX(0); } }
+.copy-toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff; padding: 12px 32px; border-radius: 24px; z-index: 9999; display: none; box-shadow: 0 4px 20px rgba(46,204,113,0.5); font-size: 14px; font-weight: bold; }
+.copy-toast.show { display: block; animation: copySlideUp .3s ease; }
+@keyframes copySlideUp { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 </style>
 </head>
 <body>
@@ -6216,6 +6219,9 @@ body{font-family:'Microsoft YaHei',sans-serif;background:#1e1e1e;color:#d4d4d4;p
 .mind-section h4{color:#27ae60;font-size:13px;margin-bottom:8px}
 .mind-section ul{margin:0 0 0 20px;font-size:12px;color:#bbb}
 .mind-section li{margin:4px 0}
+.copy-toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff; padding: 12px 32px; border-radius: 24px; z-index: 9999; display: none; box-shadow: 0 4px 20px rgba(46,204,113,0.5); font-size: 14px; font-weight: bold; }
+.copy-toast.show { display: block; animation: copySlideUp .3s ease; }
+@keyframes copySlideUp { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 </style>
 </head>
 <body>
@@ -6732,9 +6738,9 @@ td { font-size: 12px; }
 .btn-copy.copied { background: rgba(46,204,113,0.2); border-color: #2ecc71; color: #2ecc71; }
 .btn-copy-sm { padding: 2px 8px; font-size: 10px; margin-top: 6px; }
 .copy-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.copy-toast { position: fixed; top: 20px; right: 20px; background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff; padding: 12px 24px; border-radius: 8px; z-index: 9999; display: none; animation: copySlideIn .3s ease; box-shadow: 0 4px 15px rgba(46,204,113,0.4); font-size: 14px; font-weight: bold; }
-.copy-toast.show { display: block; }
-@keyframes copySlideIn { from { opacity: 0; transform: translateX(50px); } to { opacity: 1; transform: translateX(0); } }
+.copy-toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff; padding: 12px 32px; border-radius: 24px; z-index: 9999; display: none; box-shadow: 0 4px 20px rgba(46,204,113,0.5); font-size: 14px; font-weight: bold; }
+.copy-toast.show { display: block; animation: copySlideUp .3s ease; }
+@keyframes copySlideUp { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 </style>
 </head>
 <body>
@@ -7409,12 +7415,14 @@ table.trend td.predict-cell-inner { padding: 1px; }
 
 /* 复制提示 toast */
 .copy-toast {
-    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-    background: #2d7d46; color: #fff; padding: 10px 16px; border-radius: 4px;
-    font-size: 12px; z-index: 10000; max-width: 80vw; white-space: pre-wrap;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-    font-family: "Consolas", "Microsoft YaHei", monospace;
+    position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+    background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff;
+    padding: 12px 32px; border-radius: 24px;
+    font-size: 14px; font-weight: bold; z-index: 10000; max-width: 80vw;
+    box-shadow: 0 4px 20px rgba(46,204,113,0.5);
 }
+.copy-toast.show { display: block; animation: copySlideUp .3s ease; }
+@keyframes copySlideUp { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 
 /* 前后期数字转移统计面板 */
 .trans-panel {
