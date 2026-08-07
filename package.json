@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.1.47",
+    "version": "0.2.0",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -31,6 +31,7 @@
         "onCommand:myPlugin.roadAnalysis",
         "onCommand:myPlugin.pl3Formula",
         "onCommand:myPlugin.pl5Formula",
+        "onCommand:myPlugin.fc3dFormula",
         "onCommand:myPlugin.smartFilter",
         "onCommand:myPlugin.ssqFilter",
         "onView:lotteryMenu"
@@ -88,6 +89,10 @@
             {
                 "command": "myPlugin.pl5Formula",
                 "title": "排列五口诀"
+            },
+            {
+                "command": "myPlugin.fc3dFormula",
+                "title": "福彩3D口诀"
             },
             {
                 "command": "myPlugin.smartFilter",

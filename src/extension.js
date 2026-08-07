@@ -1107,6 +1107,33 @@ function activate(context) {
     });
     context.subscriptions.push(pl5FormulaDisposable);
 
+    // ========== 福彩3D口诀工具 ==========
+    let fc3dFormulaDisposable = vscode.commands.registerCommand('myPlugin.fc3dFormula', async () => {
+        const cfg = LOTTERY_TYPES.find(c => c.key === 'fc3d');
+        let latest = null, history = [];
+        try {
+            if (cfg) {
+                history = loadLotteryData(cfg);
+                if (history.length > 0) latest = history[history.length - 1];
+            }
+        } catch (e) { /* 数据缺失也允许查看口诀 */ }
+
+        const panel = vscode.window.createWebviewPanel(
+            'fc3dFormula',
+            '🎁 福彩3D口诀',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.onDidReceiveMessage(async (message) => {
+            if (message.command === 'copy') {
+                await vscode.env.clipboard.writeText(message.text);
+                return;
+            }
+        });
+        panel.webview.html = getFc3dFormulaHtml(latest, history);
+    });
+    context.subscriptions.push(fc3dFormulaDisposable);
+
     // ========== 大乐透智能精选 ==========
     let smartFilterDisposable = vscode.commands.registerCommand('myPlugin.smartFilter', async () => {
         // 创建Webview面板
@@ -1527,6 +1554,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🛤️ 012路趋势', 'myPlugin.roadAnalysis', '🛤️'),
                 this.createItem('📜 排三口诀', 'myPlugin.pl3Formula', '📜'),
                 this.createItem('🎲 排五口诀', 'myPlugin.pl5Formula', '🎲'),
+                this.createItem('🎁 3D口诀', 'myPlugin.fc3dFormula', '🎁'),
                 this.createItem('🎯 大乐透精选', 'myPlugin.smartFilter', '🎯'),
                 this.createItem('🔴 双色球精选', 'myPlugin.ssqFilter', '🔴'),
                 this.createItem('🧪 概率回测', 'myPlugin.probabilityBacktest', '🧪'),
@@ -2012,6 +2040,13 @@ h2 { color: #8ec5ff; margin-bottom: 8px; }
 .trend-rec-num.t3 { background: #7d3c98; color: #fff; }
 .trend-match-info { color: #666; font-size: 11px; margin-left: 8px; }
 
+/* Toast 复制提示 */
+.copy-toast { position: fixed; top: 20px; right: 20px; background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff; padding: 12px 24px; border-radius: 8px; z-index: 9999; display: none; animation: copySlideIn .3s ease; box-shadow: 0 4px 15px rgba(46,204,113,0.4); font-size: 14px; font-weight: bold; }
+.copy-toast.show { display: block; }
+@keyframes copySlideIn { from { opacity: 0; transform: translateX(50px); } to { opacity: 1; transform: translateX(0); } }
+.copy-btn-flash { animation: btnFlash 0.4s ease; }
+@keyframes btnFlash { 0% { transform: scale(1); } 50% { transform: scale(1.1); box-shadow: 0 0 12px rgba(46,204,113,0.6); } 100% { transform: scale(1); } }
+
 /* 复式推荐样式 */
 .complex-section { margin-bottom: 24px; padding: 16px; background: rgba(52,152,219,0.08); border: 1px solid rgba(52,152,219,0.3); border-radius: 8px; }
 .complex-title { color: #3498db; font-size: 16px; font-weight: 600; margin-bottom: 12px; }
@@ -2067,6 +2102,7 @@ h2 { color: #8ec5ff; margin-bottom: 8px; }
 </style>
 </head>
 <body>
+<div class="copy-toast" id="copyToast">✅ 已复制到剪贴板</div>
 <h2>🤖 ${d.name} 智能推荐</h2>
 <div class="desc" id="desc"></div>
 <div id="content"></div>
@@ -2255,6 +2291,15 @@ const LIMIT_LABEL = DATA.limit === 0 ? '全部' : DATA.limit + ' 期';
         return html;
     }
 
+    // Toast 复制提示
+    window.showCopyToast = function() {
+        var toast = document.getElementById('copyToast');
+        if (toast) {
+            toast.classList.add('show');
+            setTimeout(function() { toast.classList.remove('show'); }, 2000);
+        }
+    };
+
     window.copyResult = function() {
         // 生成纯文本格式用于复制
         const byPos = {};
@@ -2288,9 +2333,9 @@ const LIMIT_LABEL = DATA.limit === 0 ? '全部' : DATA.limit + ' 期';
             });
         }
         if (navigator.clipboard) {
-            navigator.clipboard.writeText(text).then(() => alert('已复制到剪贴板：\\n\\n' + text));
+            navigator.clipboard.writeText(text).then(() => showCopyToast());
         } else {
-            alert('复制内容：\\n\\n' + text);
+            showCopyToast();
         }
     };
 
@@ -2804,9 +2849,9 @@ const LIMIT_LABEL = DATA.limit === 0 ? '全部' : DATA.limit + ' 期';
             const totalCombos = currentPicks.reduce((p, c) => p * c.length, 1);
             const text = DATA.name + '复式推荐（' + currentPick + '×' + currentPick + '，' + totalCombos + '注）\\n' + parts.join(' ') + '\\n每位' + currentPick + '码：' + currentPicks.map(p => p.join('')).join(' | ');
             if (navigator.clipboard) {
-                navigator.clipboard.writeText(text).then(() => alert('已复制：\\n' + text));
+                navigator.clipboard.writeText(text).then(() => showCopyToast());
             } else {
-                alert('复制：\\n' + text);
+                showCopyToast();
             }
         };
         // 复制精选单式
@@ -2816,9 +2861,9 @@ const LIMIT_LABEL = DATA.limit === 0 ? '全部' : DATA.limit + ' 期';
                 text += '第' + (i + 1) + '注：' + s.combo.join(' ') + '\\n';
             });
             if (navigator.clipboard) {
-                navigator.clipboard.writeText(text).then(() => alert('已复制：\\n' + text));
+                navigator.clipboard.writeText(text).then(() => showCopyToast());
             } else {
-                alert('复制：\\n' + text);
+                showCopyToast();
             }
         };
     }
@@ -3399,9 +3444,13 @@ th { background: rgba(255,255,255,0.06); color: #8ec5ff; font-weight: 600; }
 .bar-wrap { height: 18px; background: rgba(0,0,0,0.3); border-radius: 4px; overflow: hidden; position: relative; }
 .bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s; }
 .picks-cell { font-size: 11px; color: #aaa; max-width: 320px; word-break: break-all; }
+.copy-toast { position: fixed; top: 20px; right: 20px; background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff; padding: 12px 24px; border-radius: 8px; z-index: 9999; display: none; animation: copySlideIn .3s ease; box-shadow: 0 4px 15px rgba(46,204,113,0.4); font-size: 14px; font-weight: bold; }
+.copy-toast.show { display: block; }
+@keyframes copySlideIn { from { opacity: 0; transform: translateX(50px); } to { opacity: 1; transform: translateX(0); } }
 </style>
 </head>
 <body>
+<div class="copy-toast" id="copyToast">✅ 已复制到剪贴板</div>
 <div class="header">
     <h1>🧪 ${bt.cfgEmoji} ${bt.cfgName} — 概率推荐历史回测</h1>
     <div class="sub">训练样本：${bt.options.trainSize} 期 | 步长：${bt.options.step} 期/次 | 推荐注数：TOP ${bt.options.topK} | 命中模式：${bt.options.hitMode === 'exact' ? '严格位置' : '包含'}</div>
@@ -3471,6 +3520,10 @@ th { background: rgba(255,255,255,0.06); color: #8ec5ff; font-weight: 600; }
 </div>
 
 <script>
+function showCopyToast() {
+    var toast = document.getElementById('copyToast');
+    if (toast) { toast.classList.add('show'); setTimeout(function() { toast.classList.remove('show'); }, 2000); }
+}
 const BT = ${dataJson};
 const COLORS = ['red','blue','green','purple','orange'];
 
@@ -4187,6 +4240,7 @@ body{font-family:'Microsoft YaHei',sans-serif;background:#1e1e1e;color:#d4d4d4;p
 </style>
 </head>
 <body>
+<div class="copy-toast" id="copyToast">✅ 已复制到剪贴板</div>
 <div class="header"><h1>🎯 大乐透智能精选</h1><p>基于多维度历史数据分析，从复式中智能筛选最优单注</p></div>
 
 <div class="algo-section">
@@ -4642,6 +4696,7 @@ body{font-family:'Microsoft YaHei',sans-serif;background:#1e1e1e;color:#d4d4d4;p
 </style>
 </head>
 <body>
+<div class="copy-toast" id="copyToast">✅ 已复制到剪贴板</div>
 <div class="header"><h1>🔴 双色球智能精选</h1><p>基于多维度历史数据分析，从红球+蓝球复式中智能筛选最优单注（6红+1蓝）</p></div>
 
 <div class="algo-section">
@@ -5070,9 +5125,13 @@ body{font-family:'Microsoft YaHei',sans-serif;background:#1e1e1e;color:#d4d4d4;p
 .tag.hot{background:rgba(233,69,96,0.2);color:#e94560}
 .tag.cool{background:rgba(9,132,227,0.2);color:#0984e3}
 .tag.warn{background:rgba(254,202,87,0.2);color:#feca57}
+.copy-toast { position: fixed; top: 20px; right: 20px; background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff; padding: 12px 24px; border-radius: 8px; z-index: 9999; display: none; animation: copySlideIn .3s ease; box-shadow: 0 4px 15px rgba(46,204,113,0.4); font-size: 14px; font-weight: bold; }
+.copy-toast.show { display: block; }
+@keyframes copySlideIn { from { opacity: 0; transform: translateX(50px); } to { opacity: 1; transform: translateX(0); } }
 </style>
 </head>
 <body>
+<div class="copy-toast" id="copyToast">✅ 已复制到剪贴板</div>
 <div class="header">
 <h1>📜 排列三必背口诀</h1>
 <p>彩民总结的 4 类高频实用口诀（杀号 / 定胆 / 形态 / 试机号），结合最新一期自动推导</p>
@@ -5292,6 +5351,9 @@ function copyAllCompound() {
 }
 function copyToClipboard(text) {
     try { acquireVsCodeApi().postMessage({ command: 'copy', text: text }); } catch(e) {}
+    // Toast 提示
+    var toast = document.getElementById('copyToast');
+    if (toast) { toast.classList.add('show'); setTimeout(function() { toast.classList.remove('show'); }, 2000); }
 }
 
 function calcTry() {
@@ -5645,9 +5707,13 @@ body{font-family:'Microsoft YaHei',sans-serif;background:#1e1e1e;color:#d4d4d4;p
 .formula-table th{background:#333;color:#569cd6;padding:6px;text-align:center}
 .formula-table td{padding:6px;text-align:center;border-bottom:1px solid #333}
 .disclaimer{background:rgba(231,76,60,0.1);border:1px solid rgba(231,76,60,0.3);padding:12px 16px;border-radius:8px;color:#e74c3c;font-size:12px;margin-top:16px}
+.copy-toast { position: fixed; top: 20px; right: 20px; background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff; padding: 12px 24px; border-radius: 8px; z-index: 9999; display: none; animation: copySlideIn .3s ease; box-shadow: 0 4px 15px rgba(46,204,113,0.4); font-size: 14px; font-weight: bold; }
+.copy-toast.show { display: block; }
+@keyframes copySlideIn { from { opacity: 0; transform: translateX(50px); } to { opacity: 1; transform: translateX(0); } }
 </style>
 </head>
 <body>
+<div class="copy-toast" id="copyToast">✅ 已复制到剪贴板</div>
 <div class="header">
 <h1>🎲 排列五口诀</h1>
 <p>彩民总结的 3 类高频实用口诀（数字关联 / 杀号 / 组合选号），结合最新一期自动推导</p>
@@ -5863,6 +5929,520 @@ function copyAllCompound() {
 }
 function copyToClipboard(text) {
     try { acquireVsCodeApi().postMessage({ command: 'copy', text: text }); } catch(e) {}
+    // Toast 提示
+    var toast = document.getElementById('copyToast');
+    if (toast) { toast.classList.add('show'); setTimeout(function() { toast.classList.remove('show'); }, 2000); }
+}
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 福彩3D口诀实战工具 HTML
+ * 福彩3D规则：3 位数字（百十个），每位 0-9
+ */
+function getFc3dFormulaHtml(latest, history) {
+    const latestNums = latest ? latest.num : [0, 0, 0];
+    const latestPeriod = latest ? latest.period : '—';
+    const latestDate = latest ? latest.date : '—';
+    const [bai, shi, ge] = latestNums;
+
+    // ===== 1. 数字关联口诀 =====
+    // 每个数字的口诀对应
+    const digitRules = {
+        0: { rule: '见0多半没有0', action: '下期可能不出0', focus: [] },
+        1: { rule: '有1大半不见1', action: '下期可能不出1', focus: [] },
+        2: { rule: '有2一定要用2', action: '下期关注2', focus: [2] },
+        3: { rule: '有3不如选46', action: '下期关注4或6', focus: [4, 6] },
+        4: { rule: '有4常会出69', action: '下期关注6或9', focus: [6, 9] },
+        5: { rule: '见5常伴1或9', action: '下期关注1或9', focus: [1, 9] },
+        6: { rule: '现6多有47随', action: '下期关注4或7', focus: [4, 7] },
+        7: { rule: '7遇8时自带0', action: '7和8出现时关注0', focus: [0] },
+        8: { rule: '有8偏爱偶数出', action: '下期关注偶数0/2/4/6/8', focus: [0, 2, 4, 6, 8] },
+        9: { rule: '现9回落1跟7', action: '下期关注1或7', focus: [1, 7] }
+    };
+    // 组合规则
+    const comboRules = [
+        { name: '369经常有', test: (nums) => { const c = [3,6,9].filter(n => nums.includes(n)).length; return c >= 2 ? '369组合高频命中' + c + '个' : null; } },
+        { name: '478多同在', test: (nums) => { const c = [4,7,8].filter(n => nums.includes(n)).length; return c >= 2 ? '478组合同在命中' + c + '个' : null; } },
+        { name: '25同出小和小跨', test: (nums) => nums.includes(2) && nums.includes(5) ? '2和5同出，留意小和值小跨度' : null },
+        { name: '01出现组三多看', test: (nums) => nums.includes(0) && nums.includes(1) ? '0和1出现，关注组选三（有对子）' : null }
+    ];
+    const digitHits = [];
+    const focusSet = new Set();
+    [...new Set(latestNums)].forEach(n => {
+        const rule = digitRules[n];
+        if (rule) {
+            digitHits.push({ digit: n, ...rule });
+            rule.focus.forEach(f => focusSet.add(f));
+        }
+    });
+    const comboHits = comboRules.map(r => ({ name: r.name, result: r.test(latestNums) })).filter(r => r.result);
+
+    // ===== 2. 和值/跨度/形态 =====
+    const sum = latestNums.reduce((a, b) => a + b, 0);
+    const span = Math.max.apply(null, latestNums) - Math.min.apply(null, latestNums);
+    const oddCount = latestNums.filter(n => n % 2 === 1).length;
+    const evenCount = 3 - oddCount;
+    const bigCount = latestNums.filter(n => n >= 5).length;
+    const smallCount = 3 - bigCount;
+    const isRepeat = new Set(latestNums).size < 3;
+    const isLeopard = new Set(latestNums).size === 1;
+
+    // 和值评价
+    const sumStatus = sum >= 10 && sum <= 18 ? '主道区(10-18)' : sum >= 8 && sum <= 20 ? '稳抓区(8-20)' : sum < 8 ? '偏低' : '偏高';
+    // 跨度评价
+    const spanStatus = span >= 3 && span <= 7 ? '靠谱区(3-7)' : span === 9 ? '豹子跨度9少碰' : span < 3 ? '偏小' : '偏大';
+    // 奇偶
+    const oddEvenStatus = (oddCount === 2 && evenCount === 1) || (oddCount === 1 && evenCount === 2) ? '二比一最香' : (oddCount === 3 || evenCount === 3 ? '全奇全偶别当庄' : '其他');
+    // 大小
+    const bigSmallStatus = (bigCount === 2 && smallCount === 1) || (bigCount === 1 && smallCount === 2) ? '2:1或1:2 不偏差' : '偏差';
+
+    // 最近5期和值
+    let sumTrend = [];
+    if (history.length >= 6) {
+        for (let i = history.length - 5; i < history.length; i++) {
+            sumTrend.push(history[i].num.reduce((a, b) => a + b, 0));
+        }
+    }
+    // 最近5期重号统计
+    let repeatCount = 0;
+    if (history.length >= 5) {
+        for (let i = history.length - 5; i < history.length; i++) {
+            const prev = history[i - 1] ? history[i - 1].num : [];
+            const curr = history[i].num;
+            if (curr.some(n => prev.includes(n))) repeatCount++;
+        }
+    }
+
+    // ===== 3. 推荐号码生成 =====
+    function genRecommendation() {
+        const posScores = [new Array(10).fill(0), new Array(10).fill(0), new Array(10).fill(0)];
+        const reasons = [[], [], []];
+
+        // 规则1：数字关联口诀 → focus 里的号码加分
+        focusSet.forEach(n => {
+            for (let p = 0; p < 3; p++) {
+                posScores[p][n] += 15;
+                reasons[p][n] = (reasons[p][n] || []);
+                reasons[p][n].push('数字关联');
+            }
+        });
+        // 见0/1 → 杀0/1
+        if (latestNums.includes(0)) {
+            for (let p = 0; p < 3; p++) {
+                posScores[p][0] -= 12;
+                reasons[p][0] = (reasons[p][0] || []);
+                reasons[p][0].push('见0多半无0');
+            }
+        }
+        if (latestNums.includes(1)) {
+            for (let p = 0; p < 3; p++) {
+                posScores[p][1] -= 12;
+                reasons[p][1] = (reasons[p][1] || []);
+                reasons[p][1].push('有1大半无1');
+            }
+        }
+        // 有2一定要用2
+        if (latestNums.includes(2)) {
+            for (let p = 0; p < 3; p++) {
+                posScores[p][2] += 18;
+                reasons[p][2] = (reasons[p][2] || []);
+                reasons[p][2].push('有2必用2');
+            }
+        }
+        // 有8偏爱偶数
+        if (latestNums.includes(8)) {
+            for (let p = 0; p < 3; p++) {
+                for (let n = 0; n <= 8; n += 2) {
+                    posScores[p][n] += 8;
+                    reasons[p][n] = (reasons[p][n] || []);
+                    reasons[p][n].push('有8偏爱偶');
+                }
+            }
+        }
+
+        // 规则2：组合规则
+        comboHits.forEach(h => {
+            const nums = h.result.match(/\d/g) || [];
+            const uniqueNums = [...new Set(nums.map(Number))];
+            uniqueNums.forEach(n => {
+                for (let p = 0; p < 3; p++) {
+                    posScores[p][n] += 10;
+                    reasons[p][n] = (reasons[p][n] || []);
+                    reasons[p][n].push(h.name);
+                }
+            });
+        });
+
+        // 规则3：和值范围 8-20，主道 10-18
+        if (sum < 10) {
+            for (let p = 0; p < 3; p++) {
+                for (let n = 4; n <= 9; n++) {
+                    posScores[p][n] += 6;
+                    reasons[p][n] = (reasons[p][n] || []);
+                    reasons[p][n].push('和值回升');
+                }
+            }
+        } else if (sum > 18) {
+            for (let p = 0; p < 3; p++) {
+                for (let n = 0; n <= 5; n++) {
+                    posScores[p][n] += 6;
+                    reasons[p][n] = (reasons[p][n] || []);
+                    reasons[p][n].push('和值回落');
+                }
+            }
+        }
+
+        // 规则4：重号 +5
+        for (let p = 0; p < 3; p++) {
+            posScores[p][latestNums[p]] += 5;
+            reasons[p][latestNums[p]] = (reasons[p][latestNums[p]] || []);
+            reasons[p][latestNums[p]].push('重号');
+        }
+
+        // 规则5：邻号 +4
+        for (let p = 0; p < 3; p++) {
+            if (latestNums[p] > 0) {
+                posScores[p][latestNums[p] - 1] += 4;
+                reasons[p][latestNums[p] - 1] = (reasons[p][latestNums[p] - 1] || []);
+                reasons[p][latestNums[p] - 1].push('邻号');
+            }
+            if (latestNums[p] < 9) {
+                posScores[p][latestNums[p] + 1] += 4;
+                reasons[p][latestNums[p] + 1] = (reasons[p][latestNums[p] + 1] || []);
+                reasons[p][latestNums[p] + 1].push('邻号');
+            }
+        }
+
+        // 每位排序
+        const posRanked = posScores.map((scores, p) => {
+            return scores.map((s, n) => ({
+                num: n, score: s, reasons: reasons[p][n] || []
+            })).sort((a, b) => b.score - a.score);
+        });
+
+        // 单注推荐：每位 TOP3 笛卡尔积 + 形态校验
+        const candidates = [];
+        const topK = 3;
+        function backtrack(depth, current) {
+            if (depth === 3) {
+                const cOdd = current.filter(n => n % 2 === 1).length;
+                const cBig = current.filter(n => n >= 5).length;
+                const cSpan = Math.max.apply(null, current) - Math.min.apply(null, current);
+                const cSum = current.reduce((a, b) => a + b, 0);
+                const isLeopard = new Set(current).size === 1;
+                let shapeScore = 0;
+                if (cOdd === 2 || cOdd === 1) shapeScore += 15; // 二比一
+                if (cOdd === 3 || cOdd === 0) shapeScore -= 10; // 全奇全偶
+                if (cBig === 2 || cBig === 1) shapeScore += 15; // 2:1或1:2
+                if (cSpan >= 3 && cSpan <= 7) shapeScore += 12; // 跨度3-7
+                if (cSpan === 9 || isLeopard) shapeScore -= 15; // 豹子
+                if (cSum >= 10 && cSum <= 18) shapeScore += 15; // 主道
+                else if (cSum >= 8 && cSum <= 20) shapeScore += 8; // 稳抓
+                const formulaScore = current.reduce((sum, n, p) => sum + (posRanked[p].find(x => x.num === n) ? posRanked[p].find(x => x.num === n).score : 0), 0);
+                candidates.push({ combo: [...current], formulaScore, shapeScore, total: formulaScore + shapeScore });
+                return;
+            }
+            for (let i = 0; i < Math.min(topK, posRanked[depth].length); i++) {
+                current.push(posRanked[depth][i].num);
+                backtrack(depth + 1, current);
+                current.pop();
+            }
+        }
+        backtrack(0, []);
+        candidates.sort((a, b) => b.total - a.total);
+
+        const seen = new Set();
+        const topSingles = [];
+        for (const c of candidates) {
+            const key = c.combo.join('');
+            if (!seen.has(key)) { seen.add(key); topSingles.push(c); if (topSingles.length >= 5) break; }
+        }
+
+        // 复式：2×2×2 ~ 5×5×5
+        const compoundList = [];
+        for (let k = 2; k <= 5; k++) {
+            const perPos = posRanked.map(ranked => {
+                const filtered = ranked.filter(x => x.score > -10);
+                return filtered.slice(0, k).map(x => x.num);
+            });
+            const totalCombos = perPos.reduce((a, b) => a * b.length, 1);
+            compoundList.push({ k, label: k + '×' + k + '×' + k, perPos, totalCombos });
+        }
+
+        return { topSingles, compoundList, posRanked };
+    }
+
+    const recommend = genRecommendation();
+    const posLabels3 = ['百位', '十位', '个位'];
+    const ballColors3 = ['#e94560', '#0984e3', '#27ae60'];
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>福彩3D口诀</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Microsoft YaHei',sans-serif;background:#1e1e1e;color:#d4d4d4;padding:20px;line-height:1.6}
+.header{text-align:center;margin-bottom:20px}
+.header h1{color:#27ae60;font-size:26px;margin-bottom:6px}
+.header p{color:#888;font-size:13px}
+.latest-bar{display:flex;justify-content:center;align-items:center;gap:12px;background:#252526;padding:12px 20px;border-radius:10px;margin-bottom:20px;border:1px solid #333}
+.latest-bar .label{color:#888;font-size:13px}
+.latest-bar .balls{display:flex;gap:6px}
+.ball{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:16px;color:#fff}
+.ball.bai{background:#e94560}
+.ball.shi{background:#0984e3}
+.ball.ge{background:#27ae60}
+.section{background:#252526;border-radius:10px;padding:16px 20px;margin-bottom:16px;border:1px solid #333}
+.section-title{color:#27ae60;font-size:15px;font-weight:bold;margin-bottom:12px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #333;padding-bottom:8px}
+.formula-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.formula-card{background:#1e1e1e;border-radius:8px;padding:14px;border-left:3px solid #27ae60}
+.formula-card h4{font-size:13px;margin-bottom:8px}
+.formula-card .desc{font-size:12px;color:#aaa;margin-bottom:8px}
+.formula-card .result{background:#2d2d30;padding:8px 12px;border-radius:5px;font-size:13px;color:#9cdcfe;font-weight:bold}
+.formula-card .result.hit{color:#2ecc71}
+.formula-card .result.warn{color:#feca57}
+.formula-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+.formula-table th{background:#333;color:#569cd6;padding:6px;text-align:center}
+.formula-table td{padding:6px;text-align:center;border-bottom:1px solid #333}
+.formula-table td.highlight{background:rgba(39,174,96,0.15);color:#27ae60;font-weight:bold}
+.disclaimer{background:rgba(231,76,60,0.1);border:1px solid rgba(231,76,60,0.3);padding:12px 16px;border-radius:8px;color:#e74c3c;font-size:12px;margin-top:16px}
+.mind-section{background:rgba(39,174,96,0.05);border:1px solid rgba(39,174,96,0.2);border-radius:8px;padding:14px;margin-bottom:8px}
+.mind-section h4{color:#27ae60;font-size:13px;margin-bottom:8px}
+.mind-section ul{margin:0 0 0 20px;font-size:12px;color:#bbb}
+.mind-section li{margin:4px 0}
+</style>
+</head>
+<body>
+<div class="copy-toast" id="copyToast">✅ 已复制到剪贴板</div>
+<div class="header">
+<h1>🎁 福彩3D口诀</h1>
+<p>彩民总结的 3 类高频实用口诀（数字关联 / 和值跨度形态 / 购彩心态），结合最新一期自动推导</p>
+</div>
+
+<div class="latest-bar">
+<span class="label">最新一期 第 ${latestPeriod} 期（${latestDate}）：</span>
+<div class="balls">
+<span class="ball bai">${bai}</span>
+<span class="ball shi">${shi}</span>
+<span class="ball ge">${ge}</span>
+</div>
+</div>
+
+<!-- ===== 1. 数字关联口诀 ===== -->
+<div class="section">
+<div class="section-title">🔢 一、数字关联口诀（上期定下期）</div>
+<h4 style="color:#27ae60;font-size:13px;margin-bottom:10px">单数字规则</h4>
+<table class="formula-table">
+<thead><tr><th>上期含</th><th>0</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th><th>9</th></tr></thead>
+<tbody>
+<tr><td>口诀</td><td>多半无0</td><td>大半无1</td><td>必用2</td><td>选4/6</td><td>出6/9</td><td>伴1或9</td><td>有4/7随</td><td>遇8带0</td><td>偏爱偶数</td><td>回落1/7</td></tr>
+</tbody>
+</table>
+
+<h4 style="color:#27ae60;font-size:13px;margin:12px 0 8px">🎯 实战推导</h4>
+${digitHits.length > 0 ? digitHits.map(h => '<div class="formula-card" style="margin-bottom:8px"><h4>上期含 ' + h.digit + '</h4><div class="desc">' + h.rule + '</div><div class="result hit">' + h.action + (h.focus.length > 0 ? '（关注：' + h.focus.join(',') + '）' : '') + '</div></div>').join('') : '<div class="result warn">无匹配</div>'}
+
+<h4 style="color:#27ae60;font-size:13px;margin:12px 0 8px">组合规则</h4>
+<div class="formula-grid">
+${comboRules.map(r => {
+    const result = r.test(latestNums);
+    return '<div class="formula-card"><h4>' + r.name + '</h4><div class="result ' + (result ? 'hit' : 'warn') + '">' + (result || '未命中') + '</div></div>';
+}).join('')}
+</div>
+</div>
+
+<!-- ===== 2. 和值/跨度/形态口诀 ===== -->
+<div class="section">
+<div class="section-title">📐 二、和值/跨度/形态口诀</div>
+<div class="formula-grid">
+<div class="formula-card">
+<h4>和值</h4>
+<div class="desc">8-20 稳抓牢，10-18 是主道</div>
+<div class="result ${sum >= 10 && sum <= 18 ? 'hit' : sum >= 8 && sum <= 20 ? 'warn' : 'warn'}">本期和值：${sum}（${sumStatus}）</div>
+</div>
+<div class="formula-card">
+<h4>跨度</h4>
+<div class="desc">3-7 最靠谱，豹子跨度9少碰</div>
+<div class="result ${span >= 3 && span <= 7 ? 'hit' : 'warn'}">本期跨度：${span}（${spanStatus}）</div>
+</div>
+<div class="formula-card">
+<h4>奇偶比</h4>
+<div class="desc">二比一最香，全奇全偶别当庄</div>
+<div class="result ${(oddCount === 2 && evenCount === 1) || (oddCount === 1 && evenCount === 2) ? 'hit' : 'warn'}">本期：${oddCount}奇${evenCount}偶（${oddEvenStatus}）</div>
+</div>
+<div class="formula-card">
+<h4>大小比</h4>
+<div class="desc">2:1 或 1:2，有大有小不偏差</div>
+<div class="result ${(bigCount === 2 && smallCount === 1) || (bigCount === 1 && smallCount === 2) ? 'hit' : 'warn'}">本期：${bigCount}大${smallCount}小（${bigSmallStatus}）</div>
+</div>
+<div class="formula-card">
+<h4>重号/连号</h4>
+<div class="desc">期期有重号，连号看走势</div>
+<div class="result">${isLeopard ? '豹子(罕见)' : isRepeat ? '有对子' : '无重复'} | 近5期有重号${repeatCount}期</div>
+</div>
+</div>
+${sumTrend.length > 0 ? '<div style="margin-top:10px;font-size:12px;color:#888">最近5期和值：' + sumTrend.join(' → ') + '</div>' : ''}
+</div>
+
+<!-- ===== 3. 购彩心态口诀 ===== -->
+<div class="section">
+<div class="section-title">🧠 三、购彩心态口诀（避坑提醒）</div>
+<div class="mind-section">
+<h4>📌 选号策略</h4>
+<ul>
+<li>新手先学买组选，安全绑组选；研究号位做单选，定胆买组选</li>
+<li>买热号防出错，买冷号等冷返；倍投反算总额，别盲目</li>
+</ul>
+</div>
+<div class="mind-section">
+<h4>📊 数据参考</h4>
+<ul>
+<li>找规律看五十期，找号码看十五期</li>
+<li>试机号参考趋势，非开奖号</li>
+</ul>
+</div>
+<div class="mind-section">
+<h4>⚠️ 心态提醒</h4>
+<ul>
+<li>会不买才不赔钱，天天买熬人</li>
+<li>跟着高手学方法，跟着笨蛋杀号码</li>
+</ul>
+</div>
+</div>
+
+<!-- ===== 4. 口诀推荐号码 ===== -->
+<div class="section" style="border:1px solid rgba(39,174,96,0.4)">
+<div class="section-title" style="color:#27ae60">🎯 四、口诀推荐号码</div>
+<p style="color:#aaa;font-size:12px;margin-bottom:12px">基于上述 3 类口诀规则综合评分，每位取 TOP3 候选 → 笛卡尔积 → 形态校验排序 → 取 TOP5 单注 + 4 种复式方案</p>
+
+<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px" id="compoundDisplay"></div>
+<button class="copy-btn" style="margin-bottom:14px;padding:7px 16px;background:#0e639c;border:none;border-radius:5px;color:#fff;font-size:13px;cursor:pointer" onclick="copyAllCompound()">📋 复制全部 4 种复式方案</button>
+
+<h4 style="color:#27ae60;font-size:14px;margin-bottom:10px">🏆 精选单注 TOP5（口诀分+形态分）</h4>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px" id="singlesGrid"></div>
+<button class="copy-btn" style="margin-top:12px;padding:7px 16px;background:#0e639c;border:none;border-radius:5px;color:#fff;font-size:13px;cursor:pointer" onclick="copyAllSingles()">📋 复制全部单注</button>
+
+<div style="margin-top:14px;background:#1e1e1e;border-radius:8px;padding:14px">
+<h4 style="color:#569cd6;font-size:13px;margin-bottom:10px">📊 每位候选号码评分明细（TOP5）</h4>
+<table class="formula-table">
+<thead><tr><th>排名</th><th>百位</th><th>分数</th><th>口诀</th><th>十位</th><th>分数</th><th>口诀</th><th>个位</th><th>分数</th><th>口诀</th></tr></thead>
+<tbody id="scoreTableBody"></tbody>
+</table>
+</div>
+</div>
+
+<div class="disclaimer">
+⚠️ <b>免责声明：</b>以上口诀来源于彩民经验总结，无统计学严格证明。彩票为独立随机事件，口诀仅供娱乐参考，请理性购彩。
+</div>
+
+<script>
+var recommend = ${JSON.stringify(recommend)};
+var posLabels = ${JSON.stringify(posLabels3)};
+var ballColors = ${JSON.stringify(ballColors3)};
+
+// 渲染复式方案
+(function() {
+    var html = '';
+    recommend.compoundList.forEach(function(comp, idx) {
+        var color = idx === 0 ? '#2ecc71' : idx === 1 ? '#feca57' : idx === 2 ? '#27ae60' : '#8e44ad';
+        html += '<div style="flex:1;min-width:200px;background:#1e1e1e;border-radius:8px;padding:14px;border-left:3px solid ' + color + '">';
+        html += '<h4 style="color:' + color + ';font-size:13px;margin-bottom:6px">📋 ' + comp.label + '</h4>';
+        html += '<div style="font-size:11px;color:#888;margin-bottom:8px">总注数：<b style="color:#feca57">' + comp.totalCombos + '</b> 注</div>';
+        comp.perPos.forEach(function(picks, p) {
+            html += '<div style="margin:5px 0;display:flex;align-items:center;gap:6px">';
+            html += '<span style="color:' + ballColors[p] + ';font-weight:bold;font-size:12px;width:36px">' + posLabels[p] + '：</span>';
+            picks.forEach(function(n) {
+                html += '<span style="display:inline-block;width:24px;height:24px;line-height:24px;text-align:center;border-radius:50%;background:' + ballColors[p] + ';color:#fff;font-weight:bold;font-size:12px;margin:0 2px">' + n + '</span>';
+            });
+            html += '</div>';
+        });
+        html += '<button class="copy-btn" style="margin-top:8px;padding:5px 12px;background:#0e639c;border:none;border-radius:4px;color:#fff;font-size:11px;cursor:pointer" onclick="copyOneCompound(' + idx + ', this)">📋 复制</button>';
+        html += '</div>';
+    });
+    document.getElementById('compoundDisplay').innerHTML = html;
+})();
+
+// 渲染单注 TOP5
+(function() {
+    var html = '';
+    recommend.topSingles.forEach(function(item, i) {
+        var isTop = i === 0;
+        html += '<div style="background:#1e1e1e;border-radius:8px;padding:12px;text-align:center;border:1px solid ' + (isTop ? 'rgba(39,174,96,0.5)' : '#333') + (isTop ? ';background:rgba(39,174,96,0.08)' : '') + '">';
+        html += '<div style="font-size:11px;color:#888;margin-bottom:6px">推荐 #' + (i + 1) + (isTop ? ' 🥇 最佳' : '') + '</div>';
+        html += '<div style="font-size:22px;font-weight:bold;letter-spacing:4px;margin-bottom:6px">';
+        item.combo.forEach(function(n, p) {
+            html += '<span style="color:' + ballColors[p] + '">' + n + '</span>';
+            if (p < 2) html += ' ';
+        });
+        html += '</div>';
+        html += '<div style="font-size:11px;color:#aaa">口诀分:' + item.formulaScore + ' | 形态分:' + item.shapeScore + ' | 总分:' + item.total + '</div>';
+        html += '<button class="copy-btn" style="margin-top:6px;padding:3px 10px;background:#0e639c;border:none;border-radius:4px;color:#fff;font-size:11px;cursor:pointer" onclick="copySingle(' + String.fromCharCode(39) + item.combo.join('') + String.fromCharCode(39) + ', this)">复制</button>';
+        html += '</div>';
+    });
+    document.getElementById('singlesGrid').innerHTML = html;
+})();
+
+// 渲染评分明细表
+(function() {
+    var html = '';
+    for (var i = 0; i < 5; i++) {
+        var bai = recommend.posRanked[0][i] || {num:'-',score:0,reasons:[]};
+        var shi = recommend.posRanked[1][i] || {num:'-',score:0,reasons:[]};
+        var ge = recommend.posRanked[2][i] || {num:'-',score:0,reasons:[]};
+        html += '<tr><td style="color:#feca57;font-weight:bold">' + (i + 1) + '</td>';
+        html += '<td style="color:#e94560;font-weight:bold;font-size:14px">' + bai.num + '</td>';
+        html += '<td>' + bai.score + '</td>';
+        html += '<td style="font-size:11px;color:#888">' + (bai.reasons || []).join(',') + '</td>';
+        html += '<td style="color:#0984e3;font-weight:bold;font-size:14px">' + shi.num + '</td>';
+        html += '<td>' + shi.score + '</td>';
+        html += '<td style="font-size:11px;color:#888">' + (shi.reasons || []).join(',') + '</td>';
+        html += '<td style="color:#27ae60;font-weight:bold;font-size:14px">' + ge.num + '</td>';
+        html += '<td>' + ge.score + '</td>';
+        html += '<td style="font-size:11px;color:#888">' + (ge.reasons || []).join(',') + '</td>';
+        html += '</tr>';
+    }
+    document.getElementById('scoreTableBody').innerHTML = html;
+})();
+
+function copySingle(combo, btn) {
+    copyToClipboard('福彩3D口诀推荐：' + combo.split('').join(' '));
+    if (btn) { var old = btn.innerHTML; btn.innerHTML = '✅ 已复制'; setTimeout(function(){ btn.innerHTML = old; }, 1500); }
+}
+function copyAllSingles() {
+    var lines = recommend.topSingles.map(function(item, i) {
+        return String(i + 1).padStart(2, '0') + '. ' + item.combo.join(' ') + ' (总分' + item.total + ')';
+    });
+    copyToClipboard('福彩3D口诀推荐单注TOP' + recommend.topSingles.length + '\\n' + lines.join('\\n'));
+}
+function copyOneCompound(idx, btn) {
+    var comp = recommend.compoundList[idx];
+    var parts = comp.perPos.map(function(picks, p) {
+        return posLabels[p] + '：' + picks.join(' ');
+    });
+    copyToClipboard('福彩3D口诀 ' + comp.label + ' 复式（' + comp.totalCombos + '注）\\n' + parts.join('\\n'));
+    if (btn) { var old = btn.innerHTML; btn.innerHTML = '✅ 已复制'; setTimeout(function(){ btn.innerHTML = old; }, 1500); }
+}
+function copyAllCompound() {
+    var lines = ['福彩3D口诀复式方案（4 种规格）'];
+    recommend.compoundList.forEach(function(comp) {
+        lines.push('\\n【' + comp.label + ' · ' + comp.totalCombos + '注】');
+        comp.perPos.forEach(function(picks, p) {
+            lines.push('  ' + posLabels[p] + '：' + picks.join(' '));
+        });
+    });
+    copyToClipboard(lines.join('\\n'));
+}
+function copyToClipboard(text) {
+    try { acquireVsCodeApi().postMessage({ command: 'copy', text: text }); } catch(e) {}
+    // Toast 提示
+    var toast = document.getElementById('copyToast');
+    if (toast) { toast.classList.add('show'); setTimeout(function() { toast.classList.remove('show'); }, 2000); }
 }
 </script>
 </body>
@@ -6152,9 +6732,13 @@ td { font-size: 12px; }
 .btn-copy.copied { background: rgba(46,204,113,0.2); border-color: #2ecc71; color: #2ecc71; }
 .btn-copy-sm { padding: 2px 8px; font-size: 10px; margin-top: 6px; }
 .copy-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.copy-toast { position: fixed; top: 20px; right: 20px; background: linear-gradient(135deg,#1e4a1e,#2ecc71); color: #fff; padding: 12px 24px; border-radius: 8px; z-index: 9999; display: none; animation: copySlideIn .3s ease; box-shadow: 0 4px 15px rgba(46,204,113,0.4); font-size: 14px; font-weight: bold; }
+.copy-toast.show { display: block; }
+@keyframes copySlideIn { from { opacity: 0; transform: translateX(50px); } to { opacity: 1; transform: translateX(0); } }
 </style>
 </head>
 <body>
+<div class="copy-toast" id="copyToast">✅ 已复制到剪贴板</div>
 <div class="header">
     <h1>🧬 ${A.cfgEmoji} ${A.cfgName} — 概率统计智能推荐</h1>
     <div class="sub">样本量：${A.N} 期 | 方法：多维度频率分析 + 遗漏回归 + Z分数检验 + 卡方检验</div>
@@ -6254,6 +6838,10 @@ td { font-size: 12px; }
 </div>
 
 <script>
+function showCopyToast() {
+    var toast = document.getElementById('copyToast');
+    if (toast) { toast.classList.add('show'); setTimeout(function() { toast.classList.remove('show'); }, 2000); }
+}
 const A = ${dataJson};
 const COLORS = ['#e94560','#0984e3','#27ae60','#8e44ad','#f39c12'];
 const CLS_POS = ['pos0','pos1','pos2','pos3','pos4'];
@@ -6444,6 +7032,7 @@ const CLS_POS = ['pos0','pos1','pos2','pos3','pos4'];
     copyBar.innerHTML = '<button class="btn-copy" id="btn-copy-all" title="复制全部推荐号码">📋 一键复制全部推荐号码</button>';
     document.getElementById('btn-copy-all').onclick = () => {
         navigator.clipboard.writeText(allNumStr).then(() => {
+            showCopyToast();
             const btn = document.getElementById('btn-copy-all');
             btn.textContent = '✅ 已复制！';
             btn.classList.add('copied');
@@ -6476,6 +7065,7 @@ const CLS_POS = ['pos0','pos1','pos2','pos3','pos4'];
             e.stopPropagation();
             const comboText = this.getAttribute('data-combo');
             navigator.clipboard.writeText(comboText).then(() => {
+                showCopyToast();
                 this.textContent = '✅ 已复制';
                 this.classList.add('copied');
                 setTimeout(() => { this.textContent = '📋 复制'; this.classList.remove('copied'); }, 2000);
@@ -6533,6 +7123,7 @@ const CLS_POS = ['pos0','pos1','pos2','pos3','pos4'];
     copyBar.innerHTML = '<button class="btn-copy" id="btn-copy-compound">📋 一键复制复式方案</button>';
     document.getElementById('btn-copy-compound').onclick = () => {
         navigator.clipboard.writeText(compoundStr).then(() => {
+            showCopyToast();
             const btn = document.getElementById('btn-copy-compound');
             btn.textContent = '✅ 已复制！';
             btn.classList.add('copied');
