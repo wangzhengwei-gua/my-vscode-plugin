@@ -1765,6 +1765,16 @@ function getMLCompareHtml(d, cfg, totalData, testCount) {
     const perPos = d.perPos;
     const prediction = d.prediction || null;
 
+    // 模型英文名 → 中文名 + 算法说明
+    const MODEL_CN = {
+        'AR':            { name: '自回归',     desc: '用前5期值线性外推' },
+        'Markov':        { name: '马尔可夫',   desc: '基于上期号预测下期概率' },
+        'kNN':           { name: 'K近邻匹配',  desc: '找历史最相似片段投票' },
+        'RandomForest':  { name: '随机森林',   desc: '多决策树集成（100棵）' }
+    };
+    const modelName = m => (MODEL_CN[m] || { name: m, desc: '' }).name;
+    const modelDesc = m => (MODEL_CN[m] || { name: m, desc: '' }).desc;
+
     // 构造推荐号码展示
     let predictionHtml = '';
     if (prediction && prediction.ensemble) {
@@ -1779,7 +1789,7 @@ function getMLCompareHtml(d, cfg, totalData, testCount) {
                 const mp = modelPred[p] && modelPred[p][m];
                 return mp ? `${p}:<b>${mp.value}</b>` : `${p}:-`;
             });
-            return `<tr><td class="model-name">${m}</td><td>${parts.join(' &nbsp; ')}</td></tr>`;
+            return `<tr><td class="model-name">${modelName(m)}<span class="model-desc">${modelDesc(m)}</span></td><td>${parts.join(' &nbsp; ')}</td></tr>`;
         }).join('');
         // Top3 集成
         const top3Html = posOrder.map(p => {
@@ -1790,6 +1800,10 @@ function getMLCompareHtml(d, cfg, totalData, testCount) {
 
         predictionHtml = `
 <h3>🎯 下期推荐号码</h3>
+<div class="ensemble-tip">
+    <b>💡 集成投票说明：</b>右侧"加权投票"结果是<b>每个模型按回测命中率加权打分</b>后的最终号码。<br>
+    若与某个模型的独立预测不一致，是因为该模型回测命中率低（权重小），它的预测被"打折"了。可信度高的模型贡献更大。
+</div>
 <div class="prediction-main">
     <div class="pred-num">${nums[0]}</div>
     <div class="pred-num">${nums[1]}</div>
@@ -1821,7 +1835,7 @@ function getMLCompareHtml(d, cfg, totalData, testCount) {
         const strictColor = s.strictPct > baseline.strict + 2 ? '#2ecc71' : (s.strictPct < baseline.strict - 2 ? '#e74c3c' : '#aaa');
         const top3Color = s.top3Pct > baseline.top3 + 3 ? '#2ecc71' : (s.top3Pct < baseline.top3 - 3 ? '#e74c3c' : '#aaa');
         return `<tr>
-            <td class="model-name">${m}</td>
+            <td class="model-name">${modelName(m)}</td>
             <td style="color:${strictColor};font-weight:600">${s.strictPct.toFixed(2)}%</td>
             <td>${s.strict} / ${s.total}</td>
             <td style="color:${top3Color};font-weight:600">${s.top3Pct.toFixed(2)}%</td>
@@ -1836,7 +1850,7 @@ function getMLCompareHtml(d, cfg, totalData, testCount) {
             const sCol = r.strictPct > 12 ? '#2ecc71' : (r.strictPct < 8 ? '#e74c3c' : '#aaa');
             const tCol = r.top3Pct > 33 ? '#2ecc71' : (r.top3Pct < 27 ? '#e74c3c' : '#aaa');
             return `<tr>
-                <td class="model-name">${m}</td>
+                <td class="model-name">${modelName(m)}</td>
                 <td style="color:${sCol}">${r.strictPct.toFixed(2)}%</td>
                 <td>${r.strict}/${r.total}</td>
                 <td style="color:${tCol}">${r.top3Pct.toFixed(2)}%</td>
@@ -1862,13 +1876,13 @@ function getMLCompareHtml(d, cfg, totalData, testCount) {
     let conclusion;
     if (bestS.strictPct > baseline.strict + 3) {
         conclusion = `<div class="conclusion good">
-            ✅ 最佳模型 <b>${bestStrict}</b> 严格命中率 ${bestS.strictPct.toFixed(2)}%，显著高于随机基准 ${baseline.strict}%。<br>
+            ✅ 最佳模型 <b>${modelName(bestStrict)}</b>（${bestStrict}）严格命中率 ${bestS.strictPct.toFixed(2)}%，显著高于随机基准 ${baseline.strict}%。<br>
             <b>🌟 运势如虹，号码有灵！愿您把握良机，一举中奖！</b>
         </div>`;
     } else if (bestS.strictPct > baseline.strict + 1) {
         conclusion = `<div class="conclusion neutral">
-            🟡 最佳模型 <b>${bestStrict}</b> 严格命中率 ${bestS.strictPct.toFixed(2)}%，略高于随机（${baseline.strict}%），<br>
-            Top3最佳：<b>${bestTop3}</b> ${bestT.top3Pct.toFixed(2)}%。<br>
+            🟡 最佳模型 <b>${modelName(bestStrict)}</b>（${bestStrict}）严格命中率 ${bestS.strictPct.toFixed(2)}%，略高于随机（${baseline.strict}%），<br>
+            Top3最佳：<b>${modelName(bestTop3)}</b>（${bestTop3}） ${bestT.top3Pct.toFixed(2)}%。<br>
             <b>🍀 福星高照，幸运将至！愿好运与您不期而遇！</b>
         </div>`;
     } else {
@@ -1914,6 +1928,9 @@ tbody tr:nth-child(odd) { background:rgba(255,255,255,0.02); }
 .top3-pos b { color:#feca57;margin-right:6px; }
 .copy-tip { padding:10px 14px;background:rgba(46,204,113,0.08);border:1px solid rgba(46,204,113,0.2);border-radius:6px;color:#aaa;font-size:12px;margin-bottom:14px; }
 .copy-tip code { background:#222;padding:3px 10px;border-radius:4px;color:#2ecc71;font-size:14px;font-weight:bold;letter-spacing:2px;margin-left:6px; }
+.ensemble-tip { padding:12px 14px;background:rgba(142,197,255,0.06);border:1px solid rgba(142,197,255,0.25);border-radius:6px;color:#bbb;font-size:12px;line-height:1.7;margin-bottom:12px; }
+.ensemble-tip b { color:#8ec5ff; }
+.model-desc { color:#888;font-size:11px;font-weight:normal;display:block;margin-top:2px; }
 .warn { color:#aaa;font-size:12px; }
 .badge { display:inline-block;padding:2px 8px;border-radius:3px;font-size:11px;background:#0e639c;color:#fff;margin-left:8px; }
 </style>
