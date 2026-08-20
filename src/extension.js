@@ -2031,6 +2031,10 @@ function getMLCompareHtml(d, cfg, totalData, testCount) {
         基于 ${prediction.basedOn || '?'} 期数据 · 4 模型集成（按命中率加权投票）<br>
         <span style="color:#feca57;font-size:12px">🌟 好运相伴，必中一注！愿您财源滚滚来！</span><br>
         <button id="copyPickBtn" class="copy-btn">📋 一键复制号码</button>
+        <div style="color:#888;font-size:11px;margin-top:6px;line-height:1.5">
+            ⚠️ 由于集成投票对各模型预测值敏感，重新运行可能得到不同号码。<br>
+            实际回测显示各模型命中率均接近随机基准（10%），结果仅供娱乐参考。
+        </div>
     </div>
 </div>
 <div class="prediction-detail">
