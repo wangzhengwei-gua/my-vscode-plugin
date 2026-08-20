@@ -1374,9 +1374,10 @@ function activate(context) {
         const pick = await vscode.window.showQuickPick(
             [
                 { label: '🎯 排列三', value: 'pl3', description: '3位号码 多模型对比' },
+                { label: '🎰 排列五', value: 'pl5', description: '5位号码 多模型对比' },
                 { label: '🎁 福彩3D', value: 'fc3d', description: '3位号码 多模型对比' }
             ],
-            { placeHolder: '选择彩种（目前仅支持3位彩种）' }
+            { placeHolder: '选择彩种' }
         );
         if (!pick) return;
 
@@ -1764,6 +1765,8 @@ function getMLCompareHtml(d, cfg, totalData, testCount) {
     const baseline = d.baseline;
     const perPos = d.perPos;
     const prediction = d.prediction || null;
+    // 动态从 perPos 取位数顺序
+    const posOrder = perPos.map(p => p.pos);
 
     // 模型英文名 → 中文名 + 算法说明
     const MODEL_CN = {
@@ -1780,7 +1783,6 @@ function getMLCompareHtml(d, cfg, totalData, testCount) {
     if (prediction && prediction.ensemble) {
         const ensemble = prediction.ensemble;
         const modelPred = prediction.models || {};
-        const posOrder = ['百位', '十位', '个位'];
         const nums = posOrder.map(p => ensemble[p] ? ensemble[p].value : '?');
         const mainPick = nums.join(' ');
         // 各模型预测明细
@@ -1805,12 +1807,11 @@ function getMLCompareHtml(d, cfg, totalData, testCount) {
     若与某个模型的独立预测不一致，是因为该模型回测命中率低（权重小），它的预测被"打折"了。可信度高的模型贡献更大。
 </div>
 <div class="prediction-main">
-    <div class="pred-num">${nums[0]}</div>
-    <div class="pred-num">${nums[1]}</div>
-    <div class="pred-num">${nums[2]}</div>
+    ${nums.map(n => `<div class="pred-num">${n}</div>`).join('')}
     <div class="pred-meta">
         基于 4 模型集成（按命中率加权投票）<br>
-        <span style="color:#feca57;font-size:12px">🌟 好运相伴，必中一注！愿您财源滚滚来！</span>
+        <span style="color:#feca57;font-size:12px">🌟 好运相伴，必中一注！愿您财源滚滚来！</span><br>
+        <button id="copyPickBtn" class="copy-btn">📋 一键复制号码</button>
     </div>
 </div>
 <div class="prediction-detail">
@@ -1825,7 +1826,7 @@ function getMLCompareHtml(d, cfg, totalData, testCount) {
         <div class="top3-list">${top3Html}</div>
     </div>
 </div>
-<div class="copy-tip">🍀 复制推荐号码：<code>${mainPick}</code><br><span style="color:#888;font-size:11px;margin-top:4px;display:inline-block">愿您一注必中，福运双至！</span></div>
+<div class="copy-tip">🍀 推荐号码：<code id="pickCode">${mainPick}</code><br><span style="color:#888;font-size:11px;margin-top:4px;display:inline-block">愿您一注必中，福运双至！</span></div>
 `;
     }
 
@@ -1928,6 +1929,9 @@ tbody tr:nth-child(odd) { background:rgba(255,255,255,0.02); }
 .top3-pos b { color:#feca57;margin-right:6px; }
 .copy-tip { padding:10px 14px;background:rgba(46,204,113,0.08);border:1px solid rgba(46,204,113,0.2);border-radius:6px;color:#aaa;font-size:12px;margin-bottom:14px; }
 .copy-tip code { background:#222;padding:3px 10px;border-radius:4px;color:#2ecc71;font-size:14px;font-weight:bold;letter-spacing:2px;margin-left:6px; }
+.copy-btn { margin-top:8px;padding:6px 14px;background:#0e639c;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;transition:all 0.2s; }
+.copy-btn:hover { background:#1177bb;transform:translateY(-1px); }
+.copy-btn.copied { background:#2ecc71; }
 .ensemble-tip { padding:12px 14px;background:rgba(142,197,255,0.06);border:1px solid rgba(142,197,255,0.25);border-radius:6px;color:#bbb;font-size:12px;line-height:1.7;margin-bottom:12px; }
 .ensemble-tip b { color:#8ec5ff; }
 .model-desc { color:#888;font-size:11px;font-weight:normal;display:block;margin-top:2px; }
@@ -1958,6 +1962,35 @@ ${posTables}
 ${predictionHtml}
 ${conclusion}
 
+<script>
+(function() {
+    const btn = document.getElementById('copyPickBtn');
+    const pickCode = document.getElementById('pickCode');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+        const text = pickCode ? pickCode.innerText.trim() : '';
+        if (!text) return;
+        try {
+            await navigator.clipboard.writeText(text);
+            btn.innerText = '✅ 已复制：' + text;
+            btn.classList.add('copied');
+            setTimeout(() => {
+                btn.innerText = '📋 一键复制号码';
+                btn.classList.remove('copied');
+            }, 2000);
+        } catch (e) {
+            // Fallback: 选中复制
+            const range = document.createRange();
+            range.selectNode(pickCode);
+            window.getSelection().removeAllRanges();
+            window.getSelection().addRange(range);
+            document.execCommand('copy');
+            btn.innerText = '✅ 已复制';
+            setTimeout(() => { btn.innerText = '📋 一键复制号码'; }, 2000);
+        }
+    });
+})();
+</script>
 </body>
 </html>`;
 }

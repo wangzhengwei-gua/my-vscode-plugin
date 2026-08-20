@@ -38,13 +38,14 @@ def extract_features(history, t, lookback=20):
     feats['lastMod3'] = sum(last) % 3
     
     # 近5/10/20期统计
+    n_pos = len(history[0]['num']) if history else 3
     for W in [5, 10, 20]:
         if t >= W:
             winW = history[t-W:t]
             sums = [sum(h['num']) for h in winW]
             feats[f'r{W}_sum_mean'] = np.mean(sums)
             feats[f'r{W}_sum_std'] = np.std(sums)
-            for p in range(3):
+            for p in range(n_pos):
                 seq = [h['num'][p] for h in winW]
                 feats[f'r{W}_p{p}_mean'] = np.mean(seq)
                 feats[f'r{W}_p{p}_max'] = max(seq)
@@ -55,7 +56,7 @@ def extract_features(history, t, lookback=20):
     
     # 自相关（lag 1-5）
     if t >= 30:
-        for p in range(3):
+        for p in range(n_pos):
             seq = [h['num'][p] for h in history[t-30:t]]
             m = np.mean(seq)
             v = np.var(seq) if np.var(seq) > 0 else 1
@@ -164,7 +165,15 @@ def main():
     history = data['history']
     test_count = data.get('testCount', 50)
     
-    pos_names = ['百位', '十位', '个位']
+    pos_names = ['百位', '十位', '个位', '十位', '个位']  # 兼容3/5位
+    # 根据数据动态生成位数标签
+    n_pos = len(history[0]['num']) if history else 3
+    if n_pos == 5:
+        pos_names = ['万位', '千位', '百位', '十位', '个位']
+    elif n_pos == 3:
+        pos_names = ['百位', '十位', '个位']
+    else:
+        pos_names = [f'第{i+1}位' for i in range(n_pos)]
     models = ['AR', 'Markov', 'kNN', 'RandomForest']
     
     # 结果存储
