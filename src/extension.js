@@ -1369,6 +1369,62 @@ function activate(context) {
     });
     context.subscriptions.push(maPatternsDisposable);
 
+    // ========== ML 多模型对比预测 ==========
+    let mlCompareDisposable = vscode.commands.registerCommand('myPlugin.mlCompare', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎯 排列三', value: 'pl3', description: '3位号码 多模型对比' },
+                { label: '🎁 福彩3D', value: 'fc3d', description: '3位号码 多模型对比' }
+            ],
+            { placeHolder: '选择彩种（目前仅支持3位彩种）' }
+        );
+        if (!pick) return;
+
+        const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+        if (!cfg) return;
+
+        let history;
+        try {
+            history = loadLotteryData(cfg);
+            if (history.length < 100) {
+                vscode.window.showWarningMessage('数据不足（需要 ≥100 期用于训练），请先刷新数据');
+                return;
+            }
+        } catch (e) {
+            vscode.window.showErrorMessage('读取数据失败: ' + e.message);
+            return;
+        }
+
+        const testPick = await vscode.window.showQuickPick(
+            [
+                { label: '30 期回测', value: 30, description: '快速（30次预测/位）' },
+                { label: '50 期回测', value: 50, description: '标准（50次预测/位）' },
+                { label: '100 期回测', value: 100, description: '较长（耗时）' }
+            ],
+            { placeHolder: '选择回测期数（越大越慢）' }
+        );
+        if (!testPick) return;
+
+        // 创建并显示进度
+        const panel = vscode.window.createWebviewPanel(
+            'mlCompare',
+            '🧠 模型对比 - ' + cfg.name,
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+
+        panel.webview.html = getMLCompareLoadingHtml(cfg.name);
+
+        try {
+            const result = await runMLCompare(history, testPick.value);
+            panel.webview.html = getMLCompareHtml(result, cfg, history.length, testPick.value);
+        } catch (e) {
+            panel.webview.html = `<h2 style="color:red;font-family:sans-serif;padding:20px">错误：${e.message}</h2>
+                <pre style="padding:20px;font-family:monospace;background:#f5f5f5">${e.stack || ''}</pre>`;
+        }
+    });
+    context.subscriptions.push(mlCompareDisposable);
+
     // ===== 自动爬取数据 =====
     // 1. 插件启动时自动爬取（静默，不弹通知，除非失败）
     autoRefresh(500, true);
@@ -1559,6 +1615,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🔴 双色球精选', 'myPlugin.ssqFilter', '🔴'),
                 this.createItem('🧪 概率回测', 'myPlugin.probabilityBacktest', '🧪'),
                 this.createItem('📈 均线形态', 'myPlugin.maPatterns', '📈'),
+                this.createItem('🧠 模型对比预测', 'myPlugin.mlCompare', '🧠'),
                 this.createItem('🔮 预测记录', 'myPlugin.showPredictions', '🔮'),
                 this.createItem('🕐 显示当前时间', 'myPlugin.showTime', '🕐'),
                 this.createItem('👋 Hello World', 'myPlugin.helloWorld', '👋')
@@ -1607,6 +1664,197 @@ function getNonce() {
 /**
  * 转移统计 Webview HTML（独立面板）
  */
+/**
+ * 调用 Python 后端跑多模型对比
+ */
+async function runMLCompare(history, testCount) {
+    const { exec } = require('child_process');
+    const os = require('os');
+    const path = require('path');
+
+    // 构造输入数据
+    const inputData = {
+        history: history.map(h => ({ num: h.num })),
+        testCount: testCount
+    };
+
+    // 写临时文件
+    const tmpFile = path.join(os.tmpdir(), 'pl3_ml_input.json');
+    const fs = require('fs');
+    fs.writeFileSync(tmpFile, JSON.stringify(inputData), 'utf-8');
+
+    const scriptPath = path.join(__dirname, '..', 'scripts', 'ml_compare.py');
+    const cmd = `python "${scriptPath}" "${tmpFile}"`;
+
+    return new Promise((resolve, reject) => {
+        exec(cmd, { maxBuffer: 10 * 1024 * 1024, timeout: 300000 }, (err, stdout, stderr) => {
+            try { fs.unlinkSync(tmpFile); } catch (e) {}
+            if (err) {
+                reject(new Error('Python 执行失败: ' + (stderr || err.message)));
+                return;
+            }
+            try {
+                const result = JSON.parse(stdout);
+                resolve(result);
+            } catch (e) {
+                reject(new Error('解析结果失败: ' + e.message + '\nstdout: ' + stdout.slice(0, 500)));
+            }
+        });
+    });
+}
+
+/**
+ * ML 对比 - 加载中页面
+ */
+function getMLCompareLoadingHtml(name) {
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>🧠 模型对比 - ${name}</title>
+<style>
+body { background:#1e1e1e;color:#ddd;font-family:"Segoe UI","Microsoft YaHei",sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;flex-direction:column; }
+.spinner { width:60px;height:60px;border:4px solid rgba(255,255,255,0.1);border-top:4px solid #8ec5ff;border-radius:50%;animation:spin 1s linear infinite;margin-bottom:24px; }
+@keyframes spin { 0%{transform:rotate(0)} 100%{transform:rotate(360deg)} }
+h2 { color:#8ec5ff;font-weight:500;margin-bottom:8px; }
+.desc { color:#888;font-size:13px; }
+</style>
+</head>
+<body>
+<div class="spinner"></div>
+<h2>正在运行多模型对比...</h2>
+<div class="desc">4 个模型 × 3 位 × ${0} 次滚动预测，可能需要 30-90 秒</div>
+</body>
+</html>`;
+}
+
+/**
+ * ML 对比 - 结果展示页面
+ */
+function getMLCompareHtml(d, cfg, totalData, testCount) {
+    const models = d.models;
+    const summary = d.summary;
+    const baseline = d.baseline;
+    const perPos = d.perPos;
+
+    // 计算表格行
+    const summaryRows = models.map(m => {
+        const s = summary[m];
+        const strictColor = s.strictPct > baseline.strict + 2 ? '#2ecc71' : (s.strictPct < baseline.strict - 2 ? '#e74c3c' : '#aaa');
+        const top3Color = s.top3Pct > baseline.top3 + 3 ? '#2ecc71' : (s.top3Pct < baseline.top3 - 3 ? '#e74c3c' : '#aaa');
+        return `<tr>
+            <td class="model-name">${m}</td>
+            <td style="color:${strictColor};font-weight:600">${s.strictPct.toFixed(2)}%</td>
+            <td>${s.strict} / ${s.total}</td>
+            <td style="color:${top3Color};font-weight:600">${s.top3Pct.toFixed(2)}%</td>
+            <td>${s.top3} / ${s.total}</td>
+        </tr>`;
+    }).join('');
+
+    // 每位详情表
+    const posTables = perPos.map(posRow => {
+        const rows = models.map(m => {
+            const r = posRow[m];
+            const sCol = r.strictPct > 12 ? '#2ecc71' : (r.strictPct < 8 ? '#e74c3c' : '#aaa');
+            const tCol = r.top3Pct > 33 ? '#2ecc71' : (r.top3Pct < 27 ? '#e74c3c' : '#aaa');
+            return `<tr>
+                <td class="model-name">${m}</td>
+                <td style="color:${sCol}">${r.strictPct.toFixed(2)}%</td>
+                <td>${r.strict}/${r.total}</td>
+                <td style="color:${tCol}">${r.top3Pct.toFixed(2)}%</td>
+                <td>${r.top3}/${r.total}</td>
+            </tr>`;
+        }).join('');
+        return `<div class="pos-section">
+            <div class="pos-title">${posRow.pos}位</div>
+            <table>
+                <thead><tr><th>模型</th><th>严格命中</th><th>命中/总</th><th>Top3命中</th><th>命中/总</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>`;
+    }).join('');
+
+    // 找最佳模型
+    const bestStrict = models.reduce((a, b) => summary[a].strictPct > summary[b].strictPct ? a : b);
+    const bestTop3 = models.reduce((a, b) => summary[a].top3Pct > summary[b].top3Pct ? a : b);
+    const bestS = summary[bestStrict];
+    const bestT = summary[bestTop3];
+
+    // 结论
+    let conclusion;
+    if (bestS.strictPct > baseline.strict + 3) {
+        conclusion = `<div class="conclusion good">
+            ✅ 最佳模型 <b>${bestStrict}</b> 严格命中率 ${bestS.strictPct.toFixed(2)}%，显著高于随机基准 ${baseline.strict}%。<br>
+            <span class="warn">⚠️ 注意：可能是小样本偶然，建议扩大回测期数再验证。真实彩票本质随机，请勿据此下注。</span>
+        </div>`;
+    } else if (bestS.strictPct > baseline.strict + 1) {
+        conclusion = `<div class="conclusion neutral">
+            🟡 最佳模型 <b>${bestStrict}</b> 严格命中率 ${bestS.strictPct.toFixed(2)}%，略高于随机（${baseline.strict}%），<br>
+            统计上不显著，可能偶然。Top3最佳：<b>${bestTop3}</b> ${bestT.top3Pct.toFixed(2)}%。
+        </div>`;
+    } else {
+        conclusion = `<div class="conclusion bad">
+            ❌ 所有模型严格命中率都在随机基准（${baseline.strict}%）附近或之下。<br>
+            <b>结论：排三号码序列本质为白噪声，任何模型都无法稳定预测。</b><br>
+            <span class="warn">⚠️ 建议放弃预测下注思路，彩票为独立随机事件。</span>
+        </div>`;
+    }
+
+    const dataJson = JSON.stringify(d);
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>🧠 模型对比 - ${cfg.name}</title>
+<style>
+* { box-sizing:border-box;margin:0;padding:0; }
+body { background:#1e1e1e;color:#ddd;font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-size:13px;padding:20px;line-height:1.6; }
+h2 { color:#8ec5ff;margin-bottom:6px; }
+h3 { color:#feca57;margin:18px 0 10px;font-size:15px; }
+.desc { color:#888;margin-bottom:18px; }
+table { width:100%;border-collapse:collapse;margin:8px 0 14px; }
+th,td { padding:8px 12px;text-align:center;border:1px solid rgba(255,255,255,0.08); }
+th { background:rgba(0,0,0,0.3);color:#8ec5ff;font-weight:600;font-size:12px; }
+td.model-name { text-align:left;font-weight:600;color:#feca57; }
+tbody tr:nth-child(odd) { background:rgba(255,255,255,0.02); }
+.summary-card { padding:14px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:8px;margin-bottom:16px; }
+.pos-section { padding:14px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;margin-bottom:14px; }
+.pos-title { color:#feca57;font-weight:600;margin-bottom:8px;font-size:14px; }
+.conclusion { padding:16px;border-radius:8px;margin-top:20px;font-size:14px;line-height:1.8; }
+.conclusion.good { background:rgba(46,204,113,0.08);border:1px solid rgba(46,204,113,0.3);color:#2ecc71; }
+.conclusion.neutral { background:rgba(254,202,87,0.08);border:1px solid rgba(254,202,87,0.3);color:#feca57; }
+.conclusion.bad { background:rgba(231,76,60,0.08);border:1px solid rgba(231,76,60,0.3);color:#ff6b6b; }
+.warn { color:#aaa;font-size:12px; }
+.badge { display:inline-block;padding:2px 8px;border-radius:3px;font-size:11px;background:#0e639c;color:#fff;margin-left:8px; }
+</style>
+</head>
+<body>
+<h2>🧠 多模型对比预测 - ${cfg.name}</h2>
+<div class="desc">
+    总数据 ${totalData} 期，回测 ${testCount} 期（每位 ${testCount} 次预测）<span class="badge">4 模型对比</span>
+</div>
+
+<h3>📊 总览（3位合计）</h3>
+<div class="summary-card">
+    <table>
+        <thead><tr><th>模型</th><th>严格命中率</th><th>命中/总</th><th>Top3命中率</th><th>命中/总</th></tr></thead>
+        <tbody>${summaryRows}</tbody>
+    </table>
+    <div style="color:#888;font-size:12px;margin-top:6px">
+        随机基准：严格 ${baseline.strict}% / Top3 ${baseline.top3}%
+    </div>
+</div>
+
+<h3>📌 各位详情</h3>
+${posTables}
+
+${conclusion}
+
+</body>
+</html>`;
+}
+
 /**
  * 生成均线形态识别 Webview HTML
  * @param {Object} d - {key, name, emoji, positionLabels, recentPeriod, posResults, summary}
@@ -4122,10 +4370,37 @@ async function runSmartFilter(redInput, blueInput, targetCount) {
     const blueScores = blues.map(scoreBlue).sort((a, b) => b.score - a.score);
 
     // 生成候选组合
+    // 策略：后区全组合覆盖 —— 先枚举后区所有 C(blues.length, 2) 种组合，
+    //       每种后区组合至少配 N/C 种前区组合，确保用户给的后区号码所有组合都被推荐到
     const candidates = [];
-    for (let iter = 0; iter < 50000; iter++) {
-        const redArr = weightedSelect(redScores, 5);
+
+    // 1. 枚举后区所有组合
+    const blueCombos = [];
+    for (let i = 0; i < blues.length; i++) {
+        for (let j = i + 1; j < blues.length; j++) {
+            blueCombos.push([blues[i], blues[j]].sort((a, b) => a - b));
+        }
+    }
+    const blueComboCount = blueCombos.length;
+
+    // 2. 每种后区组合至少分配的注数
+    const minPerBlueCombo = Math.max(1, Math.ceil(targetCount / blueComboCount));
+
+    // 3. 为每种后区组合生成前区
+    for (const blueCombo of blueCombos) {
+        const blueTotal = blueCombo.reduce((sum, n) => sum + (blueScores.find(b => b.num === n)?.score || 0), 0);
+        for (let iter = 0; iter < minPerBlueCombo * 3; iter++) { // 多生成一些再排序
+            const redArr = weightedSelect(redScores, 5);
+            const { comboScore, details } = scoreCombo(redArr, blueCombo);
+            const redTotal = redArr.reduce((sum, n) => sum + (redScores.find(r => r.num === n)?.score || 0), 0);
+            candidates.push({ reds: [...redArr].sort((a,b)=>a-b), blues: [...blueCombo], totalScore: redTotal + blueTotal*1.5 + comboScore, details });
+        }
+    }
+
+    // 4. 如果还不够 targetCount，用随机后区补充
+    while (candidates.length < targetCount * 3) {
         const blueArr = weightedSelect(blueScores, 2);
+        const redArr = weightedSelect(redScores, 5);
         const { comboScore, details } = scoreCombo(redArr, blueArr);
         const redTotal = redArr.reduce((sum, n) => sum + (redScores.find(r => r.num === n)?.score || 0), 0);
         const blueTotal = blueArr.reduce((sum, n) => sum + (blueScores.find(b => b.num === n)?.score || 0), 0);
@@ -4134,11 +4409,32 @@ async function runSmartFilter(redInput, blueInput, targetCount) {
 
     candidates.sort((a, b) => b.totalScore - a.totalScore);
 
-    // 去重取前N组
+    // 去重取前N组，同时确保每种后区组合至少出现一次
     const seen = new Set(), results = [];
+    const blueComboUsed = {}; // 记录每种后区组合已选注数
     for (const c of candidates) {
         const key = c.reds.join(',') + '|' + c.blues.join(',');
-        if (!seen.has(key)) { seen.add(key); results.push(c); if (results.length >= targetCount) break; }
+        if (seen.has(key)) continue;
+        const blueKey = c.blues.join(',');
+        blueComboUsed[blueKey] = (blueComboUsed[blueKey] || 0) + 1;
+        // 优先保留每种后区组合的前 minPerBlueCombo 注
+        seen.add(key);
+        results.push(c);
+        if (results.length >= targetCount) break;
+    }
+
+    // 校验：如果某些后区组合未被覆盖，强制补充
+    const coveredBlueCombos = new Set(results.map(r => r.blues.join(',')));
+    for (const bc of blueCombos) {
+        const bcKey = bc.join(',');
+        if (!coveredBlueCombos.has(bcKey)) {
+            // 找该后区组合的最高分候选
+            const fallback = candidates.find(c => c.blues.join(',') === bcKey);
+            if (fallback) {
+                results.push(fallback);
+                if (results.length >= targetCount + blueComboCount) break; // 允许超出一点
+            }
+        }
     }
 
     // 统计频率
@@ -4580,8 +4876,22 @@ async function runSsqFilter(redInput, blueInput, targetCount) {
     const blueScores = blues.map(scoreBlue).sort((a, b) => b.score - a.score);
 
     // 生成候选组合（双色球：6红1蓝）
+    // 策略：后区全覆盖 —— 每个蓝球号码至少分配 targetCount/blues.length 注
     const candidates = [];
-    for (let iter = 0; iter < 50000; iter++) {
+    const minPerBlueSsq = Math.max(1, Math.ceil(targetCount / blues.length));
+
+    for (const blueNum of blues) {
+        const blueTotal = (blueScores.find(b => b.num === blueNum) ? blueScores.find(b => b.num === blueNum).score : 0);
+        for (let iter = 0; iter < minPerBlueSsq * 3; iter++) {
+            const redArr = weightedSelect(redScores, 6);
+            const { comboScore, details } = scoreCombo(redArr, [blueNum]);
+            const redTotal = redArr.reduce((sum, n) => sum + (redScores.find(r => r.num === n) ? redScores.find(r => r.num === n).score : 0), 0);
+            candidates.push({ reds: [...redArr].sort((a,b)=>a-b), blues: [blueNum], totalScore: redTotal + blueTotal * 1.5 + comboScore, details });
+        }
+    }
+
+    // 如果不够，随机补充
+    while (candidates.length < targetCount * 3) {
         const redArr = weightedSelect(redScores, 6);
         const blueArr = weightedSelect(blueScores, 1);
         const { comboScore, details } = scoreCombo(redArr, blueArr);
@@ -4592,11 +4902,23 @@ async function runSsqFilter(redInput, blueInput, targetCount) {
 
     candidates.sort((a, b) => b.totalScore - a.totalScore);
 
-    // 去重取前N组
+    // 去重取前N组，确保每个蓝球至少出现一次
     const seen = new Set(), results = [];
     for (const c of candidates) {
         const key = c.reds.join(',') + '|' + c.blues.join(',');
-        if (!seen.has(key)) { seen.add(key); results.push(c); if (results.length >= targetCount) break; }
+        if (seen.has(key)) continue;
+        seen.add(key);
+        results.push(c);
+        if (results.length >= targetCount) break;
+    }
+
+    // 校验：如果某些蓝球未被覆盖，强制补充
+    const coveredBlues = new Set(results.map(r => r.blues[0]));
+    for (const bn of blues) {
+        if (!coveredBlues.has(bn)) {
+            const fallback = candidates.find(c => c.blues[0] === bn);
+            if (fallback) results.push(fallback);
+        }
     }
 
     // 统计频率

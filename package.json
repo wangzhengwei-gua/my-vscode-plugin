@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -34,6 +34,7 @@
         "onCommand:myPlugin.fc3dFormula",
         "onCommand:myPlugin.smartFilter",
         "onCommand:myPlugin.ssqFilter",
+        "onCommand:myPlugin.mlCompare",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -101,6 +102,10 @@
             {
                 "command": "myPlugin.ssqFilter",
                 "title": "双色球智能精选"
+            },
+            {
+                "command": "myPlugin.mlCompare",
+                "title": "ML Model Compare"
             }
         ],
         "viewsContainers": {

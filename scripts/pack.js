@@ -73,7 +73,8 @@ function copyDir(src, dest, relBase) {
         const srcPath = path.join(src, item.name);
         const relPath = relBase ? relBase + '/' + item.name : item.name;
         // 硬编码跳过大目录（不依赖 glob 匹配）
-        const skipDirs = ['node_modules', 'data', '.git', '.vscode', '.vscode-test', '_vsix_tmp', 'scripts'];
+        // 注：scripts/ 下有 ml_compare.py 等运行时依赖文件，不能整体跳过
+        const skipDirs = ['node_modules', 'data', '.git', '.vscode', '.vscode-test', '_vsix_tmp'];
         if (!relBase && skipDirs.indexOf(item.name) !== -1) continue;
         // 硬编码跳过 .vsix 文件
         if (item.name.endsWith('.vsix')) continue;
