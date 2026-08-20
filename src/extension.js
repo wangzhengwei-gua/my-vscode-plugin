@@ -1720,6 +1720,26 @@ async function runMLCompare(history, testCount) {
     const REQUIRED_PKGS = ['numpy', 'sklearn', 'pandas'];
     const PKG_TO_PIP = { 'numpy': 'numpy', 'sklearn': 'scikit-learn', 'pandas': 'pandas' };
 
+    // 检测结果缓存到 globalStorage，避免每次都跑检测
+    const ENV_CACHE_FILE = path.join(getPredDir(), 'python_env_cache.json');
+
+    function loadEnvCache() {
+        try {
+            const c = JSON.parse(fs.readFileSync(ENV_CACHE_FILE, 'utf-8'));
+            // 缓存7天内有效
+            if (Date.now() - c.ts < 7 * 24 * 3600 * 1000) return c;
+        } catch (e) {}
+        return null;
+    }
+
+    function saveEnvCache(pythonCmd, missing) {
+        try {
+            fs.writeFileSync(ENV_CACHE_FILE, JSON.stringify({
+                pythonCmd, missing, ts: Date.now()
+            }), 'utf-8');
+        } catch (e) {}
+    }
+
     // 在多个候选里找一个可用的 Python 命令
     function findPythonCmd() {
         const candidates = ['python', 'py -3', 'python3'];
@@ -1729,36 +1749,50 @@ async function runMLCompare(history, testCount) {
                     encoding: 'utf-8',
                     timeout: 5000,
                     windowsHide: true,
-                    stdio: 'pipe'
+                    stdio: 'pipe'  // 不让 stderr 抛错
                 });
                 return cmd;
             } catch (e) {
-                // 继续尝试
+                // 检查 stdout 是否有 "Python x.y" 即可（version 走 stdout 也走 stderr）
+                if (e.stdout && /Python\s+\d/i.test(e.stdout)) return cmd;
             }
         }
         return null;
     }
 
-    // 检测 Python 缺哪些库
+    // 检测 Python 缺哪些库（用 spawnSync 分离 stdout/stderr）
     function findMissingPkgs(pythonCmd) {
-        try {
-            const checkCode = 'import importlib,sys;' +
-                REQUIRED_PKGS.map(p => `print('${p}:' + str(bool(importlib.util.find_spec('${p}'))))`).join(';');
-            const out = execSync(`${pythonCmd} -c "${checkCode}"`, {
-                encoding: 'utf-8',
-                timeout: 10000,
-                windowsHide: true,
-                stdio: 'pipe'
-            });
-            const missing = [];
-            for (const line of out.trim().split(/\r?\n/)) {
-                const [pkg, ok] = line.split(':');
-                if (ok.trim() === 'False') missing.push(pkg.trim());
-            }
-            return missing;
-        } catch (e) {
-            return REQUIRED_PKGS.slice(); // 检测失败就当全部缺
+        const { spawnSync } = require('child_process');
+        // 简洁检测代码：尝试 import，没缺就输出 OK
+        const checkScript =
+            "import sys\n" +
+            "ok=[]\n" +
+            "for p in ['numpy','sklearn','pandas']:\n" +
+            "    try:\n" +
+            "        __import__(p)\n" +
+            "        ok.append(p)\n" +
+            "    except ImportError:\n" +
+            "        pass\n" +
+            "print('OK:' + ','.join(ok))\n";
+
+        const pythonBin = pythonCmd.split(' ')[0];
+        const pythonArgs = pythonCmd.includes(' ') ? ['-3', '-c', checkScript] : ['-c', checkScript];
+
+        const r = spawnSync(pythonBin, pythonArgs, {
+            encoding: 'utf-8',
+            timeout: 15000,
+            windowsHide: true
+        });
+
+        const stdout = (r.stdout || '').trim();
+        // 提取 OK: 后面的列表
+        const m = stdout.match(/OK:([^\n]*)/);
+        if (m) {
+            const installed = m[1].split(',').filter(x => x);
+            return REQUIRED_PKGS.filter(p => installed.indexOf(p) === -1);
         }
+        // 检测失败：当成全部缺失
+        return REQUIRED_PKGS.slice();
     }
 
     // 显示进度通道
@@ -1780,62 +1814,84 @@ async function runMLCompare(history, testCount) {
         ch.appendLine('可能需要 30-120 秒，请耐心等待...');
         ch.appendLine('────────────────────────────────────');
 
-        // pip 可能挂在 python -m pip
-        const pipCmd = `${pythonCmd} -m pip install ${pipNames}`;
+        const pythonBin = pythonCmd.split(' ')[0];
+        const pythonArgs = pythonCmd.includes(' ') ? ['-3', '-m', 'pip', 'install', ...pkgs.map(p => PKG_TO_PIP[p] || p)]
+                                                   : ['-m', 'pip', 'install', ...pkgs.map(p => PKG_TO_PIP[p] || p)];
+
         await new Promise((resolve, reject) => {
-            const { exec } = require('child_process');
-            const proc = exec(pipCmd, { windowsHide: false, maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
-                if (stdout) ch.append(stdout);
-                if (stderr) ch.append(stderr);
-                if (err) reject(err); else resolve();
+            const proc = spawn(pythonBin, pythonArgs, {
+                env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+                windowsHide: false
+            });
+            proc.stdout.on('data', d => ch.append(d.toString()));
+            proc.stderr.on('data', d => ch.append(d.toString()));
+            proc.on('error', reject);
+            proc.on('close', code => {
+                if (code === 0) resolve();
+                else reject(new Error(`pip install 退出码 ${code}`));
             });
         });
         ch.appendLine('✅ 依赖安装完成');
     }
 
-    // 第一步：找 Python
-    let pythonCmd = findPythonCmd();
-    if (!pythonCmd) {
-        // 完全找不到 Python，必须手动安装
-        ensureChannel().appendLine('❌ 未找到 Python 解释器');
-        const action = await vscode.window.showErrorMessage(
-            '⚠️ 未检测到 Python。模型对比功能需要 Python 3.8+\n\n请安装后重启 VSCode。',
-            { modal: true },
-            '打开 Python 官网'
-        );
-        if (action === '打开 Python 官网') {
-            vscode.env.openExternal(vscode.Uri.parse('https://www.python.org/downloads/'));
-        }
-        throw new Error('未检测到 Python，请先安装 Python 3.8+');
-    }
-    ensureChannel().appendLine(`✅ 检测到 Python: ${pythonCmd}`);
+    // ============== 主流程：先看缓存，缓存不存在才检测 ==============
+    const cached = loadEnvCache();
+    let pythonCmd, missingPkgs;
 
-    // 第二步：检测缺失库并自动安装
-    const missingPkgs = findMissingPkgs(pythonCmd);
-    if (missingPkgs.length > 0) {
-        try {
-            await autoPipInstall(pythonCmd, missingPkgs);
-            vscode.window.showInformationMessage('✅ Python 依赖已自动安装');
-        } catch (e) {
-            ensureChannel().appendLine('❌ 自动安装失败: ' + e.message);
-            const action = await vscode.window.showErrorMessage(
-                `依赖自动安装失败：${e.message}\n请手动执行: pip install ${missingPkgs.map(p => PKG_TO_PIP[p] || p).join(' ')}`,
-                { modal: true },
-                '复制命令'
-            );
-            if (action === '复制命令') {
-                await vscode.env.clipboard.writeText(`pip install ${missingPkgs.map(p => PKG_TO_PIP[p] || p).join(' ')}`);
-            }
-            throw new Error('依赖自动安装失败');
-        }
+    if (cached && cached.missing.length === 0) {
+        // 缓存命中：依赖已就绪
+        pythonCmd = cached.pythonCmd;
+        missingPkgs = [];
+        ensureChannel().appendLine(`✅ 检测缓存命中，Python 依赖已就绪（${pythonCmd}）`);
     } else {
-        ensureChannel().appendLine('✅ 所有 Python 依赖已就绪');
-    }
-    // ========== Python 环境检测+自动安装结束 ==========
+        // 缓存失效：实际检测
+        pythonCmd = findPythonCmd();
+        if (!pythonCmd) {
+            ensureChannel().appendLine('❌ 未找到 Python 解释器');
+            const action = await vscode.window.showErrorMessage(
+                '⚠️ 未检测到 Python。模型对比功能需要 Python 3.8+\n\n请安装后重启 VSCode。',
+                { modal: true },
+                '打开 Python 官网'
+            );
+            if (action === '打开 Python 官网') {
+                vscode.env.openExternal(vscode.Uri.parse('https://www.python.org/downloads/'));
+            }
+            throw new Error('未检测到 Python，请先安装 Python 3.8+');
+        }
+        ensureChannel().appendLine(`✅ 检测到 Python: ${pythonCmd}`);
 
-    // 后续调 Python 时用检测到的 pythonCmd
+        missingPkgs = findMissingPkgs(pythonCmd);
+        if (missingPkgs.length > 0) {
+            ensureChannel().appendLine(`⚠️ 缺失依赖: ${missingPkgs.join(', ')}`);
+            try {
+                await autoPipInstall(pythonCmd, missingPkgs);
+                vscode.window.showInformationMessage('✅ Python 依赖已自动安装');
+                missingPkgs = []; // 安装后重置为空
+            } catch (e) {
+                ensureChannel().appendLine('❌ 自动安装失败: ' + e.message);
+                const action = await vscode.window.showErrorMessage(
+                    `依赖自动安装失败：${e.message}\n请手动执行: pip install ${missingPkgs.map(p => PKG_TO_PIP[p] || p).join(' ')}`,
+                    { modal: true },
+                    '复制命令'
+                );
+                if (action === '复制命令') {
+                    await vscode.env.clipboard.writeText(`pip install ${missingPkgs.map(p => PKG_TO_PIP[p] || p).join(' ')}`);
+                }
+                throw new Error('依赖自动安装失败');
+            }
+        } else {
+            ensureChannel().appendLine('✅ 所有 Python 依赖已就绪');
+        }
+
+        // 写缓存（仅在依赖已就绪时才缓存，避免缓存了"缺失"状态）
+        if (missingPkgs.length === 0) {
+            saveEnvCache(pythonCmd, []);
+        }
+    }
+
     const pythonBin = pythonCmd.split(' ')[0]; // 'py -3' 取 'py'
     const pythonArgs = pythonCmd.includes(' ') ? ['-3'] : [];
+    // ========== Python 环境检测+自动安装结束 ==========
 
     // 构造输入数据
     const inputData = {
