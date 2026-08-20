@@ -1895,7 +1895,7 @@ async function runMLCompare(history, testCount) {
 
     // 构造输入数据
     const inputData = {
-        history: history.map(h => ({ num: h.num })),
+        history: history.map(h => ({ num: h.num, period: h.period, date: h.date })),
         testCount: testCount
     };
 

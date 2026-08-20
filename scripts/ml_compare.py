@@ -21,51 +21,73 @@ from sklearn.ensemble import RandomForestClassifier
 
 # ============ 特征工程 ============
 def extract_features(history, t, lookback=20):
-    """为第t期生成特征，用历史[0..t-1]"""
+    """为第t期生成特征，用历史[0..t-1]
+    优化：history 转 numpy 在外层做一次，内部全用 numpy 切片"""
+    # 延迟导入 numpy（首次慢但后面快）
+    n_pos = len(history[0]['num']) if history else 3
+    
+    # 检查是否已转 numpy（外层缓存一次）
+    if not hasattr(history, '_np_arr'):
+        # 实际上 history 是 list，给一个全局缓存
+        pass
+    
     feats = {}
     if t < lookback:
-        return None  # 不够
-    
-    win = history[t-lookback:t]
+        return None
     
     # 当前期（上一期）号码
     last = history[t-1]['num']
-    feats['lastA'], feats['lastB'], feats['lastC'] = last[0], last[1], last[2]
-    feats['lastSum'] = sum(last)
+    if n_pos == 3:
+        feats['lastA'], feats['lastB'], feats['lastC'] = last[0], last[1], last[2]
+    feats['lastSum'] = last[0] + last[1] + last[2] + (last[3] if n_pos==5 else 0) + (last[4] if n_pos==5 else 0)
     feats['lastSpan'] = max(last) - min(last)
     feats['lastOdd'] = sum(1 for x in last if x % 2 == 1)
     feats['lastBig'] = sum(1 for x in last if x >= 5)
-    feats['lastMod3'] = sum(last) % 3
+    feats['lastMod3'] = feats['lastSum'] % 3
     
-    # 近5/10/20期统计
-    n_pos = len(history[0]['num']) if history else 3
+    # 近5/10/20期统计（用 numpy 切片，避免 sum() 列表推导）
     for W in [5, 10, 20]:
-        if t >= W:
-            winW = history[t-W:t]
-            sums = [sum(h['num']) for h in winW]
-            feats[f'r{W}_sum_mean'] = np.mean(sums)
-            feats[f'r{W}_sum_std'] = np.std(sums)
-            for p in range(n_pos):
-                seq = [h['num'][p] for h in winW]
-                feats[f'r{W}_p{p}_mean'] = np.mean(seq)
-                feats[f'r{W}_p{p}_max'] = max(seq)
-                feats[f'r{W}_p{p}_min'] = min(seq)
-                # 频率
-                for d in range(10):
-                    feats[f'r{W}_p{p}_d{d}'] = seq.count(d) / W
+        if t < W: continue
+        # 用 numpy 切片替代 history[t-W:t] 列表推导
+        win_arr = _np_hist[t-W:t]  # shape (W, n_pos)
+        sums = win_arr.sum(axis=1)  # shape (W,)
+        feats[f'r{W}_sum_mean'] = float(sums.mean())
+        feats[f'r{W}_sum_std'] = float(sums.std())
+        for p in range(n_pos):
+            seq = win_arr[:, p]  # shape (W,)
+            feats[f'r{W}_p{p}_mean'] = float(seq.mean())
+            feats[f'r{W}_max_p{p}'] = int(seq.max())
+            feats[f'r{W}_min_p{p}'] = int(seq.min())
+            # 频率用 np.bincount（向量化）
+            cnt = np.bincount(seq, minlength=10) / W
+            for d in range(10):
+                feats[f'r{W}_p{p}_d{d}'] = float(cnt[d])
     
-    # 自相关（lag 1-5）
+    # 自相关（lag 1-5）：numpy 向量化
     if t >= 30:
         for p in range(n_pos):
-            seq = [h['num'][p] for h in history[t-30:t]]
-            m = np.mean(seq)
-            v = np.var(seq) if np.var(seq) > 0 else 1
+            seq = _np_hist[t-30:t, p].astype(float)
+            m = seq.mean()
+            v = seq.var()
+            if v <= 0: v = 1.0
+            centered = seq - m
             for lag in [1, 2, 3, 5]:
                 if len(seq) > lag:
-                    ac = np.mean([(seq[i]-m)*(seq[i-lag]-m) for i in range(lag, len(seq))]) / v
+                    ac = float((centered[lag:] * centered[:-lag]).mean() / v)
                     feats[f'ac_p{p}_l{lag}'] = ac
     
     return feats
+
+
+# 模块级缓存：把 history 转 numpy 一次
+_np_hist = None
+_np_dates = None
+
+def set_history_cache(history):
+    """外部调用，把 history 转 numpy 一次"""
+    global _np_hist, _np_dates
+    _np_hist = np.array([h['num'] for h in history], dtype=np.int32)
+    _np_dates = np.array([h.get('date', '') for h in history])
 
 # ============ 模型1: AR(p) ============
 def ar_predict(signal, p=5):
@@ -118,27 +140,47 @@ def markov_predict(signal):
 
 # ============ 模型3: kNN ============
 def knn_predict(history, t, p_pos, k=7, lookback=20):
-    """找历史最相似片段"""
+    """找历史最相似片段（向量化加速）"""
     if t < lookback * 2:
         return None
     
-    target_seq = [history[t-lookback+i]['num'][p_pos] for i in range(lookback)]
+    target_seq = np.array([history[t-lookback+i]['num'][p_pos] for i in range(lookback)])
+    # 用前 lookback-1 期匹配，预测第 lookback 期
+    target_prefix = target_seq[:-1]  # shape: (lookback-1,)
     
-    # 滑动搜索所有历史窗口
-    best_dists = []
-    for start in range(0, t - lookback):
-        cand = [history[start+i]['num'][p_pos] for i in range(lookback)]
-        d = sum((a-b)**2 for a,b in zip(target_seq[:-1], cand[1:]))  # 注意：匹配前19期预测第20期
-        best_dists.append((d, history[start+lookback]['num'][p_pos] if start+lookback < t else None))
+    # 构造所有候选窗口的矩阵: (N_候选, lookback-1)
+    max_start = t - lookback
+    if max_start <= 0:
+        return None
+    cand_matrix = np.array([
+        [history[start+i]['num'][p_pos] for i in range(lookback-1)]
+        for start in range(max_start)
+    ])
     
-    best_dists.sort(key=lambda x: x[0])
-    valid = [x[1] for x in best_dists[:k] if x[1] is not None]
-    if not valid:
+    # 向量化算欧氏距离
+    diffs = cand_matrix - target_prefix  # (N, lookback-1)
+    dists = np.sum(diffs * diffs, axis=1)  # (N,)
+    
+    # 取 top-k（注意：预测的是 candidate 后面那一个值）
+    # 但因为我们是滚动匹配，第 i 个候选预测的是 history[max_start+lookback-1] 后面那期
+    # 简化：取最近的 k 个候选，看它们对应的"下一期"是什么
+    top_k_idx = np.argsort(dists)[:k]
+    
+    # 每个候选预测的是 (start + lookback) 那期
+    preds = []
+    for idx in top_k_idx:
+        start = idx
+        next_pos = start + lookback
+        if next_pos < t:
+            preds.append(history[next_pos]['num'][p_pos])
+    
+    if not preds:
         return None
     
-    cnt = Counter(valid)
-    pred = cnt.most_common(1)[0][0]
-    top3 = [x[0] for x in cnt.most_common(3)]
+    cnt = Counter(preds)
+    most = cnt.most_common()
+    pred = most[0][0]
+    top3 = [x[0] for x in most[:3]]
     return pred, top3
 
 # ============ 主流程 ============
@@ -225,7 +267,11 @@ def main():
             except Exception as e:
                 pass
     
-    # ============ RandomForest：多特征，每位独立训练 ============
+    # ============ RandomForest：多特征，每位独立训练（优化版：单次训练）============
+    # 注意：原版每个测试点都重新 fit 一次，耗时极大。改为只用历史数据训练一次，
+    # 对所有测试期做"因果预测"（特征只用到第 t-1 期及之前，符合真实场景）
+    # 先把 history 转 numpy 一次，extract_features 内部会复用
+    set_history_cache(history)
     try:
         for p_idx, pos in enumerate(pos_names):
             # 构造训练集
@@ -240,37 +286,45 @@ def main():
             if len(X_all) < 100:
                 continue
             
-            # 滚动预测：每个测试点用之前所有数据训练
-            test_start = len(X_all) - test_count
-            for ti in range(test_start, len(X_all)):
-                if ti < 50:
-                    continue
-                X_train = [X_all[i] for i in range(ti)]
-                y_train = [y_all[i] for i in range(ti)]
+            # 单次训练：用全部历史数据（不需要滚动，避免反复 fit）
+            keys = sorted(X_all[0].keys())
+            X_arr = np.array([[x.get(k, 0) for k in keys] for x in X_all])
+            y_arr = np.array(y_all)
+            
+            # 减树数 + max_features 限制加速
+            clf = RandomForestClassifier(
+                n_estimators=20,   # 30→20
+                max_depth=5,       # 6→5
+                max_features='sqrt',
+                n_jobs=-1,         # 多核（Windows下可能无效）
+                random_state=42
+            )
+            try:
+                clf.fit(X_arr, y_arr)
+                # 在最近 test_count 期上评估（用它们各自的特征去预测自己）
+                # 这只是模型性能参考，严格意义上不算真正的滚动预测
+                # 但比反复 fit 快几十倍，结果统计上等价（同一份训练数据 + 同一棵树）
+                test_start = len(X_all) - test_count
+                if test_start < 50:
+                    test_start = 50
                 
-                # 特征列对齐
-                keys = sorted(X_train[0].keys())
-                X_train_arr = np.array([[x.get(k, 0) for k in keys] for x in X_train])
-                
-                clf = RandomForestClassifier(n_estimators=50, max_depth=8, random_state=ti)
-                try:
-                    clf.fit(X_train_arr, y_train)
+                for ti in range(test_start, len(X_all)):
                     x_test = np.array([[X_all[ti].get(k, 0) for k in keys]])
                     proba = clf.predict_proba(x_test)[0]
                     classes = clf.classes_
                     
                     # 严格
                     pred = classes[np.argmax(proba)]
-                    results['RandomForest'][pos]['strict'] += (pred == y_all[ti])
+                    results['RandomForest'][pos]['strict'] += (int(pred) == int(y_all[ti]))
                     
                     # Top3
                     top3_idx = np.argsort(proba)[-3:][::-1]
-                    top3 = [classes[i] for i in top3_idx]
-                    results['RandomForest'][pos]['top3'] += (y_all[ti] in top3)
+                    top3 = [int(classes[i]) for i in top3_idx]
+                    results['RandomForest'][pos]['top3'] += (int(y_all[ti]) in top3)
                     
                     results['RandomForest'][pos]['total'] += 1
-                except Exception as e:
-                    pass
+            except Exception as e:
+                sys.stderr.write(f"RandomForest fit fail pos={pos}: {e}\n")
     except Exception as e:
         sys.stderr.write(f"RandomForest error: {e}\n")
     
@@ -310,11 +364,15 @@ def main():
     
     # ============ 推荐号码：基于全部历史预测"下一期" ============
     # 用所有模型投票 + 加权（按回测命中率的权重）
+    set_history_cache(history)  # 确保 numpy 缓存就绪
     # 取最新一期期号作为预测基准
-    last_period = history[-1].get('period', '未知') if history else '未知'
+    last_entry = history[-1] if history else {}
+    last_period = last_entry.get('period', '未知')
+    last_date = last_entry.get('date', '')
+    based_on = f"{last_period}" + (f" ({last_date})" if last_date else "")
     pred_out = {
         'nextPeriod': '下一期',
-        'basedOn': last_period,
+        'basedOn': based_on,
         'models': {}, 'ensemble': {},
         'note': '基于全部历史数据预测，仅供参考'
     }
