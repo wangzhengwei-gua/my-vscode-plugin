@@ -1670,10 +1670,89 @@ function getNonce() {
  * 通过临时文件传递输入输出，避开 stdout 编码问题
  */
 async function runMLCompare(history, testCount) {
-    const { spawn } = require('child_process');
+    const { spawn, execSync } = require('child_process');
     const os = require('os');
     const path = require('path');
     const fs = require('fs');
+
+    // ========== 依赖检测：numpy / sklearn / pandas ==========
+    const REQUIRED_PKGS = ['numpy', 'sklearn', 'pandas'];
+    let missingPkgs = [];
+    try {
+        const checkCode = 'import importlib\n' +
+            REQUIRED_PKGS.map(p => `print('${p}:' + str(bool(importlib.util.find_spec('${p}'))))`).join('\n');
+        const out = execSync(`python -c "${checkCode.replace(/\n/g, ' ')}"`, {
+            encoding: 'utf-8',
+            timeout: 10000,
+            windowsHide: true
+        });
+        for (const line of out.trim().split('\n')) {
+            const [pkg, ok] = line.split(':');
+            if (ok.trim() === 'False') missingPkgs.push(pkg.trim());
+        }
+    } catch (e) {
+        // Python 不存在或检测失败
+        const installCmd = 'pip install numpy scikit-learn pandas';
+        const action = await vscode.window.showErrorMessage(
+            '⚠️ 未检测到 Python 或检测失败。模型对比需要 Python 3.8+ 及以下库：\n  numpy, scikit-learn, pandas\n\n请先安装 Python（https://python.org），然后运行：',
+            { modal: true },
+            '复制安装命令',
+            '打开 Python 官网'
+        );
+        if (action === '复制安装命令') {
+            await vscode.env.clipboard.writeText(installCmd);
+            vscode.window.showInformationMessage('已复制：' + installCmd + '，请在命令行执行');
+        } else if (action === '打开 Python 官网') {
+            vscode.env.openExternal(vscode.Uri.parse('https://www.python.org/downloads/'));
+        }
+        throw new Error('Python 环境未就绪，请按提示安装');
+    }
+
+    if (missingPkgs.length > 0) {
+        const pkgNames = {
+            'numpy': 'numpy',
+            'sklearn': 'scikit-learn',
+            'pandas': 'pandas'
+        };
+        const installNames = missingPkgs.map(p => pkgNames[p] || p).join(' ');
+        const installCmd = `pip install ${installNames}`;
+        const action = await vscode.window.showWarningMessage(
+            `⚠️ 检测到 Python 缺少以下库：${missingPkgs.join(', ')}\n\n需要安装才能运行模型对比。`,
+            { modal: true },
+            '一键安装',
+            '复制安装命令',
+            '取消'
+        );
+        if (action === '一键安装') {
+            // 显示输出通道，让用户看到安装进度
+            const channel = vscode.window.createOutputChannel('Python 依赖安装');
+            channel.show();
+            channel.appendLine('正在安装: ' + installCmd);
+            try {
+                const { exec } = require('child_process');
+                await new Promise((resolve, reject) => {
+                    const proc = exec(`pip install ${installNames}`, { windowsHide: false }, (err, stdout, stderr) => {
+                        if (stdout) channel.append(stdout);
+                        if (stderr) channel.append(stderr);
+                        if (err) reject(err); else resolve();
+                    });
+                });
+                channel.appendLine('✅ 安装完成！');
+                vscode.window.showInformationMessage('✅ 依赖安装完成，正在运行模型对比...');
+            } catch (e) {
+                channel.appendLine('❌ 安装失败: ' + e.message);
+                channel.appendLine('请手动执行: ' + installCmd);
+                throw new Error('依赖安装失败: ' + e.message);
+            }
+        } else if (action === '复制安装命令') {
+            await vscode.env.clipboard.writeText(installCmd);
+            vscode.window.showInformationMessage('已复制安装命令，请在命令行执行: ' + installCmd);
+            throw new Error('用户取消，请先安装依赖');
+        } else {
+            throw new Error('用户取消，缺少依赖: ' + missingPkgs.join(', '));
+        }
+    }
+    // ========== 依赖检测结束 ==========
 
     // 构造输入数据
     const inputData = {
