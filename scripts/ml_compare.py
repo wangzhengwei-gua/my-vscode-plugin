@@ -142,9 +142,21 @@ def knn_predict(history, t, p_pos, k=7, lookback=20):
 
 # ============ 主流程 ============
 def main():
-    # 支持两种输入：stdin 或 文件参数
-    if len(sys.argv) > 1:
-        with open(sys.argv[1], 'r', encoding='utf-8') as f:
+    # 解析参数：支持 --out 输出文件
+    out_path = None
+    args = sys.argv[1:]
+    input_file = None
+    i = 0
+    while i < len(args):
+        if args[i] == '--out' and i + 1 < len(args):
+            out_path = args[i + 1]
+            i += 2
+        else:
+            input_file = args[i]
+            i += 1
+    
+    if input_file:
+        with open(input_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
     else:
         data = json.load(sys.stdin)
@@ -285,7 +297,113 @@ def main():
     }
     out['baseline'] = {'strict': 10.0, 'top3': 30.0}
     
-    print(json.dumps(out, ensure_ascii=False, cls=NpEncoder))
+    # ============ 推荐号码：基于全部历史预测"下一期" ============
+    # 用所有模型投票 + 加权（按回测命中率的权重）
+    pred_out = {'nextPeriod': '下一期', 'models': {}, 'ensemble': {}, 'note': '基于全部历史数据预测，仅供参考'}
+    
+    for p_idx, pos in enumerate(pos_names):
+        signal = [h['num'][p_idx] for h in history]
+        models_pred = {}
+        
+        # AR
+        try:
+            ar = ar_predict(signal, p=5)
+            ar_int = int(np.clip(round(ar), 0, 9))
+            models_pred['AR'] = {'value': ar_int, 'prob': float(out['summary']['AR']['strictPct']/100)}
+        except Exception as e:
+            sys.stderr.write(f"AR fail pos={pos}: {e}\n")
+        
+        # Markov
+        try:
+            mk, top3_mk, _ = markov_predict(signal)
+            models_pred['Markov'] = {'value': int(mk), 'prob': float(out['summary']['Markov']['top3Pct']/100)}
+        except Exception as e:
+            sys.stderr.write(f"Markov fail pos={pos}: {e}\n")
+        
+        # kNN
+        try:
+            if len(signal) > 30:
+                query_seq = signal[-20:]
+                best_dists = []
+                for start in range(0, len(signal) - 20):
+                    cand = signal[start:start+20]
+                    if start + 20 >= len(signal) - 1: continue
+                    d = sum((a-b)**2 for a,b in zip(query_seq[:-1], cand[1:]))
+                    best_dists.append((d, signal[start+20]))
+                best_dists.sort(key=lambda x: x[0])
+                valid = [x[1] for x in best_dists[:7]]
+                if valid:
+                    from collections import Counter
+                    cnt = Counter(valid)
+                    pred_knn = cnt.most_common(1)[0][0]
+                    models_pred['kNN'] = {'value': int(pred_knn), 'prob': float(out['summary']['kNN']['top3Pct']/100)}
+        except Exception as e:
+            sys.stderr.write(f"kNN fail pos={pos}: {e}\n")
+        
+        # RandomForest：用所有历史训练后预测
+        try:
+            X_all, y_all = [], []
+            for t in range(30, len(history)):
+                feats = extract_features(history, t)
+                if feats is None: continue
+                X_all.append(feats)
+                y_all.append(history[t]['num'][p_idx])
+            if len(X_all) >= 50:
+                keys = sorted(X_all[0].keys())
+                X_arr = np.array([[x.get(k, 0) for k in keys] for x in X_all])
+                clf = RandomForestClassifier(n_estimators=100, max_depth=8, random_state=42)
+                clf.fit(X_arr, y_all)
+                # 预测"下一期"特征 = 最新一期
+                last_feats = extract_features(history, len(history))
+                if last_feats:
+                    x_pred = np.array([[last_feats.get(k, 0) for k in keys]])
+                    proba = clf.predict_proba(x_pred)[0]
+                    classes = clf.classes_
+                    pred_rf = int(classes[np.argmax(proba)])
+                    # Top3 概率质量
+                    top3_idx = np.argsort(proba)[-3:][::-1]
+                    top3_vals = [int(classes[i]) for i in top3_idx]
+                    top3_probs = [float(proba[i]) for i in top3_idx]
+                    models_pred['RandomForest'] = {
+                        'value': pred_rf, 
+                        'prob': float(np.max(proba)),
+                        'top3': top3_vals,
+                        'top3Prob': top3_probs
+                    }
+        except Exception as e:
+            sys.stderr.write(f"RF fail pos={pos}: {e}\n")
+
+        pred_out['models'][pos] = models_pred
+        
+        # 集成投票：按严格命中率加权 + Top3 命中率加权
+        votes = {}  # digit -> score
+        for m, p in models_pred.items():
+            v = p['value']
+            w = p['prob']
+            votes[v] = votes.get(v, 0) + w
+            # 如果有 Top3，加权投票
+            if 'top3' in p:
+                for d, prob in zip(p['top3'], p['top3Prob']):
+                    votes[d] = votes.get(d, 0) + w * prob * 0.5
+        
+        if votes:
+            best = max(votes.items(), key=lambda x: x[1])
+            top3 = sorted(votes.items(), key=lambda x: -x[1])[:3]
+            pred_out['ensemble'][pos] = {
+                'value': int(best[0]),
+                'score': round(float(best[1]), 2),
+                'top3': [int(d) for d, _ in top3]
+            }
+    
+    out['prediction'] = pred_out
+    
+    # 输出：优先写到文件，否则 stdout
+    output = json.dumps(out, ensure_ascii=False, cls=NpEncoder)
+    if out_path:
+        with open(out_path, 'w', encoding='utf-8') as f:
+            f.write(output)
+    else:
+        print(output)
 
 class NpEncoder(json.JSONEncoder):
     def default(self, obj):

@@ -1666,11 +1666,13 @@ function getNonce() {
  */
 /**
  * 调用 Python 后端跑多模型对比
+ * 通过临时文件传递输入输出，避开 stdout 编码问题
  */
 async function runMLCompare(history, testCount) {
-    const { exec } = require('child_process');
+    const { spawn } = require('child_process');
     const os = require('os');
     const path = require('path');
+    const fs = require('fs');
 
     // 构造输入数据
     const inputData = {
@@ -1678,26 +1680,51 @@ async function runMLCompare(history, testCount) {
         testCount: testCount
     };
 
-    // 写临时文件
-    const tmpFile = path.join(os.tmpdir(), 'pl3_ml_input.json');
-    const fs = require('fs');
-    fs.writeFileSync(tmpFile, JSON.stringify(inputData), 'utf-8');
+    // 写输入文件 + 输出文件路径
+    const tmpIn = path.join(os.tmpdir(), 'pl3_ml_in.json');
+    const tmpOut = path.join(os.tmpdir(), 'pl3_ml_out.json');
+    fs.writeFileSync(tmpIn, JSON.stringify(inputData), 'utf-8');
+    try { fs.unlinkSync(tmpOut); } catch (e) {}
 
     const scriptPath = path.join(__dirname, '..', 'scripts', 'ml_compare.py');
-    const cmd = `python "${scriptPath}" "${tmpFile}"`;
 
     return new Promise((resolve, reject) => {
-        exec(cmd, { maxBuffer: 10 * 1024 * 1024, timeout: 300000 }, (err, stdout, stderr) => {
-            try { fs.unlinkSync(tmpFile); } catch (e) {}
-            if (err) {
-                reject(new Error('Python 执行失败: ' + (stderr || err.message)));
+        // PYTHONIOENCODING=utf-8 + unbuffered，确保输出是 UTF-8
+        const proc = spawn('python', [
+            '-u',
+            scriptPath,
+            tmpIn,
+            '--out', tmpOut
+        ], {
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+            windowsHide: true
+        });
+
+        let stderrBuf = '';
+        proc.stderr.on('data', d => stderrBuf += d.toString('utf-8'));
+
+        proc.on('error', err => {
+            try { fs.unlinkSync(tmpIn); } catch (e) {}
+            reject(new Error('Python 启动失败: ' + err.message));
+        });
+
+        proc.on('close', code => {
+            try { fs.unlinkSync(tmpIn); } catch (e) {}
+            if (code !== 0) {
+                reject(new Error('Python 退出码 ' + code + ': ' + (stderrBuf || '未知错误')));
                 return;
             }
-            try {
-                const result = JSON.parse(stdout);
-                resolve(result);
-            } catch (e) {
-                reject(new Error('解析结果失败: ' + e.message + '\nstdout: ' + stdout.slice(0, 500)));
+            // 优先从输出文件读（更可靠）
+            if (fs.existsSync(tmpOut)) {
+                try {
+                    const content = fs.readFileSync(tmpOut, 'utf-8');
+                    fs.unlinkSync(tmpOut);
+                    resolve(JSON.parse(content));
+                } catch (e) {
+                    reject(new Error('读取输出文件失败: ' + e.message));
+                }
+            } else {
+                reject(new Error('Python 未生成输出文件: ' + stderrBuf.slice(0, 500)));
             }
         });
     });
@@ -1736,6 +1763,57 @@ function getMLCompareHtml(d, cfg, totalData, testCount) {
     const summary = d.summary;
     const baseline = d.baseline;
     const perPos = d.perPos;
+    const prediction = d.prediction || null;
+
+    // 构造推荐号码展示
+    let predictionHtml = '';
+    if (prediction && prediction.ensemble) {
+        const ensemble = prediction.ensemble;
+        const modelPred = prediction.models || {};
+        const posOrder = ['百位', '十位', '个位'];
+        const nums = posOrder.map(p => ensemble[p] ? ensemble[p].value : '?');
+        const mainPick = nums.join(' ');
+        // 各模型预测明细
+        const modelCells = models.map(m => {
+            const parts = posOrder.map(p => {
+                const mp = modelPred[p] && modelPred[p][m];
+                return mp ? `${p}:<b>${mp.value}</b>` : `${p}:-`;
+            });
+            return `<tr><td class="model-name">${m}</td><td>${parts.join(' &nbsp; ')}</td></tr>`;
+        }).join('');
+        // Top3 集成
+        const top3Html = posOrder.map(p => {
+            const e = ensemble[p];
+            if (!e) return `<div class="top3-pos"><b>${p}</b>: -</div>`;
+            return `<div class="top3-pos"><b>${p}</b>: ${(e.top3 || []).join(' / ')}</div>`;
+        }).join('');
+
+        predictionHtml = `
+<h3>🎯 下期推荐号码</h3>
+<div class="prediction-main">
+    <div class="pred-num">${nums[0]}</div>
+    <div class="pred-num">${nums[1]}</div>
+    <div class="pred-num">${nums[2]}</div>
+    <div class="pred-meta">
+        基于 4 模型集成（按命中率加权投票）<br>
+        <span style="color:#888;font-size:12px">⚠️ 仅供娱乐参考，请理性看待</span>
+    </div>
+</div>
+<div class="prediction-detail">
+    <div class="detail-card">
+        <div class="detail-title">各模型独立预测</div>
+        <table>
+            <tbody>${modelCells}</tbody>
+        </table>
+    </div>
+    <div class="detail-card">
+        <div class="detail-title">每位 Top3 候补（集成投票）</div>
+        <div class="top3-list">${top3Html}</div>
+    </div>
+</div>
+<div class="copy-tip">💡 复制推荐：<code>${mainPick}</code></div>
+`;
+    }
 
     // 计算表格行
     const summaryRows = models.map(m => {
@@ -1825,6 +1903,17 @@ tbody tr:nth-child(odd) { background:rgba(255,255,255,0.02); }
 .conclusion.good { background:rgba(46,204,113,0.08);border:1px solid rgba(46,204,113,0.3);color:#2ecc71; }
 .conclusion.neutral { background:rgba(254,202,87,0.08);border:1px solid rgba(254,202,87,0.3);color:#feca57; }
 .conclusion.bad { background:rgba(231,76,60,0.08);border:1px solid rgba(231,76,60,0.3);color:#ff6b6b; }
+.prediction-main { display:flex;align-items:center;gap:24px;padding:20px;background:linear-gradient(135deg, rgba(142,197,255,0.1), rgba(254,202,87,0.1));border:1px solid rgba(254,202,87,0.3);border-radius:12px;margin-bottom:14px; }
+.pred-num { width:80px;height:80px;display:flex;align-items:center;justify-content:center;background:#0e639c;color:#fff;font-size:42px;font-weight:bold;border-radius:50%;box-shadow:0 4px 16px rgba(14,99,156,0.4); }
+.pred-meta { color:#feca57;font-size:13px;line-height:1.7; }
+.prediction-detail { display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px; }
+.detail-card { padding:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px; }
+.detail-title { color:#8ec5ff;font-weight:600;margin-bottom:8px;font-size:13px; }
+.top3-list { display:flex;gap:14px;flex-wrap:wrap; }
+.top3-pos { color:#ddd;font-size:13px; }
+.top3-pos b { color:#feca57;margin-right:6px; }
+.copy-tip { padding:10px 14px;background:rgba(46,204,113,0.08);border:1px solid rgba(46,204,113,0.2);border-radius:6px;color:#aaa;font-size:12px;margin-bottom:14px; }
+.copy-tip code { background:#222;padding:3px 10px;border-radius:4px;color:#2ecc71;font-size:14px;font-weight:bold;letter-spacing:2px;margin-left:6px; }
 .warn { color:#aaa;font-size:12px; }
 .badge { display:inline-block;padding:2px 8px;border-radius:3px;font-size:11px;background:#0e639c;color:#fff;margin-left:8px; }
 </style>
@@ -1849,6 +1938,7 @@ tbody tr:nth-child(odd) { background:rgba(255,255,255,0.02); }
 <h3>📌 各位详情</h3>
 ${posTables}
 
+${predictionHtml}
 ${conclusion}
 
 </body>
