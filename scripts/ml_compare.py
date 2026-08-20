@@ -290,9 +290,11 @@ def main():
     
     out['summary'] = {
         m: {
+            'strict': total_strict[m],
+            'top3': total_top3[m],
+            'total': total_n[m],
             'strictPct': round(total_strict[m]/total_n[m]*100, 2) if total_n[m] > 0 else 0,
-            'top3Pct': round(total_top3[m]/total_n[m]*100, 2) if total_n[m] > 0 else 0,
-            'total': total_n[m]
+            'top3Pct': round(total_top3[m]/total_n[m]*100, 2) if total_n[m] > 0 else 0
         } for m in models
     }
     out['baseline'] = {'strict': 10.0, 'top3': 30.0}
