@@ -1972,7 +1972,7 @@ function getMLCompareHtml(d, cfg, totalData, testCount) {
 <div class="prediction-main">
     ${nums.map(n => `<div class="pred-num">${n}</div>`).join('')}
     <div class="pred-meta">
-        基于 4 模型集成（按命中率加权投票）<br>
+        基于 ${prediction.basedOn || '?'} 期数据 · 4 模型集成（按命中率加权投票）<br>
         <span style="color:#feca57;font-size:12px">🌟 好运相伴，必中一注！愿您财源滚滚来！</span><br>
         <button id="copyPickBtn" class="copy-btn">📋 一键复制号码</button>
     </div>

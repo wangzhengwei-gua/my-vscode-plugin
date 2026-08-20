@@ -310,7 +310,14 @@ def main():
     
     # ============ 推荐号码：基于全部历史预测"下一期" ============
     # 用所有模型投票 + 加权（按回测命中率的权重）
-    pred_out = {'nextPeriod': '下一期', 'models': {}, 'ensemble': {}, 'note': '基于全部历史数据预测，仅供参考'}
+    # 取最新一期期号作为预测基准
+    last_period = history[-1].get('period', '未知') if history else '未知'
+    pred_out = {
+        'nextPeriod': '下一期',
+        'basedOn': last_period,
+        'models': {}, 'ensemble': {},
+        'note': '基于全部历史数据预测，仅供参考'
+    }
     
     for p_idx, pos in enumerate(pos_names):
         signal = [h['num'][p_idx] for h in history]
