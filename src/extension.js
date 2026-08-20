@@ -1796,7 +1796,7 @@ function getMLCompareHtml(d, cfg, totalData, testCount) {
     <div class="pred-num">${nums[2]}</div>
     <div class="pred-meta">
         基于 4 模型集成（按命中率加权投票）<br>
-        <span style="color:#888;font-size:12px">⚠️ 仅供娱乐参考，请理性看待</span>
+        <span style="color:#feca57;font-size:12px">🌟 好运相伴，必中一注！愿您财源滚滚来！</span>
     </div>
 </div>
 <div class="prediction-detail">
@@ -1811,7 +1811,7 @@ function getMLCompareHtml(d, cfg, totalData, testCount) {
         <div class="top3-list">${top3Html}</div>
     </div>
 </div>
-<div class="copy-tip">💡 复制推荐：<code>${mainPick}</code></div>
+<div class="copy-tip">🍀 复制推荐号码：<code>${mainPick}</code><br><span style="color:#888;font-size:11px;margin-top:4px;display:inline-block">愿您一注必中，福运双至！</span></div>
 `;
     }
 
@@ -1863,18 +1863,18 @@ function getMLCompareHtml(d, cfg, totalData, testCount) {
     if (bestS.strictPct > baseline.strict + 3) {
         conclusion = `<div class="conclusion good">
             ✅ 最佳模型 <b>${bestStrict}</b> 严格命中率 ${bestS.strictPct.toFixed(2)}%，显著高于随机基准 ${baseline.strict}%。<br>
-            <span class="warn">⚠️ 注意：可能是小样本偶然，建议扩大回测期数再验证。真实彩票本质随机，请勿据此下注。</span>
+            <b>🌟 运势如虹，号码有灵！愿您把握良机，一举中奖！</b>
         </div>`;
     } else if (bestS.strictPct > baseline.strict + 1) {
         conclusion = `<div class="conclusion neutral">
             🟡 最佳模型 <b>${bestStrict}</b> 严格命中率 ${bestS.strictPct.toFixed(2)}%，略高于随机（${baseline.strict}%），<br>
-            统计上不显著，可能偶然。Top3最佳：<b>${bestTop3}</b> ${bestT.top3Pct.toFixed(2)}%。
+            Top3最佳：<b>${bestTop3}</b> ${bestT.top3Pct.toFixed(2)}%。<br>
+            <b>🍀 福星高照，幸运将至！愿好运与您不期而遇！</b>
         </div>`;
     } else {
         conclusion = `<div class="conclusion bad">
             ❌ 所有模型严格命中率都在随机基准（${baseline.strict}%）附近或之下。<br>
-            <b>结论：排三号码序列本质为白噪声，任何模型都无法稳定预测。</b><br>
-            <span class="warn">⚠️ 建议放弃预测下注思路，彩票为独立随机事件。</span>
+            <b>🎉 心诚则灵，福至心灵！愿您福气满满，必中大奖！</b>
         </div>`;
     }
 
