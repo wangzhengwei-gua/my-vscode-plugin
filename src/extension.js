@@ -1388,12 +1388,53 @@ function activate(context) {
         try {
             history = loadLotteryData(cfg);
             if (history.length < 100) {
-                vscode.window.showWarningMessage('数据不足（需要 ≥100 期用于训练），请先刷新数据');
-                return;
+                // 数据不足，先尝试自动爬取
+                const crawlAction = await vscode.window.showInformationMessage(
+                    `数据不足（仅 ${history.length} 期，需 ≥100 期）。\n是否自动爬取最新数据？`,
+                    { modal: true },
+                    '自动爬取',
+                    '取消'
+                );
+                if (crawlAction !== '自动爬取') return;
+                await vscode.window.withProgress({
+                    location: vscode.ProgressLocation.Notification,
+                    title: `正在爬取 ${cfg.name} 数据...`,
+                    cancellable: false
+                }, async () => {
+                    await autoRefresh(500, true);
+                });
+                history = loadLotteryData(cfg);
+                if (history.length < 100) {
+                    vscode.window.showWarningMessage('爬取后数据仍不足，请检查网络后重试「🔄 刷新彩票数据」');
+                    return;
+                }
             }
         } catch (e) {
-            vscode.window.showErrorMessage('读取数据失败: ' + e.message);
-            return;
+            // 数据文件不存在，自动爬取
+            const crawlAction = await vscode.window.showInformationMessage(
+                `数据文件不存在（${cfg.name}）。是否自动爬取？`,
+                { modal: true },
+                '自动爬取',
+                '取消'
+            );
+            if (crawlAction !== '自动爬取') return;
+            try {
+                await vscode.window.withProgress({
+                    location: vscode.ProgressLocation.Notification,
+                    title: `正在爬取 ${cfg.name} 数据...`,
+                    cancellable: false
+                }, async () => {
+                    await autoRefresh(500, true);
+                });
+                history = loadLotteryData(cfg);
+                if (history.length < 100) {
+                    vscode.window.showWarningMessage('爬取后数据仍不足，请检查网络后重试');
+                    return;
+                }
+            } catch (e2) {
+                vscode.window.showErrorMessage('爬取失败: ' + e2.message + '\n请尝试点击侧边栏的「🔄 刷新彩票数据」');
+                return;
+            }
         }
 
         const testPick = await vscode.window.showQuickPick(
