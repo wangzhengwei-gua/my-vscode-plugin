@@ -2416,6 +2416,10 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
     let settledCount = new Array(10).fill(0);
     let frame = 0;
     let paused = false;
+    // 预测模式相关（提前声明，避免 TDZ 错误）
+    let mode = 'history';  // 'history' 或 'predict'
+    let predictBoids = [];
+    let gravityWells = null;
 
     function resetBoids() {
         boids = [];
@@ -2635,9 +2639,7 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
     });
 
     // ============ 预测模式 ============
-    let mode = 'history';  // 'history' 或 'predict'
-    let predictBoids = [];  // 预测用的探测鸟
-    let gravityWells = null;  // 号码区引力场（历史频率）
+    // mode / predictBoids / gravityWells 已在前面声明
 
     function calcGravityWells() {
         // 用当前历史鸟的分布作为引力场（频率高的区引力大）
