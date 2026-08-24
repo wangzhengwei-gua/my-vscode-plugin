@@ -2395,38 +2395,36 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
             resize();
         }
 
-        // 全部落地后保持画面，不再更新（节省 CPU）
+        // 是否全部落地（决定是否还 update 鸟位置）
         const allLanded = frame > 60 && boids.length > 0 && boids.every(b => b.landed && b.landTimer > 35);
-        if (allLanded) {
-            if (frame % 60 === 0) { drawFreq(); drawStats(); }
-            frame++;
-            return;
-        }
 
-        // ============ 调试：保证有可见输出 ============
-        // 直接清空背景为深色（非半透明），避免拖尾把一切都擦掉
+        // ============ 背景 ============
+        // 每帧用纯黑覆盖整个画布（保证有底色 + 避免无限拖尾累积）
         ctx.fillStyle = 'rgba(5,8,16,1)';
         ctx.fillRect(0, 0, W, H);
 
-        // 如果 W/H 异常，画提示
+        // 如果 W/H 异常，画红色提示
         if (W < 100 || H < 100) {
             ctx.fillStyle = '#ff6b6b';
             ctx.font = '14px sans-serif';
             ctx.textAlign = 'left';
-            ctx.fillText('Canvas 尺寸异常: ' + W + 'x' + H + ' (resize 不成功)', 10, 30);
+            ctx.fillText('Canvas 尺寸异常: ' + W + 'x' + H, 10, 30);
             ctx.fillText('boids 数组长度: ' + boids.length, 10, 50);
             frame++;
             return;
         }
 
         // ============ 主绘制 ============
-        // 拖尾背景（半透明黑覆盖，制造飞行轨迹）
-        ctx.fillStyle = 'rgba(5,8,16,0.25)';
-        ctx.fillRect(0, 0, W, H);
-
-        // 拖尾背景
-        ctx.fillStyle = 'rgba(5,8,16,0.25)';
-        ctx.fillRect(0, 0, W, H);
+        // 更新鸟位置（仅在未全部落地时）
+        if (!allLanded) {
+            for (const b of boids) {
+                b.update(boids);
+            }
+        }
+        // 永远画鸟
+        for (const b of boids) {
+            b.draw();
+        }
 
         // 统计各号码区鸟数
         const zoneCounts = new Array(10).fill(0);
@@ -2469,25 +2467,19 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
                 ctx.fillText('★', x + w/2, zoneY - 26);
             }
         }
+
         // 顶部统计标签
         const landedCount = boids.filter(b => b.landed).length;
-        const allLanded2 = landedCount === boids.length;
-        ctx.fillStyle = allLanded2 ? '#2ecc71' : '#5ad2ff';
+        ctx.fillStyle = allLanded ? '#2ecc71' : '#5ad2ff';
         ctx.font = '12px sans-serif';
         ctx.textAlign = 'left';
-        if (allLanded2) {
+        if (allLanded) {
             ctx.fillText('✅ 已收敛: ' + boids.length + ' 只鸟全部落地 · 频率分布定格 (点重置重新模拟)', 12, 20);
         } else {
             ctx.fillText('⏳ 模拟中: ' + landedCount + '/' + boids.length + ' 已落地 · 帧 ' + frame + ' · 画布 ' + W + 'x' + H, 12, 20);
         }
 
-        // 更新+绘制 Boids
-        for (const b of boids) {
-            b.update(boids);
-            b.draw();
-        }
-
-        // 每 30 帧更新一次侧栏图（节省 CPU）
+        // 帧计数器 + 侧栏刷新
         frame++;
         if (frame % 20 === 0) {
             drawFreq();
