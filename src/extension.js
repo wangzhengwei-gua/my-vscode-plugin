@@ -2391,7 +2391,8 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
         if (paused) return;
 
         // 全部落地后保持画面，不再更新（节省 CPU）
-        const allLanded = boids.length > 0 && boids.every(b => b.landed && b.landTimer > 35);
+        // 至少跑 60 帧才允许判落地，避免初始时 W/H 为 0 误判
+        const allLanded = frame > 60 && boids.length > 0 && boids.every(b => b.landed && b.landTimer > 35);
         if (allLanded) {
             // 仅刷新侧栏统计（万一有变化）
             if (frame % 60 === 0) { drawFreq(); drawStats(); }
@@ -2475,10 +2476,23 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
     });
 
     // 启动
-    resetBoids();
-    drawCum();
-    drawTrans();
-    loop();
+    function start() {
+        // 等 canvas 尺寸就绪后再初始化鸟群，否则 W=H=0 会导致所有鸟都挤在 (0,0)
+        if (W === 0 || H === 0) {
+            // 强制同步 resize
+            resize();
+            if (W === 0 || H === 0) {
+                requestAnimationFrame(start);
+                return;
+            }
+        }
+        resetBoids();
+        drawCum();
+        drawTrans();
+        loop();
+    }
+    // 等 50ms 让 DOM 完成布局
+    setTimeout(start, 100);
 })();
 </script>
 </body>
