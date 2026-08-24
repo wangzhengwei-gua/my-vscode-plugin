@@ -2173,6 +2173,10 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
             this.landTimer = 0;
         }
         update(boids) {
+            // 已彻底落地（30 帧后）的鸟不再更新，防止被群飞规则拉走
+            if (this.landed && this.landTimer > 30) {
+                return;
+            }
             // 群飞规则
             let alignX=0, alignY=0, alignN=0;
             let cohX=0, cohY=0, cohN=0;
@@ -2244,7 +2248,7 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
             this.vel.y += this.acc.y;
 
             // 落地判定：接近目标 + 速度小 → 标记 landed，开始衰减
-            if (dist < 25 && !this.landed) {
+            if (dist < 60 && !this.landed) {
                 this.landed = true;
                 this.landTimer = 0;
                 settledCount[this.num] = (settledCount[this.num] || 0) + 1;
@@ -2423,7 +2427,8 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
     }
 
     function loop() {
-        requestAnimationFrame(loop);
+        // 用 setTimeout 替代 requestAnimationFrame，避免 Webview 失焦时画面冻结
+        setTimeout(loop, 33);  // ~30 FPS
         if (paused) return;
 
         // 每帧开头强制同步尺寸
