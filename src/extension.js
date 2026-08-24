@@ -2318,7 +2318,7 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
     <div><span class="dot" style="background:#5ad2ff"></span>Boid 飞鸟</div>
     <div><span class="dot" style="background:#feca57"></span>激活态细胞（生命游戏进行中）</div>
     <div><span class="dot" style="background:#e74c3c"></span>活细胞</div>
-    <div>💡 鼠标点击: 吸引鸟群 · 右键: 激活生命</div>
+    <div>💡 左键按住: 强吸引鸟群 · 右键按住: 吸引鸟群+激活生命</div>
 </div>
 
 <script>
@@ -2408,14 +2408,16 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
                 this.acc.y += sepY * params.separation * 0.05;
             }
 
-            // 鼠标吸引
-            if (mouseActive) {
+            // 鼠标吸引（左键按住=强吸引，右键按住=强吸引+激活生命，鼠标移动=弱吸引）
+            if (mouseActive || mouseRightActive) {
                 const dx = mouseX - this.pos.x;
                 const dy = mouseY - this.pos.y;
                 const d2 = dx*dx + dy*dy;
-                if (d2 < 250*250) {
-                    this.acc.x += dx * 0.0002;
-                    this.acc.y += dy * 0.0002;
+                if (d2 < 300*300) {
+                    // 引力强度：距离越近越强，左键比右键更强
+                    const strength = mouseRightActive ? 0.0015 : 0.003;
+                    this.acc.x += dx * strength;
+                    this.acc.y += dy * strength;
                 }
             }
         }
@@ -2606,7 +2608,7 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
     }
 
     // ============ 鼠标交互 ============
-    let mouseX = 0, mouseY = 0, mouseActive = false;
+    let mouseX = 0, mouseY = 0, mouseActive = false, mouseRightActive = false;
     canvas.addEventListener('mousemove', e => {
         mouseX = e.clientX; mouseY = e.clientY;
     });
@@ -2615,7 +2617,9 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
             mouseActive = true;
             mouseX = e.clientX; mouseY = e.clientY;
         } else if (e.button === 2) {
-            // 右键: 在该区域激活生命
+            // 右键: 强吸引鸟群 + 激活生命
+            mouseRightActive = true;
+            mouseX = e.clientX; mouseY = e.clientY;
             for (let dy = -3; dy <= 3; dy++) {
                 for (let dx = -3; dx <= 3; dx++) {
                     const i = gridIndex(e.clientX + dx * params.gridSize, e.clientY + dy * params.gridSize);
@@ -2624,7 +2628,10 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
             }
         }
     });
-    canvas.addEventListener('mouseup', e => { if (e.button === 0) mouseActive = false; });
+    canvas.addEventListener('mouseup', e => {
+        if (e.button === 0) mouseActive = false;
+        if (e.button === 2) mouseRightActive = false;
+    });
     canvas.addEventListener('contextmenu', e => e.preventDefault());
 
     // ============ 控件 ============
