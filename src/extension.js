@@ -1483,8 +1483,8 @@ function activate(context) {
     let boidsNumberDisposable = vscode.commands.registerCommand('myPlugin.boidsNumber', async () => {
         const pick = await vscode.window.showQuickPick(
             [
-                { label: '🎯 排列三', value: 'pl3', description: '3位号码 群鸟模拟' },
-                { label: '🎰 排列五', value: 'pl5', description: '5位号码 群鸟模拟' }
+                { label: '🎯 排列三', value: 'pl3', description: '3位号码 一起分析' },
+                { label: '🎰 排列五', value: 'pl5', description: '5位号码 一起分析' }
             ],
             { placeHolder: '选择彩种' }
         );
@@ -1505,26 +1505,18 @@ function activate(context) {
             return;
         }
 
-        // 选位（3位时百/十/个，5位时万/千/百/十/个）
-        const posItems = cfg.positions.map((p, i) => ({
-            label: p.label + '位',
-            value: i,
-            description: '分析第' + (i + 1) + '位号码分布'
-        }));
-        const posPick = await vscode.window.showQuickPick(posItems, { placeHolder: '选择分析哪一位' });
-        if (!posPick) return;
-
-        // 取该位号码序列
-        const numbers = history.map(h => cfg.positions[posPick.value].pick(h));
+        // 取所有位数的数据（不再分位选择）
+        const posLabels = cfg.positions.map(p => p.label + '位');
+        const allNumbers = cfg.positions.map(p => history.map(h => p.pick(h)));
         const periods = history.map(h => h.period);
 
         const panel = vscode.window.createWebviewPanel(
             'boidsNumber',
-            '🐦 群鸟号码模拟 - ' + cfg.name + ' ' + cfg.positions[posPick.value].label + '位',
+            '🎲 号码分析 - ' + cfg.name,
             vscode.ViewColumn.One,
             { enableScripts: true, retainContextWhenHidden: true }
         );
-        panel.webview.html = getBoidsNumberHtml(cfg.name, cfg.positions[posPick.value].label + '位', numbers, periods);
+        panel.webview.html = getBoidsNumberHtml(cfg.name, posLabels, allNumbers, periods);
     });
     context.subscriptions.push(boidsNumberDisposable);
 
@@ -2055,210 +2047,220 @@ h2 { color:#8ec5ff;font-weight:500;margin-bottom:8px; }
  *   2. 累积占比演化：随期数累积的占比曲线（趋于 10% = 随机）
  *   3. 转移路径流图：相邻号码转移关系（如 9→0 频率）
  */
-function getBoidsNumberHtml(name, posLabel, numbers, periods) {
-    const data = numbers.slice(-300);
-    const periodsSliced = periods.slice(-300);
-    const N = data.length;
+function getBoidsNumberHtml(name, posLabels, allNumbers, periods) {
+    // allNumbers: [[位1号码序列], [位2号码序列], ...]
+    // posLabels: ['百位','十位','个位'] 或 ['万位','千位','百位','十位','个位']
+    const nPos = posLabels.length;
+    const N = Math.min(300, allNumbers[0].length);
+    const periodsSliced = periods.slice(-N);
 
-    // ============ 统计 ============
-    // 频率分布
-    const counts = new Array(10).fill(0);
-    for (const n of data) counts[n]++;
-    const freqs = counts.map(c => c / N * 100);
+    // 为每位计算统计
+    const posData = allNumbers.map((nums, p) => {
+        const data = nums.slice(-N);
+        const counts = new Array(10).fill(0);
+        for (const n of data) counts[n]++;
+        const freqs = counts.map(c => c / N * 100);
 
-    // 累积占比（每个号码随期数累积）
-    const cum = new Array(10).fill(0);
-    const cumSeries = new Array(10).fill(null).map(() => []);
-    for (let i = 0; i < N; i++) {
-        cum[data[i]]++;
-        for (let d = 0; d < 10; d++) {
-            cumSeries[d].push(cum[d] / (i + 1) * 100);
+        const cum = new Array(10).fill(0);
+        const cumSeries = new Array(10).fill(null).map(() => []);
+        for (let i = 0; i < N; i++) {
+            cum[data[i]]++;
+            for (let d = 0; d < 10; d++) {
+                cumSeries[d].push(cum[d] / (i + 1) * 100);
+            }
         }
-    }
 
-    // 转移矩阵
-    const trans = Array.from({length: 10}, () => new Array(10).fill(0));
-    for (let i = 0; i < N - 1; i++) trans[data[i]][data[i+1]]++;
-    const transMax = Math.max(...trans.map(r => Math.max(...r)));
+        const trans = Array.from({length: 10}, () => new Array(10).fill(0));
+        for (let i = 0; i < N - 1; i++) trans[data[i]][data[i+1]]++;
+        const transMax = Math.max(...trans.map(r => Math.max(...r)));
 
-    // 最大频率号码
-    const maxFreqIdx = counts.indexOf(Math.max(...counts));
-    const sortedByFreq = counts.map((c, i) => ({c, i})).sort((a, b) => b.c - a.c);
+        return { data, counts, freqs, cumSeries, trans, transMax, maxFreqIdx: counts.indexOf(Math.max(...counts)) };
+    });
 
-    // 理论频率 10%
     const colors = ['#5ad2ff','#4cd9c0','#a78bfa','#feca57','#ff7675','#10b981','#f472b6','#facc15','#60a5fa','#34d399'];
-
-    const dataJson = JSON.stringify({ data, periods: periodsSliced, counts, freqs, cumSeries, trans, transMax, maxFreqIdx, sortedByFreq, colors });
+    const dataJson = JSON.stringify({ posLabels, posData, N, periods: periodsSliced, colors, lastPeriod: periodsSliced[periodsSliced.length-1] });
 
     return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>🎲 号码分析 - ${name} ${posLabel}</title>
+<title>🎲 号码分析 - ${name}</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; padding: 20px; }
-h2 { color: #8ec5ff; margin-bottom: 6px; }
-.meta { color: #888; font-size: 12px; margin-bottom: 20px; }
-.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 900px; }
-.panel { background: rgba(20,30,50,0.5); border: 1px solid rgba(120,180,255,0.15); border-radius: 8px; padding: 14px; }
-.panel h3 { color: #feca57; font-size: 14px; margin-bottom: 10px; }
-.panel canvas { width: 100%; display: block; background: rgba(0,0,0,0.3); border-radius: 4px; }
-.bar-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
-.bar-label { width: 24px; text-align: center; font-weight: bold; }
-.bar-track { flex: 1; height: 20px; background: rgba(0,0,0,0.3); border-radius: 4px; position: relative; }
-.bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
-.bar-val { width: 80px; font-size: 12px; color: #aaa; }
-.legend { font-size: 11px; color: #666; line-height: 1.5; margin-top: 6px; }
-.pred-btn { display: block; width: 100%; padding: 12px; margin: 20px 0; background: #c0392b; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold; }
+body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; padding: 16px; }
+h2 { color: #8ec5ff; margin-bottom: 4px; }
+.meta { color: #888; font-size: 12px; margin-bottom: 16px; }
+.pred-btn { display: block; width: 100%; max-width: 600px; padding: 14px; margin: 0 auto 16px; background: #c0392b; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 18px; font-weight: bold; }
 .pred-btn:hover { background: #e74c3c; }
-.pred-result { padding: 16px; background: rgba(192,57,43,0.1); border: 1px solid rgba(192,57,43,0.3); border-radius: 8px; margin: 16px 0; text-align: center; }
-.pred-num { font-size: 36px; font-weight: bold; color: #2ecc71; letter-spacing: 8px; }
-.pred-top3 { color: #feca57; font-size: 14px; margin-top: 8px; }
-.pred-detail { color: #888; font-size: 12px; margin-top: 8px; line-height: 1.6; }
+.pred-result { padding: 16px; background: rgba(192,57,43,0.1); border: 1px solid rgba(192,57,43,0.3); border-radius: 8px; margin: 0 auto 20px; max-width: 600px; text-align: center; }
+.pred-num { font-size: 48px; font-weight: bold; color: #2ecc71; letter-spacing: 12px; margin: 8px 0; }
+.pred-top3 { color: #feca57; font-size: 14px; }
+.pred-detail { color: #888; font-size: 11px; margin-top: 8px; line-height: 1.6; }
+.pos-section { margin-bottom: 20px; }
+.pos-title { color: #feca57; font-size: 16px; font-weight: bold; margin-bottom: 8px; border-bottom: 1px solid rgba(254,202,87,0.2); padding-bottom: 4px; }
+.pos-content { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.panel { background: rgba(20,30,50,0.5); border: 1px solid rgba(120,180,255,0.15); border-radius: 8px; padding: 10px; }
+.panel h4 { color: #8ec5ff; font-size: 12px; margin-bottom: 6px; }
+.panel canvas { width: 100%; display: block; background: rgba(0,0,0,0.3); border-radius: 4px; }
+.bar-row { display: flex; align-items: center; gap: 6px; margin: 3px 0; font-size: 12px; }
+.bar-label { width: 18px; text-align: center; font-weight: bold; }
+.bar-track { flex: 1; height: 16px; background: rgba(0,0,0,0.3); border-radius: 3px; position: relative; }
+.bar-fill { height: 100%; border-radius: 3px; }
+.bar-val { width: 70px; font-size: 11px; color: #aaa; }
+.legend { font-size: 10px; color: #666; margin-top: 4px; }
 </style>
 </head>
 <body>
-<h2>🎲 ${name} · ${posLabel} · 号码频率分析</h2>
-<div class="meta">历史 ${N} 期 · 最新 ${periodsSliced[periodsSliced.length-1] || '?'} · 理论均匀 10%</div>
+<h2>🎲 ${name} · 全位号码频率分析</h2>
+<div class="meta">历史 ${N} 期 · 最新 ${periodsSliced[periodsSliced.length-1] || '?'} · 各位独立统计 · 理论均匀 10%</div>
 
 <button class="pred-btn" id="btnPredict">🔮 一键预测下期号码</button>
 <div id="predResult"></div>
 
-<div class="grid">
-    <div class="panel">
-        <h3>📊 频率分布</h3>
-        <div id="bars"></div>
-        <div class="legend">黄柱 = 实际频率 · 虚线 = 理论 10%</div>
-    </div>
-    <div class="panel">
-        <h3>📈 累积占比演化</h3>
-        <canvas id="cumCanvas" width="400" height="200"></canvas>
-        <div class="legend">10条线代表0-9累积占比，越接近10%越随机</div>
-    </div>
-    <div class="panel" style="grid-column: span 2;">
-        <h3>🔀 转移矩阵热力图</h3>
-        <canvas id="transCanvas" width="400" height="200"></canvas>
-        <div class="legend">行=当前号 · 列=下一号 · 越亮=转移越频繁</div>
+${posLabels.map((label, p) => `
+<div class="pos-section">
+    <div class="pos-title">${label}</div>
+    <div class="pos-content">
+        <div class="panel">
+            <h4>📊 频率分布</h4>
+            <div id="bars_${p}"></div>
+            <div class="legend">最高频率 ★</div>
+        </div>
+        <div class="panel">
+            <h4>📈 累积占比</h4>
+            <canvas id="cum_${p}" width="300" height="120"></canvas>
+            <div class="legend">越接近10%越随机</div>
+        </div>
+        <div class="panel" style="grid-column: span 2;">
+            <h4>🔀 转移矩阵</h4>
+            <canvas id="trans_${p}" width="300" height="120"></canvas>
+            <div class="legend">行=当前号 · 列=下一号 · 越亮=转移越频繁</div>
+        </div>
     </div>
 </div>
+`).join('')}
 
 <script>
 (function() {
     const D = ${dataJson};
 
-    // ============ 频率条形图 ============
-    const barsEl = document.getElementById('bars');
-    for (let i = 0; i < 10; i++) {
-        const pct = D.freqs[i];
-        const color = D.colors[i];
-        const isMax = i === D.maxFreqIdx;
-        const row = document.createElement('div');
-        row.className = 'bar-row';
-        row.innerHTML =
-            '<div class="bar-label" style="color:' + color + '">' + i + '</div>' +
-            '<div class="bar-track">' +
-                '<div class="bar-fill" style="width:' + (pct * 5) + '%; background:' + color + '; opacity:' + (isMax ? 1 : 0.7) + ';"></div>' +
-                '<div style="position:absolute; top:0; left:' + (10 * 5) + '%; width:1px; height:100%; background:rgba(120,180,255,0.4);"></div>' +
-            '</div>' +
-            '<div class="bar-val">' + D.counts[i] + '次 · ' + pct.toFixed(1) + '%' + (isMax ? ' ★' : '') + '</div>';
-        barsEl.appendChild(row);
-    }
+    // 为每位渲染统计图
+    D.posLabels.forEach((label, p) => {
+        const pd = D.posData[p];
 
-    // ============ 累积占比折线 ============
-    const cumC = document.getElementById('cumCanvas');
-    const cumX = cumC.getContext('2d');
-    cumX.fillStyle = '#000';
-    cumX.fillRect(0, 0, cumC.width, cumC.height);
-    const N = D.data.length;
-    const W = cumC.width, H = cumC.height - 10;
-    for (let d = 0; d < 10; d++) {
-        cumX.strokeStyle = D.colors[d];
-        cumX.lineWidth = 1.5;
-        cumX.beginPath();
-        const series = D.cumSeries[d];
-        for (let j = 0; j < N; j++) {
-            const x = (j / (N - 1)) * W;
-            const y = H - series[j] / 100 * H + 5;
-            if (j === 0) cumX.moveTo(x, y);
-            else cumX.lineTo(x, y);
+        // 频率条形图
+        const barsEl = document.getElementById('bars_' + p);
+        for (let i = 0; i < 10; i++) {
+            const pct = pd.freqs[i];
+            const color = D.colors[i];
+            const isMax = i === pd.maxFreqIdx;
+            const row = document.createElement('div');
+            row.className = 'bar-row';
+            row.innerHTML =
+                '<div class="bar-label" style="color:' + color + '">' + i + '</div>' +
+                '<div class="bar-track">' +
+                    '<div class="bar-fill" style="width:' + (pct * 5) + '%; background:' + color + '; opacity:' + (isMax ? 1 : 0.6) + ';"></div>' +
+                    '<div style="position:absolute; top:0; left:50%; width:1px; height:100%; background:rgba(120,180,255,0.3);"></div>' +
+                '</div>' +
+                '<div class="bar-val">' + pd.counts[i] + '次 ' + pct.toFixed(1) + '%' + (isMax ? ' ★' : '') + '</div>';
+            barsEl.appendChild(row);
         }
-        cumX.stroke();
-    }
-    // 10% 理论线
-    cumX.strokeStyle = 'rgba(255,255,255,0.3)';
-    cumX.setLineDash([3, 3]);
-    cumX.beginPath();
-    cumX.moveTo(0, H - 0.1 * H + 5);
-    cumX.lineTo(W, H - 0.1 * H + 5);
-    cumX.stroke();
-    cumX.setLineDash([]);
 
-    // ============ 转移矩阵热力图 ============
-    const tC = document.getElementById('transCanvas');
-    const tX = tC.getContext('2d');
-    tX.fillStyle = '#000';
-    tX.fillRect(0, 0, tC.width, tC.height);
-    const cell = Math.min(tC.width / 12, (tC.height - 20) / 10);
-    const ox = (tC.width - cell * 10) / 2;
-    const oy = 16;
-    for (let i = 0; i < 10; i++) {
-        for (let j = 0; j < 10; j++) {
-            const v = D.trans[i][j] / D.transMax;
-            tX.fillStyle = 'rgba(254,202,87,' + v.toFixed(3) + ')';
-            tX.fillRect(ox + j * cell, oy + i * cell, cell - 1, cell - 1);
+        // 累积占比折线
+        const cumC = document.getElementById('cum_' + p);
+        const cx = cumC.getContext('2d');
+        cx.fillStyle = '#000';
+        cx.fillRect(0, 0, cumC.width, cumC.height);
+        const W = cumC.width, H = cumC.height - 8;
+        for (let d = 0; d < 10; d++) {
+            cx.strokeStyle = D.colors[d];
+            cx.lineWidth = 1.2;
+            cx.beginPath();
+            const series = pd.cumSeries[d];
+            for (let j = 0; j < series.length; j++) {
+                const x = (j / (series.length - 1)) * W;
+                const y = H - series[j] / 100 * H + 4;
+                if (j === 0) cx.moveTo(x, y);
+                else cx.lineTo(x, y);
+            }
+            cx.stroke();
         }
-    }
-    tX.fillStyle = '#888';
-    tX.font = '9px sans-serif';
-    tX.textAlign = 'center';
-    for (let i = 0; i < 10; i++) {
-        tX.fillText(i, ox + i * cell + cell/2, 12);
-        tX.fillText(i, ox - 8, oy + i * cell + cell/2 + 3);
-    }
+        cx.strokeStyle = 'rgba(255,255,255,0.3)';
+        cx.setLineDash([3, 3]);
+        cx.beginPath();
+        cx.moveTo(0, H - 0.1 * H + 4);
+        cx.lineTo(W, H - 0.1 * H + 4);
+        cx.stroke();
+        cx.setLineDash([]);
 
-    // ============ 预测 ============
+        // 转移矩阵热力图
+        const tC = document.getElementById('trans_' + p);
+        const tx = tC.getContext('2d');
+        tx.fillStyle = '#000';
+        tx.fillRect(0, 0, tC.width, tC.height);
+        const cell = Math.min(tC.width / 12, (tC.height - 16) / 10);
+        const ox = (tC.width - cell * 10) / 2;
+        const oy = 14;
+        for (let i = 0; i < 10; i++) {
+            for (let j = 0; j < 10; j++) {
+                const v = pd.trans[i][j] / pd.transMax;
+                tx.fillStyle = 'rgba(254,202,87,' + v.toFixed(3) + ')';
+                tx.fillRect(ox + j * cell, oy + i * cell, cell - 1, cell - 1);
+            }
+        }
+        tx.fillStyle = '#888';
+        tx.font = '8px sans-serif';
+        tx.textAlign = 'center';
+        for (let i = 0; i < 10; i++) {
+            tx.fillText(i, ox + i * cell + cell/2, 10);
+            tx.fillText(i, ox - 6, oy + i * cell + cell/2 + 3);
+        }
+    });
+
+    // ============ 一键预测 ============
     document.getElementById('btnPredict').addEventListener('click', () => {
         const el = document.getElementById('predResult');
-        // 预测算法：加权投票
-        // 1. 历史频率加权（频率高的得分多）
-        // 2. 最近5期趋势（最近出现的号码得分多）
-        // 3. 转移矩阵（上期号码→本期的转移概率）
-        const last = D.data[D.data.length - 1]; // 上期号码
-        const recent5 = D.data.slice(-5);
+        const preds = [];
+        const details = [];
 
-        const scores = new Array(10).fill(0);
-        // 因子1：历史频率（权重 0.3）
-        for (let i = 0; i < 10; i++) {
-            scores[i] += D.freqs[i] / 100 * 0.3;
-        }
-        // 因子2：最近5期频率（权重 0.3）
-        for (const n of recent5) {
-            scores[n] += 0.3 / 5;
-        }
-        // 因子3：从上期转移（权重 0.4）
-        const transRow = D.trans[last];
-        const transSum = transRow.reduce((a, b) => a + b, 0) || 1;
-        for (let i = 0; i < 10; i++) {
-            scores[i] += transRow[i] / transSum * 0.4;
-        }
+        // 对每位独立预测
+        D.posLabels.forEach((label, p) => {
+            const pd = D.posData[p];
+            const last = pd.data[pd.data.length - 1];
+            const recent5 = pd.data.slice(-5);
+            const scores = new Array(10).fill(0);
 
-        const top = scores.map((s, i) => ({s, i})).sort((a, b) => b.s - a.s);
-        const best = top[0];
-        const top3 = top.slice(0, 3);
+            // 因子1：历史频率 30%
+            for (let i = 0; i < 10; i++) scores[i] += pd.freqs[i] / 100 * 0.3;
+            // 因子2：最近5期 30%
+            for (const n of recent5) scores[n] += 0.3 / 5;
+            // 因子3：转移概率 40%
+            const transRow = pd.trans[last];
+            const transSum = transRow.reduce((a, b) => a + b, 0) || 1;
+            for (let i = 0; i < 10; i++) scores[i] += transRow[i] / transSum * 0.4;
 
-        let detail = '预测评分明细（历史频率30% + 最近5期30% + 转移概率40%）：<br>';
-        top.forEach((t, idx) => {
-            detail += '<span style="color:' + D.colors[t.i] + '">' + t.i + '</span>: ' + (t.s * 100).toFixed(1) + '%' + (idx < 9 ? ' · ' : '');
+            const top = scores.map((s, i) => ({s, i})).sort((a, b) => b.s - a.s);
+            preds.push(top[0].i);
+            details.push({ label, best: top[0].i, top3: top.slice(0, 3).map(t => t.i), scores });
         });
+
+        const predStr = preds.join(' ');
+        const top3Str = details.map(d => d.label + ': ' + d.top3.join(',')).join(' · ');
+        const detailHtml = details.map(d => {
+            return '<div style="text-align:left;margin:4px 0;font-size:12px;">' +
+                '<b style="color:#feca57">' + d.label + '</b>: 预测 <b style="color:#2ecc71">' + d.best + '</b>' +
+                ' · Top3: [' + d.top3.join(', ') + ']' +
+                '</div>';
+        }).join('');
 
         el.innerHTML =
             '<div class="pred-result">' +
-                '<div class="pred-num">' + best.i + '</div>' +
-                '<div class="pred-top3">Top3 候补: ' + top3.map(t => t.i).join(', ') + '</div>' +
-                '<div class="pred-detail">' + detail + '</div>' +
-                '<div class="pred-detail" style="margin-top:8px">上期号码: ' + last + ' · 历史${N}期</div>' +
-                '<div class="pred-detail" style="margin-top:4px;color:#666">⚠️ 仅供娱乐参考，彩票本质随机</div>' +
+                '<div style="color:#888;font-size:12px;margin-bottom:4px">下期预测号码</div>' +
+                '<div class="pred-num">' + predStr + '</div>' +
+                '<div class="pred-top3">Top3 候补: ' + top3Str + '</div>' +
+                '<div style="margin-top:12px">' + detailHtml + '</div>' +
+                '<div class="pred-detail">上期: ' + D.posData.map(pd => pd.data[pd.data.length-1]).join(' ') + ' · 历史' + D.N + '期 · 频率30%+近5期30%+转移40%</div>' +
+                '<div class="pred-detail" style="color:#666">⚠️ 仅供娱乐参考</div>' +
             '</div>';
     });
 })();
@@ -2266,6 +2268,7 @@ h2 { color: #8ec5ff; margin-bottom: 6px; }
 </body>
 </html>`;
 }
+
 
 
 function getBoidsLifeHtml() {
