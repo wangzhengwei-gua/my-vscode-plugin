@@ -2163,7 +2163,8 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
             this.acc = { x: 0, y: 0 };
             this.color = ['#5ad2ff','#4cd9c0','#a78bfa','#feca57','#ff7675','#10b981','#f472b6','#facc15','#60a5fa','#34d399'][num];
             this.size = 4 + num * 0.3;
-            this.settled = false;
+            this.landed = false;
+            this.landTimer = 0;
         }
         update(boids) {
             // 群飞规则
@@ -2191,18 +2192,38 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
 
             // 朝向自己的目标号码区（关键：让鸟飞向对应号码区域）
             const tx = zoneCenterX(this.num);
-            const ty = H / 2;
+            const ty = H / 2 + 40;  // 略偏下，靠近号码区指示带
             const ddx = tx - this.pos.x;
             const ddy = ty - this.pos.y;
             const dist = Math.sqrt(ddx*ddx + ddy*ddy);
-            if (dist > 5) {
-                this.acc.x += ddx / dist * 0.04;
-                this.acc.y += ddy / dist * 0.04;
+            if (dist > 5 && !this.landed) {
+                // 距离越远吸引力越大；接近目标时减速
+                const pull = dist > 80 ? 0.06 : 0.02;
+                this.acc.x += ddx / dist * pull;
+                this.acc.y += ddy / dist * pull;
             }
 
             // 限速
             this.vel.x += this.acc.x;
             this.vel.y += this.acc.y;
+
+            // 落地判定：接近目标 + 速度小 → 标记 landed，开始衰减
+            if (dist < 25 && !this.landed) {
+                this.landed = true;
+                this.landTimer = 0;
+                settledCount[this.num] = (settledCount[this.num] || 0) + 1;
+            }
+            if (this.landed) {
+                // 落地后速度逐渐衰减到 0（约 30 帧衰减完成）
+                this.landTimer = (this.landTimer || 0) + 1;
+                const decay = Math.max(0, 1 - this.landTimer / 30);
+                this.vel.x *= decay;
+                this.vel.y *= decay;
+                // 轻微锚定到目标位置（防漂移）
+                this.pos.x += (tx - this.pos.x) * 0.05;
+                this.pos.y += (ty - this.pos.y) * 0.05;
+            }
+
             const sp = Math.sqrt(this.vel.x*this.vel.x + this.vel.y*this.vel.y);
             const maxS = params.speed;
             if (sp > maxS) { this.vel.x = this.vel.x/sp*maxS; this.vel.y = this.vel.y/sp*maxS; }
@@ -2210,16 +2231,12 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
             this.pos.y += this.vel.y;
             this.acc.x = 0; this.acc.y = 0;
 
-            // 边界：环绕
-            if (this.pos.x < 0) this.pos.x += W;
-            else if (this.pos.x > W) this.pos.x -= W;
-            if (this.pos.y < 0) this.pos.y += H;
-            else if (this.pos.y > H) this.pos.y -= H;
-
-            // 到达目标区附近，记录"落地"
-            if (dist < 30 && !this.settled) {
-                this.settled = true;
-                settledCount[this.num] = (settledCount[this.num] || 0) + 1;
+            // 边界：环绕（仅未落地时）
+            if (!this.landed) {
+                if (this.pos.x < 0) this.pos.x += W;
+                else if (this.pos.x > W) this.pos.x -= W;
+                if (this.pos.y < 0) this.pos.y += H;
+                else if (this.pos.y > H) this.pos.y -= H;
             }
         }
         draw() {
@@ -2373,6 +2390,15 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
         requestAnimationFrame(loop);
         if (paused) return;
 
+        // 全部落地后保持画面，不再更新（节省 CPU）
+        const allLanded = boids.length > 0 && boids.every(b => b.landed && b.landTimer > 35);
+        if (allLanded) {
+            // 仅刷新侧栏统计（万一有变化）
+            if (frame % 60 === 0) { drawFreq(); drawStats(); }
+            frame++;
+            return;
+        }
+
         // 拖尾背景
         ctx.fillStyle = 'rgba(5,8,16,0.25)';
         ctx.fillRect(0, 0, W, H);
@@ -2396,10 +2422,16 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
             ctx.fillText(i, x + w/2, zoneY + 26);
         }
         // 顶部统计标签
-        ctx.fillStyle = '#5ad2ff';
+        const landedCount = boids.filter(b => b.landed).length;
+        const allLanded = landedCount === boids.length;
+        ctx.fillStyle = allLanded ? '#2ecc71' : '#5ad2ff';
         ctx.font = '12px sans-serif';
         ctx.textAlign = 'left';
-        ctx.fillText('模拟中: ' + boids.length + ' 只鸟 · 帧 ' + frame, 12, 20);
+        if (allLanded) {
+            ctx.fillText('✅ 已收敛: ' + boids.length + ' 只鸟全部落地 · 频率分布定格 (点重置重新模拟)', 12, 20);
+        } else {
+            ctx.fillText('⏳ 模拟中: ' + landedCount + '/' + boids.length + ' 已落地 · 帧 ' + frame, 12, 20);
+        }
 
         // 更新+绘制 Boids
         for (const b of boids) {
