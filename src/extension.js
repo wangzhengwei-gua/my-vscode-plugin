@@ -2241,15 +2241,15 @@ ${posLabels.map((label, p) => `
 
             const top = scores.map((s, i) => ({s, i})).sort((a, b) => b.s - a.s);
             preds.push(top[0].i);
-            details.push({ label, best: top[0].i, top3: top.slice(0, 3).map(t => t.i), scores });
+            details.push({ label, best: top[0].i, top5: top.slice(0, 5).map(t => t.i), scores });
         });
 
         const predStr = preds.join(' ');
-        const top3Str = details.map(d => d.label + ': ' + d.top3.join(',')).join(' · ');
+        const top5Str = details.map(d => d.label + ': ' + d.top5.join(',')).join(' · ');
         const detailHtml = details.map(d => {
             return '<div style="text-align:left;margin:4px 0;font-size:12px;">' +
                 '<b style="color:#feca57">' + d.label + '</b>: 预测 <b style="color:#2ecc71">' + d.best + '</b>' +
-                ' · Top3: [' + d.top3.join(', ') + ']' +
+                ' · Top5: [' + d.top5.join(', ') + ']' +
                 '</div>';
         }).join('');
 
@@ -2257,7 +2257,7 @@ ${posLabels.map((label, p) => `
             '<div class="pred-result">' +
                 '<div style="color:#888;font-size:12px;margin-bottom:4px">下期预测号码</div>' +
                 '<div class="pred-num">' + predStr + '</div>' +
-                '<div class="pred-top3">Top3 候补: ' + top3Str + '</div>' +
+                '<div class="pred-top3">Top5 候补: ' + top5Str + '</div>' +
                 '<div style="margin-top:12px">' + detailHtml + '</div>' +
                 '<div class="pred-detail">上期: ' + D.posData.map(pd => pd.data[pd.data.length-1]).join(' ') + ' · 历史' + D.N + '期 · 频率30%+近5期30%+转移40%</div>' +
                 '<div class="pred-detail" style="color:#666">⚠️ 仅供娱乐参考</div>' +
