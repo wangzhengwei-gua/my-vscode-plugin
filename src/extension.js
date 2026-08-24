@@ -2092,8 +2092,8 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
 </head>
 <body>
 <div class="header">
-    <h2>🐦 ${name} · ${posLabel} · 群鸟分布模拟</h2>
-    <div class="meta">历史 ${data.length} 期 · 最新 ${periodsSliced[periodsSliced.length-1] || '?'} · 各号码区鸟数 = 历史频率（≠ 预测概率）</div>
+    <h2>🐦 ${name} · ${posLabel} · 群鸟分布模拟 + 预测</h2>
+    <div class="meta">历史 ${data.length} 期 · 最新 ${periodsSliced[periodsSliced.length-1] || '?'} · 落地后点「🔮 预测下期」启动预测模式</div>
 </div>
 <div class="main">
     <canvas id="sim"></canvas>
@@ -2127,6 +2127,12 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
                 <button id="btnReset">重置</button>
             </div>
         </div>
+        <div class="panel" id="predPanel" style="display:none;">
+            <h3>🔮 预测下期</h3>
+            <div id="predResult" style="font-size:14px;color:#feca57;line-height:1.8;"></div>
+            <div class="legend">基于历史频率引力场 + 鸟群探测投票</div>
+        </div>
+        <button id="btnPredict" style="display:none;background:#c0392b;padding:8px;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;">🔮 启动预测模式</button>
     </div>
 </div>
 <script>
@@ -2191,6 +2197,36 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
             if (sepN)   { this.acc.x += sepX * 0.08; this.acc.y += sepY * 0.08; }
 
             // 朝向自己的目标号码区（关键：让鸟飞向对应号码区域）
+            // 如果是预测鸟，则它会被引力场影响，可能"叛变"飞向引力更大的区
+            if (this.isPredict && gravityWells) {
+                // 计算受所有号码区引力影响，引力 = 历史频率强度 / 距离^2
+                let bestPull = 0;
+                let bestNum = this.num;
+                for (let n = 0; n < 10; n++) {
+                    const gx = zoneCenterX(n);
+                    const gy = H - 90;
+                    const gdx = gx - this.pos.x;
+                    const gdy = gy - this.pos.y;
+                    const gd2 = gdx*gdx + gdy*gdy + 1;  // +1防除0
+                    const gd = Math.sqrt(gd2);
+                    // 引力强度（受质量 * 反平方定律 * 衰减）
+                    const force = gravityWells[n] * 200 / gd2;
+                    // 加速朝向该区
+                    this.acc.x += gdx / gd * force * 0.001;
+                    this.acc.y += gdy / gd * force * 0.001;
+                    // 追踪最大引力区
+                    if (force > bestPull) {
+                        bestPull = force;
+                        bestNum = n;
+                    }
+                }
+                // 鸟逐渐"被引力俘获"，目标号码可能改变
+                if (!this.landed) {
+                    this.targetNum = bestNum;
+                    // 概率性切换目标（避免抖动）
+                    if (Math.random() < 0.02) this.num = bestNum;
+                }
+            }
             const tx = zoneCenterX(this.num);
             const ty = H - 90;  // 号码区指示带上方（H-40是带顶部，留10像素间距）
             const ddx = tx - this.pos.x;
@@ -2397,6 +2433,30 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
 
         // 是否全部落地（决定是否还 update 鸟位置）
         const allLanded = frame > 60 && boids.length > 0 && boids.every(b => b.landed && b.landTimer > 35);
+        // 历史模式全部落地后显示预测按钮
+        if (allLanded && mode === 'history') {
+            const btn = document.getElementById('btnPredict');
+            if (btn.style.display === 'none') btn.style.display = 'block';
+        }
+
+        // 预测鸟也全部落地的话，输出预测结果
+        const allPredictLanded = predictBoids.length > 0 && predictBoids.every(b => b.landed && b.landTimer > 35);
+        if (allPredictLanded) {
+            const counts = new Array(10).fill(0);
+            for (const b of predictBoids) counts[b.num]++;
+            const maxIdx = counts.indexOf(Math.max.apply(null, counts));
+            const top3 = counts.map((c, i) => ({c, i})).sort((a, b) => b.c - a.c).slice(0, 3).map(x => x.i);
+            const total = predictBoids.length;
+            document.getElementById('predResult').innerHTML =
+                '<div style="font-size:24px;color:#2ecc71;font-weight:bold;margin-bottom:8px;">预测号码: ' + maxIdx + '</div>' +
+                '<div style="color:#feca57">Top3 候补: ' + top3.join(', ') + '</div>' +
+                '<div style="color:#888;font-size:11px;margin-top:6px">' +
+                counts.map((c, i) => i + ':' + (c/total*100).toFixed(0) + '%').join(' · ') +
+                '</div>' +
+                '<div style="color:#666;font-size:11px;margin-top:8px">⚠️ 仅供娱乐参考</div>';
+            // 防止每帧重复输出
+            if (!predictBoids[0].resultShown) predictBoids.forEach(b => b.resultShown = true);
+        }
 
         // ============ 背景 ============
         // 每帧用纯黑覆盖整个画布（保证有底色 + 避免无限拖尾累积）
@@ -2424,6 +2484,22 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
         // 永远画鸟
         for (const b of boids) {
             b.draw();
+        }
+
+        // 预测鸟：更新+绘制（用不同颜色区分）
+        if (predictBoids.length > 0) {
+            const allPredLanded = predictBoids.every(b => b.landed && b.landTimer > 35);
+            if (!allPredLanded) {
+                for (const b of predictBoids) {
+                    b.update(predictBoids);
+                    // 预测鸟用紫色（区别于历史鸟青色）
+                    b.color = '#a78bfa';
+                }
+            }
+            for (const b of predictBoids) {
+                b.color = '#a78bfa';
+                b.draw();
+            }
         }
 
         // 统计各号码区鸟数
@@ -2512,6 +2588,57 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
     document.getElementById('btnReset').addEventListener('click', () => {
         resetBoids();
         frame = 0;
+        mode = 'history';  // 回到历史模式
+        document.getElementById('btnPredict').style.display = 'none';
+        document.getElementById('predPanel').style.display = 'none';
+    });
+
+    // ============ 预测模式 ============
+    let mode = 'history';  // 'history' 或 'predict'
+    let predictBoids = [];  // 预测用的探测鸟
+    let gravityWells = null;  // 号码区引力场（历史频率）
+
+    function calcGravityWells() {
+        // 用当前历史鸟的分布作为引力场（频率高的区引力大）
+        const counts = new Array(10).fill(0);
+        for (const b of boids) counts[b.num]++;
+        const total = boids.length || 1;
+        // 引力强度 = 频率 / 平均频率（基准1.0）
+        const avg = total / 10;
+        return counts.map(c => Math.max(0.3, c / avg));  // 至少0.3防止零引力
+    }
+
+    function releasePredictBoids() {
+        // 释放 N 只探测鸟，每只随机分配一个目标号码（但受引力场影响）
+        predictBoids = [];
+        const N = 80;
+        for (let i = 0; i < N; i++) {
+            // 初始随机目标 0-9，鸟会按引力动态调整
+            const num = Math.floor(Math.random() * 10);
+            const b = new NumBoid(0);
+            b.num = num;
+            b.isPredict = true;
+            b.targetNum = num;  // 初始目标
+            // 探测鸟初始位置随机分布
+            b.pos = { x: Math.random() * W, y: Math.random() * H * 0.6 };
+            predictBoids.push(b);
+        }
+    }
+
+    document.getElementById('btnPredict').addEventListener('click', () => {
+        if (mode === 'history') {
+            // 进入预测模式
+            gravityWells = calcGravityWells();
+            releasePredictBoids();
+            mode = 'predict';
+            document.getElementById('btnPredict').textContent = '🔄 重新探测';
+            document.getElementById('predPanel').style.display = 'block';
+            document.getElementById('predResult').innerHTML = '<span style="color:#5ad2ff">探测鸟释放中... 观察鸟群受历史频率引力影响</span>';
+        } else {
+            // 重新探测
+            releasePredictBoids();
+            document.getElementById('predResult').innerHTML = '<span style="color:#5ad2ff">重新探测中...</span>';
+        }
     });
 
     // 启动：等 canvas 尺寸就绪（最多等 30 帧，约 500ms）
