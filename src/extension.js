@@ -2128,12 +2128,11 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
             </div>
         </div>
         <div class="panel" id="predPanel" style="display:none;">
+            <button id="btnPredict" style="background:#c0392b;padding:8px;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;width:100%;margin-bottom:10px;">🔮 启动预测模式</button>
             <h3>🔮 预测下期</h3>
             <div id="predResult" style="font-size:14px;color:#feca57;line-height:1.8;"></div>
             <div class="legend">基于历史频率引力场 + 鸟群探测投票</div>
         </div>
-        <button id="btnPredict" style="display:none;background:#c0392b;padding:8px;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;">🔮 启动预测模式</button>
-    </div>
 </div>
 <script>
 (function() {
@@ -2458,7 +2457,14 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
         // 历史模式全部落地后显示预测按钮
         if (allLanded && mode === 'history') {
             const btn = document.getElementById('btnPredict');
-            if (btn.style.display === 'none') btn.style.display = 'block';
+            if (btn.style.display === 'none') {
+                btn.style.display = 'block';
+                document.getElementById('predPanel').style.display = 'block';
+                // 自动滚动到预测面板
+                setTimeout(() => {
+                    document.getElementById('predPanel').scrollIntoView({ behavior: 'smooth', block: 'end' });
+                }, 100);
+            }
         }
 
         // 预测鸟也全部落地的话，输出预测结果
