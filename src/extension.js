@@ -1479,6 +1479,55 @@ function activate(context) {
     });
     context.subscriptions.push(boidsLifeDisposable);
 
+    // ========== 群鸟号码模拟（真实历史数据驱动）==========
+    let boidsNumberDisposable = vscode.commands.registerCommand('myPlugin.boidsNumber', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎯 排列三', value: 'pl3', description: '3位号码 群鸟模拟' },
+                { label: '🎰 排列五', value: 'pl5', description: '5位号码 群鸟模拟' }
+            ],
+            { placeHolder: '选择彩种' }
+        );
+        if (!pick) return;
+
+        const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+        if (!cfg) return;
+
+        let history;
+        try {
+            history = loadLotteryData(cfg);
+            if (history.length < 50) {
+                vscode.window.showWarningMessage('数据不足（需 ≥50 期），请先刷新数据');
+                return;
+            }
+        } catch (e) {
+            vscode.window.showErrorMessage('读取数据失败: ' + e.message);
+            return;
+        }
+
+        // 选位（3位时百/十/个，5位时万/千/百/十/个）
+        const posItems = cfg.positions.map((p, i) => ({
+            label: p.label + '位',
+            value: i,
+            description: '分析第' + (i + 1) + '位号码分布'
+        }));
+        const posPick = await vscode.window.showQuickPick(posItems, { placeHolder: '选择分析哪一位' });
+        if (!posPick) return;
+
+        // 取该位号码序列
+        const numbers = history.map(h => cfg.positions[posPick.value].pick(h));
+        const periods = history.map(h => h.period);
+
+        const panel = vscode.window.createWebviewPanel(
+            'boidsNumber',
+            '🐦 群鸟号码模拟 - ' + cfg.name + ' ' + cfg.positions[posPick.value].label + '位',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getBoidsNumberHtml(cfg.name, cfg.positions[posPick.value].label + '位', numbers, periods);
+    });
+    context.subscriptions.push(boidsNumberDisposable);
+
     // ===== 自动爬取数据 =====
     // 1. 插件启动时自动爬取（静默，不弹通知，除非失败）
     autoRefresh(500, true);
@@ -1671,6 +1720,7 @@ class LotteryTreeDataProvider {
                 this.createItem('📈 均线形态', 'myPlugin.maPatterns', '📈'),
                 this.createItem('🧠 模型对比预测', 'myPlugin.mlCompare', '🧠'),
                 this.createItem('🐦 群鸟生命游戏', 'myPlugin.boidsLife', '🐦'),
+                this.createItem('🎲 群鸟号码模拟', 'myPlugin.boidsNumber', '🎲'),
                 this.createItem('🔮 预测记录', 'myPlugin.showPredictions', '🔮'),
                 this.createItem('🕐 显示当前时间', 'myPlugin.showTime', '🕐'),
                 this.createItem('👋 Hello World', 'myPlugin.helloWorld', '👋')
@@ -1997,6 +2047,412 @@ h2 { color:#8ec5ff;font-weight:500;margin-bottom:8px; }
  * - Game of Life: 网格细胞按邻居数量生死
  * - 融合: 每个格子被 Boid 飞过的次数决定"激活"，激活后开始按生命游戏规则演化
  */
+/**
+ * 群鸟号码模拟 - 用 Boids 算法可视化号码分布
+ * 数据驱动：真实历史数据（号码序列 + 期号）
+ * 三个维度可视化：
+ *   1. 频率分布密度：鸟群在 0-9 十个区域的聚集程度
+ *   2. 累积占比演化：随期数累积的占比曲线（趋于 10% = 随机）
+ *   3. 转移路径流图：相邻号码转移关系（如 9→0 频率）
+ */
+function getBoidsNumberHtml(name, posLabel, numbers, periods) {
+    // 限制数量（避免太慢）
+    const data = numbers.slice(-300);
+    const periodsSliced = periods.slice(-300);
+    const dataJson = JSON.stringify({ numbers: data, periods: periodsSliced });
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>🐦 群鸟号码模拟 - ${name} ${posLabel}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
+.header { padding: 10px 16px; background: rgba(20,30,50,0.7); border-bottom: 1px solid rgba(120,180,255,0.2); display: flex; justify-content: space-between; align-items: center; backdrop-filter: blur(8px); }
+.header h2 { color: #8ec5ff; font-size: 16px; }
+.header .meta { color: #888; font-size: 12px; }
+.main { flex: 1; display: grid; grid-template-columns: 1fr 320px; gap: 0; overflow: hidden; }
+#sim { display: block; background: #050810; }
+.sidebar { background: rgba(15,20,35,0.8); border-left: 1px solid rgba(120,180,255,0.2); padding: 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+.panel { background: rgba(20,30,50,0.5); border: 1px solid rgba(120,180,255,0.15); border-radius: 8px; padding: 10px; }
+.panel h3 { color: #feca57; font-size: 13px; margin-bottom: 8px; font-weight: 600; }
+.panel canvas { width: 100%; display: block; background: rgba(0,0,0,0.3); border-radius: 4px; }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 11px; }
+.stat { padding: 4px 8px; background: rgba(0,0,0,0.3); border-radius: 4px; }
+.stat-label { color: #888; }
+.stat-value { color: #5ad2ff; font-weight: bold; font-size: 13px; }
+#ctrl { display: flex; flex-direction: column; gap: 6px; }
+#ctrl label { font-size: 11px; color: #aaa; display: flex; justify-content: space-between; align-items: center; }
+#ctrl input[type="range"] { width: 100%; }
+#ctrl button { padding: 6px; background: #0e639c; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }
+#ctrl button:hover { background: #1177bb; }
+.legend { font-size: 10px; color: #666; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="header">
+    <h2>🐦 ${name} · ${posLabel} · 群鸟分布模拟</h2>
+    <div class="meta">数据 ${data.length} 期 · 最新 ${periodsSliced[periodsSliced.length-1] || '?'} · 理论均匀 10%</div>
+</div>
+<div class="main">
+    <canvas id="sim"></canvas>
+    <div class="sidebar">
+        <div class="panel">
+            <h3>📊 频率分布密度</h3>
+            <canvas id="freqCanvas" width="280" height="120"></canvas>
+            <div class="legend">黄柱 = 实际频率，蓝线 = 理论 10%</div>
+        </div>
+        <div class="panel">
+            <h3>📈 累积占比演化</h3>
+            <canvas id="cumCanvas" width="280" height="120"></canvas>
+            <div class="legend">10条线代表0-9的累积占比，越接近10%说明越随机</div>
+        </div>
+        <div class="panel">
+            <h3>🔀 转移路径流图</h3>
+            <canvas id="transCanvas" width="280" height="180"></canvas>
+            <div class="legend">行=当前号，列=下一号，越亮=转移越频繁</div>
+        </div>
+        <div class="panel">
+            <h3>⚡ 实时统计</h3>
+            <div class="stats" id="liveStats"></div>
+        </div>
+        <div class="panel">
+            <h3>🎛️ 控制</h3>
+            <div id="ctrl">
+                <label>鸟数 <span id="vB">100</span><input type="range" id="sB" min="20" max="${data.length}" value="100"></label>
+                <label>速度 <span id="vSp">1.0</span><input type="range" id="sSp" min="1" max="30" value="10"></label>
+                <label>凝聚力 <span id="vC">0.005</span><input type="range" id="sC" min="0" max="20" value="5"></label>
+                <button id="btnPlay">暂停</button>
+                <button id="btnReset">重置</button>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+(function() {
+    const DATA = ${dataJson};
+    const numbers = DATA.numbers;
+    const periods = DATA.periods;
+
+    const canvas = document.getElementById('sim');
+    const ctx = canvas.getContext('2d');
+    let W = 0, H = 0;
+    function resize() {
+        const r = canvas.parentElement.getBoundingClientRect();
+        W = canvas.width = Math.floor(r.width);
+        H = canvas.height = Math.floor(r.height);
+    }
+    window.addEventListener('resize', resize);
+    setTimeout(resize, 50);
+
+    // 10 个号码区域 (0-9) 横向分布
+    function zoneCenterX(num) {
+        return (num + 0.5) / 10 * W;
+    }
+
+    // 每只鸟带一个 target 号码
+    class NumBoid {
+        constructor(idx) {
+            const num = numbers[idx % numbers.length];
+            this.num = num;
+            this.idx = idx;
+            this.pos = { x: Math.random() * W, y: Math.random() * H };
+            const a = Math.random() * Math.PI * 2;
+            this.vel = { x: Math.cos(a) * 1.5, y: Math.sin(a) * 1.5 };
+            this.acc = { x: 0, y: 0 };
+            this.color = ['#5ad2ff','#4cd9c0','#a78bfa','#feca57','#ff7675','#10b981','#f472b6','#facc15','#60a5fa','#34d399'][num];
+            this.size = 4 + num * 0.3;
+            this.settled = false;
+        }
+        update(boids) {
+            // 群飞规则
+            let alignX=0, alignY=0, alignN=0;
+            let cohX=0, cohY=0, cohN=0;
+            let sepX=0, sepY=0, sepN=0;
+            const per = 35, per2 = per*per;
+            for (const o of boids) {
+                if (o === this) continue;
+                const dx = o.pos.x - this.pos.x;
+                const dy = o.pos.y - this.pos.y;
+                const d2 = dx*dx + dy*dy;
+                if (d2 > per2 || d2 === 0) continue;
+                alignX += o.vel.x; alignY += o.vel.y; alignN++;
+                cohX += o.pos.x; cohY += o.pos.y; cohN++;
+                const d = Math.sqrt(d2);
+                if (d < per * 0.5) {
+                    sepX -= dx/d/d; sepY -= dy/d/d; sepN++;
+                }
+            }
+            const coh = params.cohesion;
+            if (alignN) { this.acc.x += (alignX/alignN - this.vel.x) * 0.04; this.acc.y += (alignY/alignN - this.vel.y) * 0.04; }
+            if (cohN)   { this.acc.x += (cohX/cohN - this.pos.x) * coh; this.acc.y += (cohY/cohN - this.pos.y) * coh; }
+            if (sepN)   { this.acc.x += sepX * 0.08; this.acc.y += sepY * 0.08; }
+
+            // 朝向自己的目标号码区（关键：让鸟飞向对应号码区域）
+            const tx = zoneCenterX(this.num);
+            const ty = H / 2;
+            const ddx = tx - this.pos.x;
+            const ddy = ty - this.pos.y;
+            const dist = Math.sqrt(ddx*ddx + ddy*ddy);
+            if (dist > 5) {
+                this.acc.x += ddx / dist * 0.04;
+                this.acc.y += ddy / dist * 0.04;
+            }
+
+            // 限速
+            this.vel.x += this.acc.x;
+            this.vel.y += this.acc.y;
+            const sp = Math.sqrt(this.vel.x*this.vel.x + this.vel.y*this.vel.y);
+            const maxS = params.speed;
+            if (sp > maxS) { this.vel.x = this.vel.x/sp*maxS; this.vel.y = this.vel.y/sp*maxS; }
+            this.pos.x += this.vel.x;
+            this.pos.y += this.vel.y;
+            this.acc.x = 0; this.acc.y = 0;
+
+            // 边界：环绕
+            if (this.pos.x < 0) this.pos.x += W;
+            else if (this.pos.x > W) this.pos.x -= W;
+            if (this.pos.y < 0) this.pos.y += H;
+            else if (this.pos.y > H) this.pos.y -= H;
+
+            // 到达目标区附近，记录"落地"
+            if (dist < 30 && !this.settled) {
+                this.settled = true;
+                settledCount[this.num] = (settledCount[this.num] || 0) + 1;
+            }
+        }
+        draw() {
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.arc(this.pos.x, this.pos.y, this.size, 0, Math.PI * 2);
+            ctx.fill();
+            // 小光晕
+            ctx.fillStyle = this.color + '33';
+            ctx.beginPath();
+            ctx.arc(this.pos.x, this.pos.y, this.size * 2.5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    // 三个可视化画布
+    const freqC = document.getElementById('freqCanvas');
+    const cumC = document.getElementById('cumCanvas');
+    const transC = document.getElementById('transCanvas');
+    const fctx = freqC.getContext('2d');
+    const cctx = cumC.getContext('2d');
+    const tctx = transC.getContext('2d');
+
+    // 频率分布（累积至当前）
+    function drawFreq() {
+        fctx.fillStyle = '#000';
+        fctx.fillRect(0, 0, freqC.width, freqC.height);
+        const counts = new Array(10).fill(0);
+        // 当前帧所有鸟的号码分布
+        for (const b of boids) counts[b.num]++;
+        const total = boids.length;
+        const barW = freqC.width / 10;
+        const maxH = freqC.height - 16;
+        for (let i = 0; i < 10; i++) {
+            const h = (counts[i] / total) * maxH;
+            fctx.fillStyle = '#feca57';
+            fctx.fillRect(i * barW + 2, maxH - h + 8, barW - 4, h);
+            // 数字标签
+            fctx.fillStyle = '#888';
+            fctx.font = '10px sans-serif';
+            fctx.textAlign = 'center';
+            fctx.fillText(i, i * barW + barW/2, maxH + 6);
+        }
+        // 理论 10% 线
+        fctx.strokeStyle = '#5ad2ff';
+        fctx.setLineDash([4, 3]);
+        fctx.beginPath();
+        fctx.moveTo(0, maxH - 0.1 * maxH + 8);
+        fctx.lineTo(freqC.width, maxH - 0.1 * maxH + 8);
+        fctx.stroke();
+        fctx.setLineDash([]);
+    }
+
+    // 累积占比演化（取所有历史数据，按窗口滑动）
+    function drawCum() {
+        cctx.fillStyle = '#000';
+        cctx.fillRect(0, 0, cumC.width, cumC.height);
+        const N = numbers.length;
+        const W = cumC.width;
+        const H = cumC.height - 10;
+        // 10 条线，从左到右表示累积占比
+        const cum = new Array(10).fill(0);
+        const colors = ['#5ad2ff','#4cd9c0','#a78bfa','#feca57','#ff7675','#10b981','#f472b6','#facc15','#60a5fa','#34d399'];
+        for (let i = 0; i < 10; i++) {
+            cctx.strokeStyle = colors[i];
+            cctx.lineWidth = 1.2;
+            cctx.beginPath();
+            for (let j = 0; j < N; j++) {
+                cum[numbers[j]]++;
+                const total = j + 1;
+                const pct = cum[i] / total;
+                const x = (j / (N - 1)) * W;
+                const y = H - pct * H + 5;
+                if (j === 0) cctx.moveTo(x, y);
+                else cctx.lineTo(x, y);
+            }
+            cctx.stroke();
+        }
+        // 10% 理论线
+        cctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        cctx.setLineDash([3, 3]);
+        cctx.beginPath();
+        cctx.moveTo(0, H - 0.1 * H + 5);
+        cctx.lineTo(W, H - 0.1 * H + 5);
+        cctx.stroke();
+        cctx.setLineDash([]);
+    }
+
+    // 转移矩阵热力图（10x10）
+    function drawTrans() {
+        tctx.fillStyle = '#000';
+        tctx.fillRect(0, 0, transC.width, transC.height);
+        // 计算转移
+        const trans = Array.from({length: 10}, () => new Array(10).fill(0));
+        for (let i = 0; i < numbers.length - 1; i++) {
+            trans[numbers[i]][numbers[i+1]]++;
+        }
+        // 归一化（按行）
+        const maxV = Math.max(...trans.map(r => Math.max(...r)));
+        const cell = Math.min(transC.width / 10, (transC.height - 20) / 10);
+        const ox = (transC.width - cell * 10) / 2;
+        const oy = 14;
+        for (let i = 0; i < 10; i++) {
+            for (let j = 0; j < 10; j++) {
+                const v = trans[i][j] / maxV;
+                tctx.fillStyle = 'rgba(254,202,87,' + v.toFixed(3) + ')';
+                tctx.fillRect(ox + j * cell, oy + i * cell, cell - 1, cell - 1);
+            }
+        }
+        // 标签
+        tctx.fillStyle = '#888';
+        tctx.font = '9px sans-serif';
+        tctx.textAlign = 'center';
+        for (let i = 0; i < 10; i++) {
+            tctx.fillText(i, ox + i * cell + cell/2, 10);
+            tctx.fillText(i, ox - 6, oy + i * cell + cell/2 + 3);
+        }
+    }
+
+    // 实时统计
+    function drawStats() {
+        const counts = new Array(10).fill(0);
+        for (const b of boids) counts[b.num]++;
+        const total = boids.length;
+        const el = document.getElementById('liveStats');
+        let html = '';
+        for (let i = 0; i < 10; i++) {
+            const pct = (counts[i] / total * 100).toFixed(1);
+            const color = ['#5ad2ff','#4cd9c0','#a78bfa','#feca57','#ff7675','#10b981','#f472b6','#facc15','#60a5fa','#34d399'][i];
+            html += '<div class="stat"><span class="stat-label" style="color:'+color+'">' + i + '</span> <span class="stat-value">' + pct + '%</span></div>';
+        }
+        el.innerHTML = html;
+    }
+
+    // 初始化
+    const params = { speed: 1.0, cohesion: 0.005, boidCount: 100 };
+    let boids = [];
+    let settledCount = new Array(10).fill(0);
+    let frame = 0;
+    let paused = false;
+
+    function resetBoids() {
+        boids = [];
+        settledCount = new Array(10).fill(0);
+        for (let i = 0; i < params.boidCount; i++) {
+            boids.push(new NumBoid(i));
+        }
+    }
+
+    function loop() {
+        requestAnimationFrame(loop);
+        if (paused) return;
+
+        // 拖尾背景
+        ctx.fillStyle = 'rgba(5,8,16,0.25)';
+        ctx.fillRect(0, 0, W, H);
+
+        // 画 10 个号码区域指示带（底部）
+        const zoneH = 40;
+        const zoneY = H - zoneH;
+        for (let i = 0; i < 10; i++) {
+            const x = i / 10 * W;
+            const w = W / 10;
+            // 区域背景
+            ctx.fillStyle = 'rgba(' + (i*20) + ',100,200,0.06)';
+            ctx.fillRect(x, zoneY, w, zoneH);
+            // 边框
+            ctx.strokeStyle = 'rgba(120,180,255,0.15)';
+            ctx.strokeRect(x, zoneY, w, zoneH);
+            // 数字
+            ctx.fillStyle = '#8ec5ff';
+            ctx.font = 'bold 18px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(i, x + w/2, zoneY + 26);
+        }
+        // 顶部统计标签
+        ctx.fillStyle = '#5ad2ff';
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText('模拟中: ' + boids.length + ' 只鸟 · 帧 ' + frame, 12, 20);
+
+        // 更新+绘制 Boids
+        for (const b of boids) {
+            b.update(boids);
+            b.draw();
+        }
+
+        // 每 30 帧更新一次侧栏图（节省 CPU）
+        frame++;
+        if (frame % 20 === 0) {
+            drawFreq();
+            drawStats();
+        }
+        if (frame % 60 === 0) {
+            drawCum();
+            drawTrans();
+        }
+    }
+
+    // 控件
+    document.getElementById('sB').addEventListener('input', e => {
+        params.boidCount = +e.target.value;
+        document.getElementById('vB').textContent = params.boidCount;
+        resetBoids();
+    });
+    document.getElementById('sSp').addEventListener('input', e => {
+        params.speed = e.target.value / 10;
+        document.getElementById('vSp').textContent = params.speed.toFixed(1);
+    });
+    document.getElementById('sC').addEventListener('input', e => {
+        params.cohesion = e.target.value / 1000;
+        document.getElementById('vC').textContent = params.cohesion.toFixed(3);
+    });
+    document.getElementById('btnPlay').addEventListener('click', e => {
+        paused = !paused;
+        e.target.textContent = paused ? '继续' : '暂停';
+    });
+    document.getElementById('btnReset').addEventListener('click', () => {
+        resetBoids();
+        frame = 0;
+    });
+
+    // 启动
+    resetBoids();
+    drawCum();
+    drawTrans();
+    loop();
+})();
+</script>
+</body>
+</html>`;
+}
+
 function getBoidsLifeHtml() {
     return `<!DOCTYPE html>
 <html lang="zh-CN">

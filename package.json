@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.7.0",
+    "version": "0.7.1",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -36,6 +36,7 @@
         "onCommand:myPlugin.ssqFilter",
         "onCommand:myPlugin.mlCompare",
         "onCommand:myPlugin.boidsLife",
+        "onCommand:myPlugin.boidsNumber",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -111,6 +112,10 @@
             {
                 "command": "myPlugin.boidsLife",
                 "title": "Boids Life Game"
+            },
+            {
+                "command": "myPlugin.boidsNumber",
+                "title": "Boids Number Sim"
             }
         ],
         "viewsContainers": {
