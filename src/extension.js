@@ -2390,15 +2390,39 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
         requestAnimationFrame(loop);
         if (paused) return;
 
+        // 每帧开头强制同步尺寸
+        if (W === 0 || H === 0) {
+            resize();
+        }
+
         // 全部落地后保持画面，不再更新（节省 CPU）
-        // 至少跑 60 帧才允许判落地，避免初始时 W/H 为 0 误判
         const allLanded = frame > 60 && boids.length > 0 && boids.every(b => b.landed && b.landTimer > 35);
         if (allLanded) {
-            // 仅刷新侧栏统计（万一有变化）
             if (frame % 60 === 0) { drawFreq(); drawStats(); }
             frame++;
             return;
         }
+
+        // ============ 调试：保证有可见输出 ============
+        // 直接清空背景为深色（非半透明），避免拖尾把一切都擦掉
+        ctx.fillStyle = 'rgba(5,8,16,1)';
+        ctx.fillRect(0, 0, W, H);
+
+        // 如果 W/H 异常，画提示
+        if (W < 100 || H < 100) {
+            ctx.fillStyle = '#ff6b6b';
+            ctx.font = '14px sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText('Canvas 尺寸异常: ' + W + 'x' + H + ' (resize 不成功)', 10, 30);
+            ctx.fillText('boids 数组长度: ' + boids.length, 10, 50);
+            frame++;
+            return;
+        }
+
+        // ============ 主绘制 ============
+        // 拖尾背景（半透明黑覆盖，制造飞行轨迹）
+        ctx.fillStyle = 'rgba(5,8,16,0.25)';
+        ctx.fillRect(0, 0, W, H);
 
         // 拖尾背景
         ctx.fillStyle = 'rgba(5,8,16,0.25)';
@@ -2424,14 +2448,14 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
         }
         // 顶部统计标签
         const landedCount = boids.filter(b => b.landed).length;
-        const allLanded = landedCount === boids.length;
-        ctx.fillStyle = allLanded ? '#2ecc71' : '#5ad2ff';
+        const allLanded2 = landedCount === boids.length;
+        ctx.fillStyle = allLanded2 ? '#2ecc71' : '#5ad2ff';
         ctx.font = '12px sans-serif';
         ctx.textAlign = 'left';
-        if (allLanded) {
+        if (allLanded2) {
             ctx.fillText('✅ 已收敛: ' + boids.length + ' 只鸟全部落地 · 频率分布定格 (点重置重新模拟)', 12, 20);
         } else {
-            ctx.fillText('⏳ 模拟中: ' + landedCount + '/' + boids.length + ' 已落地 · 帧 ' + frame, 12, 20);
+            ctx.fillText('⏳ 模拟中: ' + landedCount + '/' + boids.length + ' 已落地 · 帧 ' + frame + ' · 画布 ' + W + 'x' + H, 12, 20);
         }
 
         // 更新+绘制 Boids
@@ -2475,25 +2499,37 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
         frame = 0;
     });
 
-    // 启动
-    function start() {
-        // 等 canvas 尺寸就绪后再初始化鸟群，否则 W=H=0 会导致所有鸟都挤在 (0,0)
-        if (W === 0 || H === 0) {
-            // 强制同步 resize
-            resize();
-            if (W === 0 || H === 0) {
-                requestAnimationFrame(start);
-                return;
-            }
+    // 启动：等 canvas 尺寸就绪（最多等 30 帧，约 500ms）
+    let startRetries = 0;
+    function tryStart() {
+        startRetries++;
+        resize();
+        if (W > 0 && H > 0) {
+            // 尺寸 OK，启动
+            resetBoids();
+            drawCum();
+            drawTrans();
+            loop();
+        } else if (startRetries < 30) {
+            // 还没好，下一帧再试
+            requestAnimationFrame(tryStart);
+        } else {
+            // 30 帧后还是 0，强制启动（loop 里有调试提示）
+            console.error('Canvas resize 失败，W=H=0');
+            resetBoids();
+            drawCum();
+            drawTrans();
+            loop();
         }
-        resetBoids();
-        drawCum();
-        drawTrans();
-        loop();
     }
-    // 等 50ms 让 DOM 完成布局
-    setTimeout(start, 100);
-})();
+    requestAnimationFrame(tryStart);
+})().catch(e => {
+    console.error('群鸟号码模拟初始化失败:', e);
+    const err = document.createElement('div');
+    err.style.cssText = 'position:fixed;top:80px;left:20px;color:#ff6b6b;font-family:monospace;padding:20px;background:rgba(0,0,0,0.8);border-radius:4px;z-index:9999';
+    err.textContent = '初始化错误: ' + e.message;
+    document.body.appendChild(err);
+});
 </script>
 </body>
 </html>`;
