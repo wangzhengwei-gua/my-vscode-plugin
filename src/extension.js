@@ -2428,6 +2428,10 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
         ctx.fillStyle = 'rgba(5,8,16,0.25)';
         ctx.fillRect(0, 0, W, H);
 
+        // 统计各号码区鸟数
+        const zoneCounts = new Array(10).fill(0);
+        for (const b of boids) zoneCounts[b.num]++;
+
         // 画 10 个号码区域指示带（底部）
         const zoneH = 40;
         const zoneY = H - zoneH;
@@ -2445,6 +2449,25 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
             ctx.font = 'bold 18px sans-serif';
             ctx.textAlign = 'center';
             ctx.fillText(i, x + w/2, zoneY + 26);
+
+            // 鸟数+百分比（号码区上方）
+            const cnt = zoneCounts[i];
+            const pct = (boids.length > 0 ? cnt / boids.length * 100 : 0).toFixed(0);
+            const labelText = cnt + ' (' + pct + '%)';
+
+            // 找最大鸟数高亮
+            const maxCnt = Math.max.apply(null, zoneCounts);
+            const isMax = cnt === maxCnt && cnt > 0;
+
+            ctx.font = 'bold 13px sans-serif';
+            ctx.fillStyle = isMax ? '#2ecc71' : '#feca57';
+            ctx.fillText(labelText, x + w/2, zoneY - 8);
+
+            // 最高密度加皇冠标记
+            if (isMax) {
+                ctx.font = '16px sans-serif';
+                ctx.fillText('★', x + w/2, zoneY - 26);
+            }
         }
         // 顶部统计标签
         const landedCount = boids.filter(b => b.landed).length;
