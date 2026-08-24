@@ -149,9 +149,23 @@ try {
     if (!status.trim()) {
         console.log('ℹ️  没有改动需要提交');
     } else {
-        // 提交
-        execSync(`git commit -m "release: v${version}"`, { cwd: PROJECT_DIR, stdio: 'pipe' });
-        console.log('✅ 已提交: release: v' + version);
+        // 自动生成 commit message：分析改动文件
+        const changes = status.split('\n').filter(s => s.trim()).map(s => s.trim().split(/\s+/).slice(1).join(' '));
+        const changesSummary = generateChangeSummary(changes, version);
+        const commitMsg = `release: v${version}\n\n${changesSummary}`;
+
+        // 同步更新 CHANGELOG.md
+        updateChangelog(version, changesSummary);
+
+        // 提交（用 -F 从文件读取避免转义问题）
+        const msgFile = path.join(PROJECT_DIR, '_commit_msg.txt');
+        fs.writeFileSync(msgFile, commitMsg, 'utf-8');
+        execSync(`git add CHANGELOG.md`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+        execSync(`git commit -F "${msgFile}"`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+        try { fs.unlinkSync(msgFile); } catch (e) {}
+        console.log('✅ 已提交: v' + version);
+        console.log('   commit message:');
+        commitMsg.split('\n').forEach(line => console.log('   ' + line));
 
         // 推送
         if (!noPush) {
@@ -177,3 +191,86 @@ console.log('========================================');
 console.log('');
 console.log('请重新加载 VSCode 窗口使新版本生效:');
 console.log('  Ctrl+Shift+P → Reload Window');
+
+/**
+ * 自动生成改动摘要
+ */
+function generateChangeSummary(changes, version) {
+    const cats = {
+        feature: [],   // 新功能
+        fix: [],       // 修复
+        refactor: [],  // 重构
+        docs: [],      // 文档
+        chore: []      // 杂项
+    };
+
+    for (const f of changes) {
+        const base = f.split('/').pop();
+        if (f.endsWith('.vsix') || f === '.gitignore') {
+            cats.chore.push('更新打包文件: ' + base);
+        } else if (f.startsWith('scripts/ml_compare') || f.includes('ml_compare')) {
+            cats.feature.push('更新多模型对比脚本（Python后端）');
+        } else if (f.includes('test_fourier')) {
+            cats.feature.push('傅里叶变换验证脚本');
+        } else if (f.startsWith('src/extension.js')) {
+            cats.feature.push('更新主扩展代码（功能菜单/Webview/命令注册）');
+        } else if (f.startsWith('src/')) {
+            cats.feature.push('更新扩展源码: ' + f);
+        } else if (f.startsWith('scripts/')) {
+            cats.refactor.push('更新脚本: ' + base);
+        } else if (f.endsWith('.md')) {
+            cats.docs.push('更新文档: ' + base);
+        } else if (f === 'package.json') {
+            cats.chore.push('更新 package.json（版本/依赖）');
+        } else {
+            cats.chore.push('改动: ' + f);
+        }
+    }
+
+    const lines = [];
+    if (cats.feature.length) {
+        lines.push('✨ Features:');
+        [...new Set(cats.feature)].forEach(s => lines.push('  - ' + s));
+    }
+    if (cats.fix.length) {
+        lines.push('🐛 Fixes:');
+        [...new Set(cats.fix)].forEach(s => lines.push('  - ' + s));
+    }
+    if (cats.refactor.length) {
+        lines.push('♻️ Refactor:');
+        [...new Set(cats.refactor)].forEach(s => lines.push('  - ' + s));
+    }
+    if (cats.docs.length) {
+        lines.push('📝 Docs:');
+        [...new Set(cats.docs)].forEach(s => lines.push('  - ' + s));
+    }
+    if (cats.chore.length) {
+        lines.push('🔧 Chore:');
+        [...new Set(cats.chore)].forEach(s => lines.push('  - ' + s));
+    }
+
+    return lines.join('\n') || '- minor updates';
+}
+
+/**
+ * 更新 CHANGELOG.md（在头部插入新版本）
+ */
+function updateChangelog(version, summary) {
+    const today = new Date().toISOString().slice(0, 10);
+    let oldContent = '';
+    try {
+        oldContent = fs.readFileSync(path.join(PROJECT_DIR, 'CHANGELOG.md'), 'utf-8');
+    } catch (e) {
+        oldContent = '# Change Log\n\nAll notable changes to the "my-vscode-plugin" extension will be documented in this file.\n';
+    }
+
+    // 把 summary 转成 changelog 格式
+    const newSection = `## [${version}] - ${today}\n\n${summary.replace(/^/gm, '')}\n\n`;
+    const newContent = oldContent.replace(
+        /(All notable changes to the[^]*?file\.\n)/,
+        `$1\n${newSection}`
+    );
+
+    fs.writeFileSync(path.join(PROJECT_DIR, 'CHANGELOG.md'), newContent, 'utf-8');
+    console.log('✅ CHANGELOG.md 已更新');
+}
