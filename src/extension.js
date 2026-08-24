@@ -1467,6 +1467,18 @@ function activate(context) {
     });
     context.subscriptions.push(mlCompareDisposable);
 
+    // ========== 群鸟生命游戏 ==========
+    let boidsLifeDisposable = vscode.commands.registerCommand('myPlugin.boidsLife', () => {
+        const panel = vscode.window.createWebviewPanel(
+            'boidsLife',
+            '🐦 群鸟生命游戏',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getBoidsLifeHtml();
+    });
+    context.subscriptions.push(boidsLifeDisposable);
+
     // ===== 自动爬取数据 =====
     // 1. 插件启动时自动爬取（静默，不弹通知，除非失败）
     autoRefresh(500, true);
@@ -1658,6 +1670,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🧪 概率回测', 'myPlugin.probabilityBacktest', '🧪'),
                 this.createItem('📈 均线形态', 'myPlugin.maPatterns', '📈'),
                 this.createItem('🧠 模型对比预测', 'myPlugin.mlCompare', '🧠'),
+                this.createItem('🐦 群鸟生命游戏', 'myPlugin.boidsLife', '🐦'),
                 this.createItem('🔮 预测记录', 'myPlugin.showPredictions', '🔮'),
                 this.createItem('🕐 显示当前时间', 'myPlugin.showTime', '🕐'),
                 this.createItem('👋 Hello World', 'myPlugin.helloWorld', '👋')
@@ -1978,6 +1991,418 @@ h2 { color:#8ec5ff;font-weight:500;margin-bottom:8px; }
 /**
  * ML 对比 - 结果展示页面
  */
+/**
+ * 群鸟生命游戏 - Boids + Game of Life 融合
+ * - Boids: 凝聚/对齐/分离三规则群飞
+ * - Game of Life: 网格细胞按邻居数量生死
+ * - 融合: 每个格子被 Boid 飞过的次数决定"激活"，激活后开始按生命游戏规则演化
+ */
+function getBoidsLifeHtml() {
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>🐦 群鸟生命游戏</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; overflow: hidden; height: 100vh; }
+#stage { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+#hud { position: fixed; top: 16px; left: 16px; padding: 12px 16px; background: rgba(20,30,50,0.7); border: 1px solid rgba(120,180,255,0.3); border-radius: 8px; font-size: 12px; line-height: 1.7; backdrop-filter: blur(8px); pointer-events: none; }
+#hud b { color: #8ec5ff; }
+#hud .num { color: #feca57; font-weight: bold; }
+#ctrl { position: fixed; top: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px; padding: 12px; background: rgba(20,30,50,0.7); border: 1px solid rgba(120,180,255,0.3); border-radius: 8px; backdrop-filter: blur(8px); }
+#ctrl label { font-size: 12px; color: #aaa; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+#ctrl input[type="range"] { width: 120px; }
+#ctrl button { padding: 6px 14px; background: #0e639c; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; }
+#ctrl button:hover { background: #1177bb; }
+#ctrl button.danger { background: #c0392b; }
+#ctrl button.danger:hover { background: #e74c3c; }
+#legend { position: fixed; bottom: 16px; left: 16px; padding: 10px 14px; background: rgba(20,30,50,0.7); border: 1px solid rgba(120,180,255,0.3); border-radius: 8px; font-size: 11px; line-height: 1.6; backdrop-filter: blur(8px); }
+#legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin-right: 6px; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="hud">
+    <div>🐦 <b>Boids:</b> <span class="num" id="hudBoids">0</span></div>
+    <div>🦠 <b>Live cells:</b> <span class="num" id="hudCells">0</span></div>
+    <div>⚡ <b>FPS:</b> <span class="num" id="hudFps">0</span></div>
+    <div>🔄 <b>Generation:</b> <span class="num" id="hudGen">0</span></div>
+</div>
+<div id="ctrl">
+    <label>鸟数量 <span id="vBoids">150</span><input type="range" id="sBoids" min="20" max="400" value="150"></label>
+    <label>凝聚力 <span id="vCoh">0.005</span><input type="range" id="sCoh" min="0" max="20" value="5"></label>
+    <label>对齐力 <span id="vAli">0.05</span><input type="range" id="sAli" min="0" max="20" value="5"></label>
+    <label>分离力 <span id="vSep">0.5</span><input type="range" id="sSep" min="0" max="20" value="5"></label>
+    <label>生命演化速度 <span id="vLife">6</span><input type="range" id="sLife" min="1" max="20" value="6"></label>
+    <label>网格大小 <span id="vGrid">10</span><input type="range" id="sGrid" min="6" max="24" value="10"></label>
+    <button id="btnReset">重置</button>
+    <button id="btnPause">暂停</button>
+    <button id="btnSpark" class="danger">点燃中心</button>
+</div>
+<div id="legend">
+    <div><span class="dot" style="background:#5ad2ff"></span>Boid 飞鸟</div>
+    <div><span class="dot" style="background:#feca57"></span>激活态细胞（生命游戏进行中）</div>
+    <div><span class="dot" style="background:#e74c3c"></span>活细胞</div>
+    <div>💡 鼠标点击: 吸引鸟群 · 右键: 激活生命</div>
+</div>
+
+<script>
+(function() {
+    const canvas = document.getElementById('stage');
+    const ctx = canvas.getContext('2d');
+    let W = 0, H = 0;
+    function resize() {
+        W = canvas.width = window.innerWidth;
+        H = canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // ============ 参数 ============
+    const params = {
+        boidCount: 150,
+        cohesion: 0.005,
+        alignment: 0.05,
+        separation: 0.5,
+        lifeSpeed: 6,       // 每N帧演化一次生命游戏
+        gridSize: 10,       // 每格像素大小
+        maxSpeed: 2.5,
+        maxForce: 0.07,
+        perception: 30
+    };
+
+    // ============ Boid 类 ============
+    class Boid {
+        constructor(x, y) {
+            this.pos = { x: x || Math.random() * W, y: y || Math.random() * H };
+            const a = Math.random() * Math.PI * 2;
+            const s = 1 + Math.random() * 1.5;
+            this.vel = { x: Math.cos(a) * s, y: Math.sin(a) * s };
+            this.acc = { x: 0, y: 0 };
+            this.trail = [];
+        }
+
+        edges() {
+            if (this.pos.x < 0) this.pos.x = W;
+            else if (this.pos.x > W) this.pos.x = 0;
+            if (this.pos.y < 0) this.pos.y = H;
+            else if (this.pos.y > H) this.pos.y = 0;
+        }
+
+        flock(boids) {
+            let alignX = 0, alignY = 0, alignCount = 0;
+            let cohX = 0, cohY = 0, cohCount = 0;
+            let sepX = 0, sepY = 0, sepCount = 0;
+            const per = params.perception;
+            const perSq = per * per;
+
+            for (const other of boids) {
+                if (other === this) continue;
+                const dx = other.pos.x - this.pos.x;
+                const dy = other.pos.y - this.pos.y;
+                const d2 = dx*dx + dy*dy;
+                if (d2 > perSq || d2 === 0) continue;
+
+                // 对齐
+                alignX += other.vel.x; alignY += other.vel.y; alignCount++;
+                // 凝聚
+                cohX += other.pos.x; cohY += other.pos.y; cohCount++;
+
+                // 分离（距离越近越强）
+                const d = Math.sqrt(d2);
+                if (d < per * 0.5) {
+                    sepX -= (dx / d) / d;
+                    sepY -= (dy / d) / d;
+                    sepCount++;
+                }
+            }
+
+            if (alignCount > 0) {
+                alignX /= alignCount; alignY /= alignCount;
+                this.acc.x += alignX * params.alignment * 0.01;
+                this.acc.y += alignY * params.alignment * 0.01;
+            }
+            if (cohCount > 0) {
+                cohX = cohX / cohCount - this.pos.x;
+                cohY = cohY / cohCount - this.pos.y;
+                this.acc.x += cohX * params.cohesion;
+                this.acc.y += cohY * params.cohesion;
+            }
+            if (sepCount > 0) {
+                this.acc.x += sepX * params.separation * 0.05;
+                this.acc.y += sepY * params.separation * 0.05;
+            }
+
+            // 鼠标吸引
+            if (mouseActive) {
+                const dx = mouseX - this.pos.x;
+                const dy = mouseY - this.pos.y;
+                const d2 = dx*dx + dy*dy;
+                if (d2 < 250*250) {
+                    this.acc.x += dx * 0.0002;
+                    this.acc.y += dy * 0.0002;
+                }
+            }
+        }
+
+        update() {
+            // 限力
+            const mag = Math.sqrt(this.acc.x*this.acc.x + this.acc.y*this.acc.y);
+            if (mag > params.maxForce) {
+                this.acc.x = this.acc.x / mag * params.maxForce;
+                this.acc.y = this.acc.y / mag * params.maxForce;
+            }
+            this.vel.x += this.acc.x;
+            this.vel.y += this.acc.y;
+            // 限速
+            const sp = Math.sqrt(this.vel.x*this.vel.x + this.vel.y*this.vel.y);
+            if (sp > params.maxSpeed) {
+                this.vel.x = this.vel.x / sp * params.maxSpeed;
+                this.vel.y = this.vel.y / sp * params.maxSpeed;
+            }
+            this.pos.x += this.vel.x;
+            this.pos.y += this.vel.y;
+            this.acc.x = 0; this.acc.y = 0;
+            // 轨迹（短）
+            this.trail.push({ x: this.pos.x, y: this.pos.y });
+            if (this.trail.length > 8) this.trail.shift();
+        }
+
+        draw() {
+            // 轨迹
+            if (this.trail.length > 1) {
+                ctx.strokeStyle = 'rgba(90,210,255,0.15)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(this.trail[0].x, this.trail[0].y);
+                for (let i = 1; i < this.trail.length; i++) {
+                    ctx.lineTo(this.trail[i].x, this.trail[i].y);
+                }
+                ctx.stroke();
+            }
+            // 鸟身（三角形指向运动方向）
+            const angle = Math.atan2(this.vel.y, this.vel.x);
+            ctx.save();
+            ctx.translate(this.pos.x, this.pos.y);
+            ctx.rotate(angle);
+            ctx.fillStyle = '#5ad2ff';
+            ctx.beginPath();
+            ctx.moveTo(5, 0);
+            ctx.lineTo(-4, 3);
+            ctx.lineTo(-4, -3);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+        }
+    }
+
+    // ============ 生命游戏网格 ============
+    let cells = [];   // 当前生命状态
+    let activated = []; // 激活度（被Boid飞过累积）
+    let cols = 0, rows = 0;
+
+    function initGrid() {
+        cols = Math.floor(W / params.gridSize);
+        rows = Math.floor(H / params.gridSize);
+        cells = new Array(cols * rows).fill(0);
+        activated = new Array(cols * rows).fill(0);
+    }
+
+    function gridIndex(x, y) {
+        const cx = Math.floor(x / params.gridSize);
+        const cy = Math.floor(y / params.gridSize);
+        if (cx < 0 || cx >= cols || cy < 0 || cy >= rows) return -1;
+        return cy * cols + cx;
+    }
+
+    // Boid 飞过激活格子
+    function boidActivate(x, y) {
+        const i = gridIndex(x, y);
+        if (i >= 0) {
+            activated[i] = Math.min(activated[i] + 0.3, 1.5);
+            // 激活到阈值后转为活细胞
+            if (activated[i] >= 1 && cells[i] === 0 && Math.random() < 0.3) {
+                cells[i] = 1;
+            }
+        }
+    }
+
+    // 生命游戏一步演化
+    function lifeStep() {
+        const next = new Array(cols * rows).fill(0);
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                let n = 0;
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        if (dx === 0 && dy === 0) continue;
+                        const nx = (x + dx + cols) % cols;
+                        const ny = (y + dy + rows) % rows;
+                        n += cells[ny * cols + nx];
+                    }
+                }
+                const idx = y * cols + x;
+                if (cells[idx] === 1) {
+                    next[idx] = (n === 2 || n === 3) ? 1 : 0;
+                } else {
+                    next[idx] = (n === 3) ? 1 : 0;
+                }
+                // 激活度衰减
+                activated[idx] *= 0.95;
+            }
+        }
+        cells = next;
+    }
+
+    function drawGrid() {
+        // 激活态（黄色淡光）
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                const i = y * cols + x;
+                if (cells[i] === 1) {
+                    ctx.fillStyle = 'rgba(231,76,60,0.85)';
+                    ctx.fillRect(x * params.gridSize, y * params.gridSize, params.gridSize - 1, params.gridSize - 1);
+                } else if (activated[i] > 0.05) {
+                    const a = Math.min(activated[i], 1) * 0.4;
+                    ctx.fillStyle = 'rgba(254,202,87,' + a + ')';
+                    ctx.fillRect(x * params.gridSize, y * params.gridSize, params.gridSize - 1, params.gridSize - 1);
+                }
+            }
+        }
+    }
+
+    // ============ 主循环 ============
+    let boids = [];
+    function resetBoids() {
+        boids = [];
+        for (let i = 0; i < params.boidCount; i++) {
+            boids.push(new Boid());
+        }
+    }
+
+    let frame = 0;
+    let lastTime = performance.now();
+    let fpsTime = lastTime;
+    let fpsFrames = 0;
+    let gen = 0;
+    let paused = false;
+
+    function loop() {
+        requestAnimationFrame(loop);
+        if (paused) return;
+
+        const now = performance.now();
+        fpsFrames++;
+        if (now - fpsTime > 500) {
+            document.getElementById('hudFps').textContent = (fpsFrames * 1000 / (now - fpsTime)).toFixed(1);
+            fpsTime = now;
+            fpsFrames = 0;
+        }
+
+        // 背景（轻微拖尾）
+        ctx.fillStyle = 'rgba(10,14,26,0.35)';
+        ctx.fillRect(0, 0, W, H);
+
+        // 生命演化
+        frame++;
+        if (frame % params.lifeSpeed === 0) {
+            lifeStep();
+            gen++;
+            document.getElementById('hudGen').textContent = gen;
+        }
+
+        // 画生命网格
+        drawGrid();
+
+        // Boid 行为 + 绘制
+        for (const b of boids) {
+            b.flock(boids);
+            b.update();
+            b.edges();
+            boidActivate(b.pos.x, b.pos.y);
+            b.draw();
+        }
+
+        // 统计
+        document.getElementById('hudBoids').textContent = boids.length;
+        let liveCount = 0;
+        for (const c of cells) if (c) liveCount++;
+        document.getElementById('hudCells').textContent = liveCount;
+    }
+
+    // ============ 鼠标交互 ============
+    let mouseX = 0, mouseY = 0, mouseActive = false;
+    canvas.addEventListener('mousemove', e => {
+        mouseX = e.clientX; mouseY = e.clientY;
+    });
+    canvas.addEventListener('mousedown', e => {
+        if (e.button === 0) {
+            mouseActive = true;
+            mouseX = e.clientX; mouseY = e.clientY;
+        } else if (e.button === 2) {
+            // 右键: 在该区域激活生命
+            for (let dy = -3; dy <= 3; dy++) {
+                for (let dx = -3; dx <= 3; dx++) {
+                    const i = gridIndex(e.clientX + dx * params.gridSize, e.clientY + dy * params.gridSize);
+                    if (i >= 0 && Math.random() < 0.4) cells[i] = 1;
+                }
+            }
+        }
+    });
+    canvas.addEventListener('mouseup', e => { if (e.button === 0) mouseActive = false; });
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+    // ============ 控件 ============
+    function bindRange(sliderId, valueId, key, scale, fmt) {
+        const s = document.getElementById(sliderId);
+        const v = document.getElementById(valueId);
+        s.addEventListener('input', () => {
+            params[key] = s.value * scale;
+            v.textContent = fmt(params[key]);
+            if (key === 'boidCount') resetBoids();
+            if (key === 'gridSize') initGrid();
+        });
+        v.textContent = fmt(params[key]);
+    }
+    bindRange('sBoids', 'vBoids', 'boidCount', 1, v => v.toFixed(0));
+    bindRange('sCoh', 'vCoh', 'cohesion', 0.001, v => v.toFixed(3));
+    bindRange('sAli', 'vAli', 'alignment', 0.01, v => v.toFixed(2));
+    bindRange('sSep', 'vSep', 'separation', 0.1, v => v.toFixed(1));
+    bindRange('sLife', 'vLife', 'lifeSpeed', 1, v => v.toFixed(0));
+    bindRange('sGrid', 'vGrid', 'gridSize', 1, v => v.toFixed(0));
+
+    document.getElementById('btnReset').addEventListener('click', () => {
+        resetBoids();
+        initGrid();
+        gen = 0;
+    });
+    document.getElementById('btnPause').addEventListener('click', e => {
+        paused = !paused;
+        e.target.textContent = paused ? '继续' : '暂停';
+    });
+    document.getElementById('btnSpark').addEventListener('click', () => {
+        // 在中心点燃细胞
+        const cx = Math.floor(cols / 2);
+        const cy = Math.floor(rows / 2);
+        for (let dy = -5; dy <= 5; dy++) {
+            for (let dx = -5; dx <= 5; dx++) {
+                const i = (cy + dy) * cols + (cx + dx);
+                if (i >= 0 && i < cells.length && Math.random() < 0.35) cells[i] = 1;
+            }
+        }
+    });
+
+    // ============ 启动 ============
+    initGrid();
+    resetBoids();
+    loop();
+})();
+</script>
+</body>
+</html>`;
+}
+
 function getMLCompareHtml(d, cfg, totalData, testCount) {
     const models = d.models;
     const summary = d.summary;

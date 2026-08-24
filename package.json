@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.6.7",
+    "version": "0.7.0",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -35,6 +35,7 @@
         "onCommand:myPlugin.smartFilter",
         "onCommand:myPlugin.ssqFilter",
         "onCommand:myPlugin.mlCompare",
+        "onCommand:myPlugin.boidsLife",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -106,6 +107,10 @@
             {
                 "command": "myPlugin.mlCompare",
                 "title": "ML Model Compare"
+            },
+            {
+                "command": "myPlugin.boidsLife",
+                "title": "Boids Life Game"
             }
         ],
         "viewsContainers": {
