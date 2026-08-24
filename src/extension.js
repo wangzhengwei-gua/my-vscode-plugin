@@ -2437,7 +2437,24 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
         }
 
         // 是否全部落地（决定是否还 update 鸟位置）
-        const allLanded = frame > 60 && boids.length > 0 && boids.every(b => b.landed && b.landTimer > 35);
+        // 兜底：跑超过 600 帧还没收敛，强制把没落地的鸟设为 landed（防止永久卡住）
+        if (frame > 600 && mode === 'history') {
+            for (const b of boids) {
+                if (!b.landed) {
+                    b.landed = true;
+                    b.landTimer = 100;
+                    // 直接跳到目标位置
+                    b.pos.x = zoneCenterX(b.num);
+                    b.pos.y = H - 90;
+                    b.vel.x = 0;
+                    b.vel.y = 0;
+                }
+            }
+        }
+
+        // 收敛判定：>60 帧 且 ≥95% 鸟落地
+        const landedCount = boids.filter(b => b.landed).length;
+        const allLanded = frame > 60 && boids.length > 0 && landedCount >= boids.length * 0.95;
         // 历史模式全部落地后显示预测按钮
         if (allLanded && mode === 'history') {
             const btn = document.getElementById('btnPredict');
@@ -2445,7 +2462,21 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
         }
 
         // 预测鸟也全部落地的话，输出预测结果
-        const allPredictLanded = predictBoids.length > 0 && predictBoids.every(b => b.landed && b.landTimer > 35);
+        // 预测鸟兜底：超过 600 帧强制收敛
+        if (predictBoids.length > 0 && frame > 800) {
+            for (const b of predictBoids) {
+                if (!b.landed) {
+                    b.landed = true;
+                    b.landTimer = 100;
+                    b.pos.x = zoneCenterX(b.num);
+                    b.pos.y = H - 90;
+                    b.vel.x = 0;
+                    b.vel.y = 0;
+                }
+            }
+        }
+        const predLandedCount = predictBoids.filter(b => b.landed).length;
+        const allPredictLanded = predictBoids.length > 0 && predLandedCount >= predictBoids.length * 0.95;
         if (allPredictLanded) {
             const counts = new Array(10).fill(0);
             for (const b of predictBoids) counts[b.num]++;
@@ -2550,7 +2581,6 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
         }
 
         // 顶部统计标签
-        const landedCount = boids.filter(b => b.landed).length;
         ctx.fillStyle = allLanded ? '#2ecc71' : '#5ad2ff';
         ctx.font = '12px sans-serif';
         ctx.textAlign = 'left';
