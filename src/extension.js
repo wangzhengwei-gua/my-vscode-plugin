@@ -2056,669 +2056,217 @@ h2 { color:#8ec5ff;font-weight:500;margin-bottom:8px; }
  *   3. 转移路径流图：相邻号码转移关系（如 9→0 频率）
  */
 function getBoidsNumberHtml(name, posLabel, numbers, periods) {
-    // 限制数量（避免太慢）
     const data = numbers.slice(-300);
     const periodsSliced = periods.slice(-300);
-    const dataJson = JSON.stringify({ numbers: data, periods: periodsSliced });
+    const N = data.length;
+
+    // ============ 统计 ============
+    // 频率分布
+    const counts = new Array(10).fill(0);
+    for (const n of data) counts[n]++;
+    const freqs = counts.map(c => c / N * 100);
+
+    // 累积占比（每个号码随期数累积）
+    const cum = new Array(10).fill(0);
+    const cumSeries = new Array(10).fill(null).map(() => []);
+    for (let i = 0; i < N; i++) {
+        cum[data[i]]++;
+        for (let d = 0; d < 10; d++) {
+            cumSeries[d].push(cum[d] / (i + 1) * 100);
+        }
+    }
+
+    // 转移矩阵
+    const trans = Array.from({length: 10}, () => new Array(10).fill(0));
+    for (let i = 0; i < N - 1; i++) trans[data[i]][data[i+1]]++;
+    const transMax = Math.max(...trans.map(r => Math.max(...r)));
+
+    // 最大频率号码
+    const maxFreqIdx = counts.indexOf(Math.max(...counts));
+    const sortedByFreq = counts.map((c, i) => ({c, i})).sort((a, b) => b.c - a.c);
+
+    // 理论频率 10%
+    const colors = ['#5ad2ff','#4cd9c0','#a78bfa','#feca57','#ff7675','#10b981','#f472b6','#facc15','#60a5fa','#34d399'];
+
+    const dataJson = JSON.stringify({ data, periods: periodsSliced, counts, freqs, cumSeries, trans, transMax, maxFreqIdx, sortedByFreq, colors });
 
     return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>🐦 群鸟号码模拟 - ${name} ${posLabel}</title>
+<title>🎲 号码分析 - ${name} ${posLabel}</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
-.header { padding: 10px 16px; background: rgba(20,30,50,0.7); border-bottom: 1px solid rgba(120,180,255,0.2); display: flex; justify-content: space-between; align-items: center; backdrop-filter: blur(8px); }
-.header h2 { color: #8ec5ff; font-size: 16px; }
-.header .meta { color: #888; font-size: 12px; }
-.main { flex: 1; display: grid; grid-template-columns: 1fr 320px; gap: 0; overflow: hidden; }
-#sim { display: block; background: #050810; }
-.sidebar { background: rgba(15,20,35,0.8); border-left: 1px solid rgba(120,180,255,0.2); padding: 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
-.panel { background: rgba(20,30,50,0.5); border: 1px solid rgba(120,180,255,0.15); border-radius: 8px; padding: 10px; }
-.panel h3 { color: #feca57; font-size: 13px; margin-bottom: 8px; font-weight: 600; }
+body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; padding: 20px; }
+h2 { color: #8ec5ff; margin-bottom: 6px; }
+.meta { color: #888; font-size: 12px; margin-bottom: 20px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 900px; }
+.panel { background: rgba(20,30,50,0.5); border: 1px solid rgba(120,180,255,0.15); border-radius: 8px; padding: 14px; }
+.panel h3 { color: #feca57; font-size: 14px; margin-bottom: 10px; }
 .panel canvas { width: 100%; display: block; background: rgba(0,0,0,0.3); border-radius: 4px; }
-.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 11px; }
-.stat { padding: 4px 8px; background: rgba(0,0,0,0.3); border-radius: 4px; }
-.stat-label { color: #888; }
-.stat-value { color: #5ad2ff; font-weight: bold; font-size: 13px; }
-#ctrl { display: flex; flex-direction: column; gap: 6px; }
-#ctrl label { font-size: 11px; color: #aaa; display: flex; justify-content: space-between; align-items: center; }
-#ctrl input[type="range"] { width: 100%; }
-#ctrl button { padding: 6px; background: #0e639c; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }
-#ctrl button:hover { background: #1177bb; }
-.legend { font-size: 10px; color: #666; line-height: 1.5; }
+.bar-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
+.bar-label { width: 24px; text-align: center; font-weight: bold; }
+.bar-track { flex: 1; height: 20px; background: rgba(0,0,0,0.3); border-radius: 4px; position: relative; }
+.bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
+.bar-val { width: 80px; font-size: 12px; color: #aaa; }
+.legend { font-size: 11px; color: #666; line-height: 1.5; margin-top: 6px; }
+.pred-btn { display: block; width: 100%; padding: 12px; margin: 20px 0; background: #c0392b; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold; }
+.pred-btn:hover { background: #e74c3c; }
+.pred-result { padding: 16px; background: rgba(192,57,43,0.1); border: 1px solid rgba(192,57,43,0.3); border-radius: 8px; margin: 16px 0; text-align: center; }
+.pred-num { font-size: 36px; font-weight: bold; color: #2ecc71; letter-spacing: 8px; }
+.pred-top3 { color: #feca57; font-size: 14px; margin-top: 8px; }
+.pred-detail { color: #888; font-size: 12px; margin-top: 8px; line-height: 1.6; }
 </style>
 </head>
 <body>
-<div class="header">
-    <h2>🐦 ${name} · ${posLabel} · 群鸟分布模拟 + 预测</h2>
-    <div class="meta">历史 ${data.length} 期 · 最新 ${periodsSliced[periodsSliced.length-1] || '?'} · 落地后点「🔮 预测下期」启动预测模式</div>
+<h2>🎲 ${name} · ${posLabel} · 号码频率分析</h2>
+<div class="meta">历史 ${N} 期 · 最新 ${periodsSliced[periodsSliced.length-1] || '?'} · 理论均匀 10%</div>
+
+<button class="pred-btn" id="btnPredict">🔮 一键预测下期号码</button>
+<div id="predResult"></div>
+
+<div class="grid">
+    <div class="panel">
+        <h3>📊 频率分布</h3>
+        <div id="bars"></div>
+        <div class="legend">黄柱 = 实际频率 · 虚线 = 理论 10%</div>
+    </div>
+    <div class="panel">
+        <h3>📈 累积占比演化</h3>
+        <canvas id="cumCanvas" width="400" height="200"></canvas>
+        <div class="legend">10条线代表0-9累积占比，越接近10%越随机</div>
+    </div>
+    <div class="panel" style="grid-column: span 2;">
+        <h3>🔀 转移矩阵热力图</h3>
+        <canvas id="transCanvas" width="400" height="200"></canvas>
+        <div class="legend">行=当前号 · 列=下一号 · 越亮=转移越频繁</div>
+    </div>
 </div>
-<div class="main">
-    <canvas id="sim"></canvas>
-    <div class="sidebar">
-        <div class="panel">
-            <h3>📊 频率分布密度</h3>
-            <canvas id="freqCanvas" width="280" height="120"></canvas>
-            <div class="legend">黄柱 = 实际频率，蓝线 = 理论 10%</div>
-        </div>
-        <div class="panel">
-            <h3>📈 累积占比演化</h3>
-            <canvas id="cumCanvas" width="280" height="120"></canvas>
-            <div class="legend">10条线代表0-9的累积占比，越接近10%说明越随机</div>
-        </div>
-        <div class="panel">
-            <h3>🔀 转移路径流图</h3>
-            <canvas id="transCanvas" width="280" height="180"></canvas>
-            <div class="legend">行=当前号，列=下一号，越亮=转移越频繁</div>
-        </div>
-        <div class="panel">
-            <h3>⚡ 实时统计</h3>
-            <div class="stats" id="liveStats"></div>
-        </div>
-        <div class="panel">
-            <h3>🎛️ 控制</h3>
-            <div id="ctrl">
-                <label>鸟数 <span id="vB">100</span><input type="range" id="sB" min="20" max="${data.length}" value="100"></label>
-                <label>速度 <span id="vSp">1.0</span><input type="range" id="sSp" min="1" max="30" value="10"></label>
-                <label>凝聚力 <span id="vC">0.005</span><input type="range" id="sC" min="0" max="20" value="5"></label>
-                <button id="btnPlay">暂停</button>
-                <button id="btnReset">重置</button>
-            </div>
-        </div>
-        <div class="panel" id="predPanel" style="display:none;">
-            <button id="btnPredict" style="background:#c0392b;padding:8px;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;width:100%;margin-bottom:10px;">🔮 启动预测模式</button>
-            <h3>🔮 预测下期</h3>
-            <div id="predResult" style="font-size:14px;color:#feca57;line-height:1.8;"></div>
-            <div class="legend">基于历史频率引力场 + 鸟群探测投票</div>
-        </div>
-</div>
+
 <script>
 (function() {
-    const DATA = ${dataJson};
-    const numbers = DATA.numbers;
-    const periods = DATA.periods;
+    const D = ${dataJson};
 
-    const canvas = document.getElementById('sim');
-    const ctx = canvas.getContext('2d');
-    let W = 0, H = 0;
-    function resize() {
-        const r = canvas.parentElement.getBoundingClientRect();
-        W = canvas.width = Math.floor(r.width);
-        H = canvas.height = Math.floor(r.height);
-    }
-    window.addEventListener('resize', resize);
-    setTimeout(resize, 50);
-
-    // 10 个号码区域 (0-9) 横向分布
-    function zoneCenterX(num) {
-        return (num + 0.5) / 10 * W;
-    }
-
-    // 每只鸟带一个 target 号码
-    class NumBoid {
-        constructor(idx) {
-            const num = numbers[idx % numbers.length];
-            this.num = num;
-            this.idx = idx;
-            this.pos = { x: Math.random() * W, y: Math.random() * H };
-            const a = Math.random() * Math.PI * 2;
-            this.vel = { x: Math.cos(a) * 1.5, y: Math.sin(a) * 1.5 };
-            this.acc = { x: 0, y: 0 };
-            this.color = ['#5ad2ff','#4cd9c0','#a78bfa','#feca57','#ff7675','#10b981','#f472b6','#facc15','#60a5fa','#34d399'][num];
-            this.size = 4 + num * 0.3;
-            this.landed = false;
-            this.landTimer = 0;
-        }
-        update(boids) {
-            // 已彻底落地（30 帧后）的鸟不再更新，防止被群飞规则拉走
-            if (this.landed && this.landTimer > 30) {
-                return;
-            }
-            // 群飞规则
-            let alignX=0, alignY=0, alignN=0;
-            let cohX=0, cohY=0, cohN=0;
-            let sepX=0, sepY=0, sepN=0;
-            const per = 35, per2 = per*per;
-            for (const o of boids) {
-                if (o === this) continue;
-                const dx = o.pos.x - this.pos.x;
-                const dy = o.pos.y - this.pos.y;
-                const d2 = dx*dx + dy*dy;
-                if (d2 > per2 || d2 === 0) continue;
-                alignX += o.vel.x; alignY += o.vel.y; alignN++;
-                cohX += o.pos.x; cohY += o.pos.y; cohN++;
-                const d = Math.sqrt(d2);
-                if (d < per * 0.5) {
-                    sepX -= dx/d/d; sepY -= dy/d/d; sepN++;
-                }
-            }
-            const coh = params.cohesion;
-            if (alignN) { this.acc.x += (alignX/alignN - this.vel.x) * 0.04; this.acc.y += (alignY/alignN - this.vel.y) * 0.04; }
-            if (cohN)   { this.acc.x += (cohX/cohN - this.pos.x) * coh; this.acc.y += (cohY/cohN - this.pos.y) * coh; }
-            if (sepN)   { this.acc.x += sepX * 0.08; this.acc.y += sepY * 0.08; }
-
-            // 朝向自己的目标号码区（关键：让鸟飞向对应号码区域）
-            // 如果是预测鸟，则它会被引力场影响，可能"叛变"飞向引力更大的区
-            if (this.isPredict && gravityWells) {
-                // 计算受所有号码区引力影响，引力 = 历史频率强度 / 距离^2
-                let bestPull = 0;
-                let bestNum = this.num;
-                for (let n = 0; n < 10; n++) {
-                    const gx = zoneCenterX(n);
-                    const gy = H - 90;
-                    const gdx = gx - this.pos.x;
-                    const gdy = gy - this.pos.y;
-                    const gd2 = gdx*gdx + gdy*gdy + 1;  // +1防除0
-                    const gd = Math.sqrt(gd2);
-                    // 引力强度（受质量 * 反平方定律 * 衰减）
-                    const force = gravityWells[n] * 200 / gd2;
-                    // 加速朝向该区
-                    this.acc.x += gdx / gd * force * 0.001;
-                    this.acc.y += gdy / gd * force * 0.001;
-                    // 追踪最大引力区
-                    if (force > bestPull) {
-                        bestPull = force;
-                        bestNum = n;
-                    }
-                }
-                // 鸟逐渐"被引力俘获"，目标号码可能改变
-                if (!this.landed) {
-                    this.targetNum = bestNum;
-                    // 概率性切换目标（避免抖动）
-                    if (Math.random() < 0.02) this.num = bestNum;
-                }
-            }
-            const tx = zoneCenterX(this.num);
-            const ty = H - 90;  // 号码区指示带上方（H-40是带顶部，留10像素间距）
-            const ddx = tx - this.pos.x;
-            const ddy = ty - this.pos.y;
-            const dist = Math.sqrt(ddx*ddx + ddy*ddy);
-            if (dist > 5 && !this.landed) {
-                // 距离越远吸引力越大；接近目标时减速
-                const pull = dist > 80 ? 0.06 : 0.02;
-                this.acc.x += ddx / dist * pull;
-                this.acc.y += ddy / dist * pull;
-            }
-
-            // 限速
-            this.vel.x += this.acc.x;
-            this.vel.y += this.acc.y;
-
-            // 落地判定：接近目标 + 速度小 → 标记 landed，开始衰减
-            if (dist < 60 && !this.landed) {
-                this.landed = true;
-                this.landTimer = 0;
-                settledCount[this.num] = (settledCount[this.num] || 0) + 1;
-            }
-            if (this.landed) {
-                // 落地后速度逐渐衰减到 0（约 30 帧衰减完成）
-                this.landTimer = (this.landTimer || 0) + 1;
-                const decay = Math.max(0, 1 - this.landTimer / 30);
-                this.vel.x *= decay;
-                this.vel.y *= decay;
-                // 轻微锚定到目标位置（防漂移）
-                this.pos.x += (tx - this.pos.x) * 0.05;
-                this.pos.y += (ty - this.pos.y) * 0.05;
-            }
-
-            const sp = Math.sqrt(this.vel.x*this.vel.x + this.vel.y*this.vel.y);
-            const maxS = params.speed;
-            if (sp > maxS) { this.vel.x = this.vel.x/sp*maxS; this.vel.y = this.vel.y/sp*maxS; }
-            this.pos.x += this.vel.x;
-            this.pos.y += this.vel.y;
-            this.acc.x = 0; this.acc.y = 0;
-
-            // 边界：环绕（仅未落地时）
-            if (!this.landed) {
-                if (this.pos.x < 0) this.pos.x += W;
-                else if (this.pos.x > W) this.pos.x -= W;
-                if (this.pos.y < 0) this.pos.y += H;
-                else if (this.pos.y > H) this.pos.y -= H;
-            }
-        }
-        draw() {
-            ctx.fillStyle = this.color;
-            ctx.beginPath();
-            ctx.arc(this.pos.x, this.pos.y, this.size, 0, Math.PI * 2);
-            ctx.fill();
-            // 小光晕
-            ctx.fillStyle = this.color + '33';
-            ctx.beginPath();
-            ctx.arc(this.pos.x, this.pos.y, this.size * 2.5, 0, Math.PI * 2);
-            ctx.fill();
-        }
+    // ============ 频率条形图 ============
+    const barsEl = document.getElementById('bars');
+    for (let i = 0; i < 10; i++) {
+        const pct = D.freqs[i];
+        const color = D.colors[i];
+        const isMax = i === D.maxFreqIdx;
+        const row = document.createElement('div');
+        row.className = 'bar-row';
+        row.innerHTML =
+            '<div class="bar-label" style="color:' + color + '">' + i + '</div>' +
+            '<div class="bar-track">' +
+                '<div class="bar-fill" style="width:' + (pct * 5) + '%; background:' + color + '; opacity:' + (isMax ? 1 : 0.7) + ';"></div>' +
+                '<div style="position:absolute; top:0; left:' + (10 * 5) + '%; width:1px; height:100%; background:rgba(120,180,255,0.4);"></div>' +
+            '</div>' +
+            '<div class="bar-val">' + D.counts[i] + '次 · ' + pct.toFixed(1) + '%' + (isMax ? ' ★' : '') + '</div>';
+        barsEl.appendChild(row);
     }
 
-    // 三个可视化画布
-    const freqC = document.getElementById('freqCanvas');
+    // ============ 累积占比折线 ============
     const cumC = document.getElementById('cumCanvas');
-    const transC = document.getElementById('transCanvas');
-    const fctx = freqC.getContext('2d');
-    const cctx = cumC.getContext('2d');
-    const tctx = transC.getContext('2d');
-
-    // 频率分布（累积至当前）
-    function drawFreq() {
-        fctx.fillStyle = '#000';
-        fctx.fillRect(0, 0, freqC.width, freqC.height);
-        const counts = new Array(10).fill(0);
-        // 当前帧所有鸟的号码分布
-        for (const b of boids) counts[b.num]++;
-        const total = boids.length;
-        const barW = freqC.width / 10;
-        const maxH = freqC.height - 16;
-        for (let i = 0; i < 10; i++) {
-            const h = (counts[i] / total) * maxH;
-            fctx.fillStyle = '#feca57';
-            fctx.fillRect(i * barW + 2, maxH - h + 8, barW - 4, h);
-            // 数字标签
-            fctx.fillStyle = '#888';
-            fctx.font = '10px sans-serif';
-            fctx.textAlign = 'center';
-            fctx.fillText(i, i * barW + barW/2, maxH + 6);
+    const cumX = cumC.getContext('2d');
+    cumX.fillStyle = '#000';
+    cumX.fillRect(0, 0, cumC.width, cumC.height);
+    const N = D.data.length;
+    const W = cumC.width, H = cumC.height - 10;
+    for (let d = 0; d < 10; d++) {
+        cumX.strokeStyle = D.colors[d];
+        cumX.lineWidth = 1.5;
+        cumX.beginPath();
+        const series = D.cumSeries[d];
+        for (let j = 0; j < N; j++) {
+            const x = (j / (N - 1)) * W;
+            const y = H - series[j] / 100 * H + 5;
+            if (j === 0) cumX.moveTo(x, y);
+            else cumX.lineTo(x, y);
         }
-        // 理论 10% 线
-        fctx.strokeStyle = '#5ad2ff';
-        fctx.setLineDash([4, 3]);
-        fctx.beginPath();
-        fctx.moveTo(0, maxH - 0.1 * maxH + 8);
-        fctx.lineTo(freqC.width, maxH - 0.1 * maxH + 8);
-        fctx.stroke();
-        fctx.setLineDash([]);
+        cumX.stroke();
     }
+    // 10% 理论线
+    cumX.strokeStyle = 'rgba(255,255,255,0.3)';
+    cumX.setLineDash([3, 3]);
+    cumX.beginPath();
+    cumX.moveTo(0, H - 0.1 * H + 5);
+    cumX.lineTo(W, H - 0.1 * H + 5);
+    cumX.stroke();
+    cumX.setLineDash([]);
 
-    // 累积占比演化（取所有历史数据，按窗口滑动）
-    function drawCum() {
-        cctx.fillStyle = '#000';
-        cctx.fillRect(0, 0, cumC.width, cumC.height);
-        const N = numbers.length;
-        const W = cumC.width;
-        const H = cumC.height - 10;
-        // 10 条线，从左到右表示累积占比
-        const cum = new Array(10).fill(0);
-        const colors = ['#5ad2ff','#4cd9c0','#a78bfa','#feca57','#ff7675','#10b981','#f472b6','#facc15','#60a5fa','#34d399'];
-        for (let i = 0; i < 10; i++) {
-            cctx.strokeStyle = colors[i];
-            cctx.lineWidth = 1.2;
-            cctx.beginPath();
-            for (let j = 0; j < N; j++) {
-                cum[numbers[j]]++;
-                const total = j + 1;
-                const pct = cum[i] / total;
-                const x = (j / (N - 1)) * W;
-                const y = H - pct * H + 5;
-                if (j === 0) cctx.moveTo(x, y);
-                else cctx.lineTo(x, y);
-            }
-            cctx.stroke();
-        }
-        // 10% 理论线
-        cctx.strokeStyle = 'rgba(255,255,255,0.3)';
-        cctx.setLineDash([3, 3]);
-        cctx.beginPath();
-        cctx.moveTo(0, H - 0.1 * H + 5);
-        cctx.lineTo(W, H - 0.1 * H + 5);
-        cctx.stroke();
-        cctx.setLineDash([]);
-    }
-
-    // 转移矩阵热力图（10x10）
-    function drawTrans() {
-        tctx.fillStyle = '#000';
-        tctx.fillRect(0, 0, transC.width, transC.height);
-        // 计算转移
-        const trans = Array.from({length: 10}, () => new Array(10).fill(0));
-        for (let i = 0; i < numbers.length - 1; i++) {
-            trans[numbers[i]][numbers[i+1]]++;
-        }
-        // 归一化（按行）
-        const maxV = Math.max(...trans.map(r => Math.max(...r)));
-        const cell = Math.min(transC.width / 10, (transC.height - 20) / 10);
-        const ox = (transC.width - cell * 10) / 2;
-        const oy = 14;
-        for (let i = 0; i < 10; i++) {
-            for (let j = 0; j < 10; j++) {
-                const v = trans[i][j] / maxV;
-                tctx.fillStyle = 'rgba(254,202,87,' + v.toFixed(3) + ')';
-                tctx.fillRect(ox + j * cell, oy + i * cell, cell - 1, cell - 1);
-            }
-        }
-        // 标签
-        tctx.fillStyle = '#888';
-        tctx.font = '9px sans-serif';
-        tctx.textAlign = 'center';
-        for (let i = 0; i < 10; i++) {
-            tctx.fillText(i, ox + i * cell + cell/2, 10);
-            tctx.fillText(i, ox - 6, oy + i * cell + cell/2 + 3);
+    // ============ 转移矩阵热力图 ============
+    const tC = document.getElementById('transCanvas');
+    const tX = tC.getContext('2d');
+    tX.fillStyle = '#000';
+    tX.fillRect(0, 0, tC.width, tC.height);
+    const cell = Math.min(tC.width / 12, (tC.height - 20) / 10);
+    const ox = (tC.width - cell * 10) / 2;
+    const oy = 16;
+    for (let i = 0; i < 10; i++) {
+        for (let j = 0; j < 10; j++) {
+            const v = D.trans[i][j] / D.transMax;
+            tX.fillStyle = 'rgba(254,202,87,' + v.toFixed(3) + ')';
+            tX.fillRect(ox + j * cell, oy + i * cell, cell - 1, cell - 1);
         }
     }
-
-    // 实时统计
-    function drawStats() {
-        const counts = new Array(10).fill(0);
-        for (const b of boids) counts[b.num]++;
-        const total = boids.length;
-        const el = document.getElementById('liveStats');
-        let html = '';
-        for (let i = 0; i < 10; i++) {
-            const pct = (counts[i] / total * 100).toFixed(1);
-            const color = ['#5ad2ff','#4cd9c0','#a78bfa','#feca57','#ff7675','#10b981','#f472b6','#facc15','#60a5fa','#34d399'][i];
-            html += '<div class="stat"><span class="stat-label" style="color:'+color+'">' + i + '</span> <span class="stat-value">' + pct + '%</span></div>';
-        }
-        el.innerHTML = html;
+    tX.fillStyle = '#888';
+    tX.font = '9px sans-serif';
+    tX.textAlign = 'center';
+    for (let i = 0; i < 10; i++) {
+        tX.fillText(i, ox + i * cell + cell/2, 12);
+        tX.fillText(i, ox - 8, oy + i * cell + cell/2 + 3);
     }
 
-    // 初始化
-    const params = { speed: 1.0, cohesion: 0.005, boidCount: 100 };
-    let boids = [];
-    let settledCount = new Array(10).fill(0);
-    let frame = 0;
-    let paused = false;
-    // 预测模式相关（提前声明，避免 TDZ 错误）
-    let mode = 'history';  // 'history' 或 'predict'
-    let predictBoids = [];
-    let gravityWells = null;
-
-    function resetBoids() {
-        boids = [];
-        settledCount = new Array(10).fill(0);
-        for (let i = 0; i < params.boidCount; i++) {
-            boids.push(new NumBoid(i));
-        }
-    }
-
-    function loop() {
-        // 用 setTimeout 替代 requestAnimationFrame，避免 Webview 失焦时画面冻结
-        setTimeout(loop, 33);  // ~30 FPS
-        if (paused) return;
-
-        // 每帧开头强制同步尺寸
-        if (W === 0 || H === 0) {
-            resize();
-        }
-
-        // 是否全部落地（决定是否还 update 鸟位置）
-        // 兜底：跑超过 600 帧还没收敛，强制把没落地的鸟设为 landed（防止永久卡住）
-        if (frame > 600 && mode === 'history') {
-            for (const b of boids) {
-                if (!b.landed) {
-                    b.landed = true;
-                    b.landTimer = 100;
-                    // 直接跳到目标位置
-                    b.pos.x = zoneCenterX(b.num);
-                    b.pos.y = H - 90;
-                    b.vel.x = 0;
-                    b.vel.y = 0;
-                }
-            }
-        }
-
-        // 收敛判定：>60 帧 且 ≥95% 鸟落地
-        const landedCount = boids.filter(b => b.landed).length;
-        const allLanded = frame > 60 && boids.length > 0 && landedCount >= boids.length * 0.95;
-        // 历史模式全部落地后显示预测按钮
-        if (allLanded && mode === 'history') {
-            const btn = document.getElementById('btnPredict');
-            if (btn.style.display === 'none') {
-                btn.style.display = 'block';
-                document.getElementById('predPanel').style.display = 'block';
-                // 自动滚动到预测面板
-                setTimeout(() => {
-                    document.getElementById('predPanel').scrollIntoView({ behavior: 'smooth', block: 'end' });
-                }, 100);
-            }
-        }
-
-        // 预测鸟也全部落地的话，输出预测结果
-        // 预测鸟兜底：超过 600 帧强制收敛
-        if (predictBoids.length > 0 && frame > 800) {
-            for (const b of predictBoids) {
-                if (!b.landed) {
-                    b.landed = true;
-                    b.landTimer = 100;
-                    b.pos.x = zoneCenterX(b.num);
-                    b.pos.y = H - 90;
-                    b.vel.x = 0;
-                    b.vel.y = 0;
-                }
-            }
-        }
-        const predLandedCount = predictBoids.filter(b => b.landed).length;
-        const allPredictLanded = predictBoids.length > 0 && predLandedCount >= predictBoids.length * 0.95;
-        if (allPredictLanded) {
-            const counts = new Array(10).fill(0);
-            for (const b of predictBoids) counts[b.num]++;
-            const maxIdx = counts.indexOf(Math.max.apply(null, counts));
-            const top3 = counts.map((c, i) => ({c, i})).sort((a, b) => b.c - a.c).slice(0, 3).map(x => x.i);
-            const total = predictBoids.length;
-            document.getElementById('predResult').innerHTML =
-                '<div style="font-size:24px;color:#2ecc71;font-weight:bold;margin-bottom:8px;">预测号码: ' + maxIdx + '</div>' +
-                '<div style="color:#feca57">Top3 候补: ' + top3.join(', ') + '</div>' +
-                '<div style="color:#888;font-size:11px;margin-top:6px">' +
-                counts.map((c, i) => i + ':' + (c/total*100).toFixed(0) + '%').join(' · ') +
-                '</div>' +
-                '<div style="color:#666;font-size:11px;margin-top:8px">⚠️ 仅供娱乐参考</div>';
-            // 防止每帧重复输出
-            if (!predictBoids[0].resultShown) predictBoids.forEach(b => b.resultShown = true);
-        }
-
-        // ============ 背景 ============
-        // 每帧用纯黑覆盖整个画布（保证有底色 + 避免无限拖尾累积）
-        ctx.fillStyle = 'rgba(5,8,16,1)';
-        ctx.fillRect(0, 0, W, H);
-
-        // 如果 W/H 异常，画红色提示
-        if (W < 100 || H < 100) {
-            ctx.fillStyle = '#ff6b6b';
-            ctx.font = '14px sans-serif';
-            ctx.textAlign = 'left';
-            ctx.fillText('Canvas 尺寸异常: ' + W + 'x' + H, 10, 30);
-            ctx.fillText('boids 数组长度: ' + boids.length, 10, 50);
-            frame++;
-            return;
-        }
-
-        // ============ 主绘制 ============
-        // 更新鸟位置（仅在未全部落地时）
-        if (!allLanded) {
-            for (const b of boids) {
-                b.update(boids);
-            }
-        }
-        // 永远画鸟
-        for (const b of boids) {
-            b.draw();
-        }
-
-        // 预测鸟：更新+绘制（用不同颜色区分）
-        if (predictBoids.length > 0) {
-            const allPredLanded = predictBoids.every(b => b.landed && b.landTimer > 35);
-            if (!allPredLanded) {
-                for (const b of predictBoids) {
-                    b.update(predictBoids);
-                    // 预测鸟用紫色（区别于历史鸟青色）
-                    b.color = '#a78bfa';
-                }
-            }
-            for (const b of predictBoids) {
-                b.color = '#a78bfa';
-                b.draw();
-            }
-        }
-
-        // 统计各号码区鸟数
-        const zoneCounts = new Array(10).fill(0);
-        for (const b of boids) zoneCounts[b.num]++;
-
-        // 画 10 个号码区域指示带（底部）
-        const zoneH = 40;
-        const zoneY = H - zoneH;
-        for (let i = 0; i < 10; i++) {
-            const x = i / 10 * W;
-            const w = W / 10;
-            // 区域背景
-            ctx.fillStyle = 'rgba(' + (i*20) + ',100,200,0.06)';
-            ctx.fillRect(x, zoneY, w, zoneH);
-            // 边框
-            ctx.strokeStyle = 'rgba(120,180,255,0.15)';
-            ctx.strokeRect(x, zoneY, w, zoneH);
-            // 数字
-            ctx.fillStyle = '#8ec5ff';
-            ctx.font = 'bold 18px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText(i, x + w/2, zoneY + 26);
-
-            // 鸟数+历史频率百分比（号码区上方）
-            const cnt = zoneCounts[i];
-            const pct = (boids.length > 0 ? cnt / boids.length * 100 : 0).toFixed(0);
-            const labelText = cnt + ' · ' + pct + '%';
-
-            // 找最大鸟数高亮
-            const maxCnt = Math.max.apply(null, zoneCounts);
-            const isMax = cnt === maxCnt && cnt > 0;
-
-            ctx.font = 'bold 13px sans-serif';
-            ctx.fillStyle = isMax ? '#2ecc71' : '#feca57';
-            ctx.fillText(labelText, x + w/2, zoneY - 8);
-
-            // 最高密度加皇冠标记
-            if (isMax) {
-                ctx.font = '16px sans-serif';
-                ctx.fillText('★', x + w/2, zoneY - 26);
-            }
-        }
-
-        // 顶部统计标签
-        ctx.fillStyle = allLanded ? '#2ecc71' : '#5ad2ff';
-        ctx.font = '12px sans-serif';
-        ctx.textAlign = 'left';
-        if (allLanded) {
-            ctx.fillText('✅ 已收敛: ' + boids.length + ' 只鸟全部落地 · 下方数字 = 该号码在历史数据中的出现频率', 12, 20);
-        } else {
-            ctx.fillText('⏳ 模拟中: ' + landedCount + '/' + boids.length + ' 已落地 · 帧 ' + frame + ' · 画布 ' + W + 'x' + H, 12, 20);
-        }
-
-        // 帧计数器 + 侧栏刷新
-        frame++;
-        if (frame % 20 === 0) {
-            drawFreq();
-            drawStats();
-        }
-        if (frame % 60 === 0) {
-            drawCum();
-            drawTrans();
-        }
-    }
-
-    // 控件
-    document.getElementById('sB').addEventListener('input', e => {
-        params.boidCount = +e.target.value;
-        document.getElementById('vB').textContent = params.boidCount;
-        resetBoids();
-    });
-    document.getElementById('sSp').addEventListener('input', e => {
-        params.speed = e.target.value / 10;
-        document.getElementById('vSp').textContent = params.speed.toFixed(1);
-    });
-    document.getElementById('sC').addEventListener('input', e => {
-        params.cohesion = e.target.value / 1000;
-        document.getElementById('vC').textContent = params.cohesion.toFixed(3);
-    });
-    document.getElementById('btnPlay').addEventListener('click', e => {
-        paused = !paused;
-        e.target.textContent = paused ? '继续' : '暂停';
-    });
-    document.getElementById('btnReset').addEventListener('click', () => {
-        resetBoids();
-        frame = 0;
-        mode = 'history';  // 回到历史模式
-        document.getElementById('btnPredict').style.display = 'none';
-        document.getElementById('predPanel').style.display = 'none';
-    });
-
-    // ============ 预测模式 ============
-    // mode / predictBoids / gravityWells 已在前面声明
-
-    function calcGravityWells() {
-        // 用当前历史鸟的分布作为引力场（频率高的区引力大）
-        const counts = new Array(10).fill(0);
-        for (const b of boids) counts[b.num]++;
-        const total = boids.length || 1;
-        // 引力强度 = 频率 / 平均频率（基准1.0）
-        const avg = total / 10;
-        return counts.map(c => Math.max(0.3, c / avg));  // 至少0.3防止零引力
-    }
-
-    function releasePredictBoids() {
-        // 释放 N 只探测鸟，每只随机分配一个目标号码（但受引力场影响）
-        predictBoids = [];
-        const N = 80;
-        for (let i = 0; i < N; i++) {
-            // 初始随机目标 0-9，鸟会按引力动态调整
-            const num = Math.floor(Math.random() * 10);
-            const b = new NumBoid(0);
-            b.num = num;
-            b.isPredict = true;
-            b.targetNum = num;  // 初始目标
-            // 探测鸟初始位置随机分布
-            b.pos = { x: Math.random() * W, y: Math.random() * H * 0.6 };
-            predictBoids.push(b);
-        }
-    }
-
+    // ============ 预测 ============
     document.getElementById('btnPredict').addEventListener('click', () => {
-        if (mode === 'history') {
-            // 进入预测模式
-            gravityWells = calcGravityWells();
-            releasePredictBoids();
-            mode = 'predict';
-            document.getElementById('btnPredict').textContent = '🔄 重新探测';
-            document.getElementById('predPanel').style.display = 'block';
-            document.getElementById('predResult').innerHTML = '<span style="color:#5ad2ff">探测鸟释放中... 观察鸟群受历史频率引力影响</span>';
-        } else {
-            // 重新探测
-            releasePredictBoids();
-            document.getElementById('predResult').innerHTML = '<span style="color:#5ad2ff">重新探测中...</span>';
-        }
-    });
+        const el = document.getElementById('predResult');
+        // 预测算法：加权投票
+        // 1. 历史频率加权（频率高的得分多）
+        // 2. 最近5期趋势（最近出现的号码得分多）
+        // 3. 转移矩阵（上期号码→本期的转移概率）
+        const last = D.data[D.data.length - 1]; // 上期号码
+        const recent5 = D.data.slice(-5);
 
-    // 启动：等 canvas 尺寸就绪（最多等 30 帧，约 500ms）
-    let startRetries = 0;
-    function tryStart() {
-        startRetries++;
-        resize();
-        if (W > 0 && H > 0) {
-            // 尺寸 OK，启动
-            resetBoids();
-            drawCum();
-            drawTrans();
-            loop();
-        } else if (startRetries < 30) {
-            // 还没好，下一帧再试
-            requestAnimationFrame(tryStart);
-        } else {
-            // 30 帧后还是 0，强制启动（loop 里有调试提示）
-            console.error('Canvas resize 失败，W=H=0');
-            resetBoids();
-            drawCum();
-            drawTrans();
-            loop();
+        const scores = new Array(10).fill(0);
+        // 因子1：历史频率（权重 0.3）
+        for (let i = 0; i < 10; i++) {
+            scores[i] += D.freqs[i] / 100 * 0.3;
         }
-    }
-    requestAnimationFrame(tryStart);
-})().catch(e => {
-    console.error('群鸟号码模拟初始化失败:', e);
-    const err = document.createElement('div');
-    err.style.cssText = 'position:fixed;top:80px;left:20px;color:#ff6b6b;font-family:monospace;padding:20px;background:rgba(0,0,0,0.8);border-radius:4px;z-index:9999';
-    err.textContent = '初始化错误: ' + e.message;
-    document.body.appendChild(err);
-});
+        // 因子2：最近5期频率（权重 0.3）
+        for (const n of recent5) {
+            scores[n] += 0.3 / 5;
+        }
+        // 因子3：从上期转移（权重 0.4）
+        const transRow = D.trans[last];
+        const transSum = transRow.reduce((a, b) => a + b, 0) || 1;
+        for (let i = 0; i < 10; i++) {
+            scores[i] += transRow[i] / transSum * 0.4;
+        }
+
+        const top = scores.map((s, i) => ({s, i})).sort((a, b) => b.s - a.s);
+        const best = top[0];
+        const top3 = top.slice(0, 3);
+
+        let detail = '预测评分明细（历史频率30% + 最近5期30% + 转移概率40%）：<br>';
+        top.forEach((t, idx) => {
+            detail += '<span style="color:' + D.colors[t.i] + '">' + t.i + '</span>: ' + (t.s * 100).toFixed(1) + '%' + (idx < 9 ? ' · ' : '');
+        });
+
+        el.innerHTML =
+            '<div class="pred-result">' +
+                '<div class="pred-num">' + best.i + '</div>' +
+                '<div class="pred-top3">Top3 候补: ' + top3.map(t => t.i).join(', ') + '</div>' +
+                '<div class="pred-detail">' + detail + '</div>' +
+                '<div class="pred-detail" style="margin-top:8px">上期号码: ' + last + ' · 历史${N}期</div>' +
+                '<div class="pred-detail" style="margin-top:4px;color:#666">⚠️ 仅供娱乐参考，彩票本质随机</div>' +
+            '</div>';
+    });
+})();
 </script>
 </body>
 </html>`;
 }
+
 
 function getBoidsLifeHtml() {
     return `<!DOCTYPE html>
