@@ -2093,7 +2093,7 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
 <body>
 <div class="header">
     <h2>🐦 ${name} · ${posLabel} · 群鸟分布模拟</h2>
-    <div class="meta">数据 ${data.length} 期 · 最新 ${periodsSliced[periodsSliced.length-1] || '?'} · 理论均匀 10%</div>
+    <div class="meta">历史 ${data.length} 期 · 最新 ${periodsSliced[periodsSliced.length-1] || '?'} · 各号码区鸟数 = 历史频率（≠ 预测概率）</div>
 </div>
 <div class="main">
     <canvas id="sim"></canvas>
@@ -2192,7 +2192,7 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
 
             // 朝向自己的目标号码区（关键：让鸟飞向对应号码区域）
             const tx = zoneCenterX(this.num);
-            const ty = H / 2 + 40;  // 略偏下，靠近号码区指示带
+            const ty = H - 90;  // 号码区指示带上方（H-40是带顶部，留10像素间距）
             const ddx = tx - this.pos.x;
             const ddy = ty - this.pos.y;
             const dist = Math.sqrt(ddx*ddx + ddy*ddy);
@@ -2448,10 +2448,10 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
             ctx.textAlign = 'center';
             ctx.fillText(i, x + w/2, zoneY + 26);
 
-            // 鸟数+百分比（号码区上方）
+            // 鸟数+历史频率百分比（号码区上方）
             const cnt = zoneCounts[i];
             const pct = (boids.length > 0 ? cnt / boids.length * 100 : 0).toFixed(0);
-            const labelText = cnt + ' (' + pct + '%)';
+            const labelText = cnt + ' · ' + pct + '%';
 
             // 找最大鸟数高亮
             const maxCnt = Math.max.apply(null, zoneCounts);
@@ -2474,7 +2474,7 @@ body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHe
         ctx.font = '12px sans-serif';
         ctx.textAlign = 'left';
         if (allLanded) {
-            ctx.fillText('✅ 已收敛: ' + boids.length + ' 只鸟全部落地 · 频率分布定格 (点重置重新模拟)', 12, 20);
+            ctx.fillText('✅ 已收敛: ' + boids.length + ' 只鸟全部落地 · 下方数字 = 该号码在历史数据中的出现频率', 12, 20);
         } else {
             ctx.fillText('⏳ 模拟中: ' + landedCount + '/' + boids.length + ' 已落地 · 帧 ' + frame + ' · 画布 ' + W + 'x' + H, 12, 20);
         }
