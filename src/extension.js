@@ -1873,19 +1873,19 @@ function getTimeBackgroundJs() {
     wrap.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);'
         + 'text-align:center;user-select:none;pointer-events:none;z-index:99999;'
         + "font-family:'Segoe UI','Microsoft YaHei',sans-serif;";
-    // 大字时间（最上方）
+    // 大字时间（最上方）- 透明度极低
     var tEl = document.createElement('div');
     tEl.style.cssText = 'font-size:140px;font-weight:700;'
-        + 'color:rgba(80,160,255,0.18);letter-spacing:4px;'
-        + 'text-shadow:0 0 40px rgba(80,160,255,0.12);'
+        + 'color:rgba(80,160,255,0.06);letter-spacing:4px;'
+        + 'text-shadow:0 0 40px rgba(80,160,255,0.04);'
         + 'white-space:nowrap;line-height:1;';
     // 日期（中间）
     var dEl = document.createElement('div');
-    dEl.style.cssText = 'font-size:32px;color:rgba(120,180,255,0.22);'
+    dEl.style.cssText = 'font-size:32px;color:rgba(120,180,255,0.08);'
         + 'letter-spacing:6px;margin-top:20px;white-space:nowrap;';
     // 温馨话语（最下方）
     var qEl = document.createElement('div');
-    qEl.style.cssText = 'font-size:20px;color:rgba(255,200,120,0.35);'
+    qEl.style.cssText = 'font-size:20px;color:rgba(255,200,120,0.12);'
         + 'letter-spacing:2px;margin-top:16px;'
         + 'max-width:80vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
     wrap.appendChild(tEl);
