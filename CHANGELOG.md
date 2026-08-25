@@ -2,6 +2,14 @@
 
 All notable changes to the "my-vscode-plugin" extension will be documented in this file.
 
+## [0.9.3] - 2026-08-25
+
+🔧 Chore:
+  - 更新打包文件: .gitignore
+  - 更新打包文件: my-vscode-plugin-0.9.2.vsix -> my-vscode-plugin-0.9.3.vsix
+  - 更新 package.json（版本/依赖）
+
+
 ## [0.9.2] - 2026-08-25
 
 ✨ Features:
