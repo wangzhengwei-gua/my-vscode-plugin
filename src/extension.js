@@ -1520,61 +1520,52 @@ function activate(context) {
     });
     context.subscriptions.push(boidsNumberDisposable);
 
-    // ===== 整窗时间背景（注入 CSS/JS 到 workbench.desktop.main.css/.js） =====
-    // 方案B：插件直接修改 VSCode 核心 CSS+JS，注入时间水印背景
-    // 方案A：同时生成独立 css 文件供 Custom CSS and JS Loader 使用
-    // 状态保存到 globalState（跨会话记忆：auto/never）
+    // ===== 状态栏时间 + 每日温馨话语（hover tooltip） =====
+    // 在状态栏显示 🕐 HH:MM:SS 图标，鼠标悬停显示日期 + 温馨话语
+    // 不影响代码阅读区域，完全在状态栏里
 
-    // 如果上次选择了 auto 模式，启动时自动注入
-    const timeBgMode = context.globalState.get('timeBackgroundMode', 'never'); // 'auto' | 'manual' | 'never'
-    if (timeBgMode === 'auto') {
-        const cssPath = getTimeBackgroundCssPath(context);
-        toggleWorkbenchTimeBackground(context, cssPath, /*silent*/ true)
-            .then(ok => {
-                if (ok) console.log('[时间背景] 启动时自动注入成功');
-                else console.log('[时间背景] 启动时自动注入失败');
-            });
+    // 状态栏 item（始终创建，通过 visibility 控制显示）
+    const timeStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    timeStatusItem.command = 'myPlugin.refreshTimeStatus';
+    timeStatusItem.text = '$(clock) --:--:--';
+    context.subscriptions.push(timeStatusItem);
+
+    // 启动时根据之前的设置决定是否显示
+    const timeStatusMode = context.globalState.get('timeStatusMode', 'shown'); // 'shown' | 'hidden'
+    if (timeStatusMode === 'shown') {
+        timeStatusItem.show();
     }
+    updateTimeStatusItem(timeStatusItem);
 
-    // 1. 切换时间背景（开/关）
+    // 每秒更新（每分钟在用户视觉上更省心，但每秒更准）
+    const timeStatusTimer = setInterval(() => updateTimeStatusItem(timeStatusItem), 1000);
+    context.subscriptions.push({ dispose: () => clearInterval(timeStatusTimer) });
+
+    // 切换显示/隐藏
     let toggleTimeBgDisposable = vscode.commands.registerCommand('myPlugin.toggleTimeBackground', async () => {
-        const cssPath = getTimeBackgroundCssPath(context);
-        const result = await toggleWorkbenchTimeBackground(context, cssPath, false);
-        if (result === 'opened') {
-            vscode.window.showInformationMessage('时间背景已开启 - 请重新加载窗口生效 (Ctrl+Shift+P → Reload Window)', '重新加载', '自动模式').then(sel => {
-                if (sel === '重新加载') vscode.commands.executeCommand('workbench.action.reloadWindow');
-                else if (sel === '自动模式') {
-                    context.globalState.update('timeBackgroundMode', 'auto');
-                    vscode.window.showInformationMessage('已设为自动模式 - 下次启动 VSCode 将自动开启时间背景');
-                }
-            });
-        } else if (result === 'closed') {
-            vscode.window.showInformationMessage('时间背景已关闭 - 请重新加载窗口生效 (Ctrl+Shift+P → Reload Window)', '重新加载').then(sel => {
-                if (sel === '重新加载') vscode.commands.executeCommand('workbench.action.reloadWindow');
-            });
+        if (timeStatusItem.text.includes('--')) {
+            // 当前是 --:--，说明没显示（但状态栏item已创建，先显示再刷）
+        }
+        const newMode = timeStatusMode === 'shown' ? 'hidden' : 'shown';
+        await context.globalState.update('timeStatusMode', newMode);
+        if (newMode === 'shown') {
+            timeStatusItem.show();
+            updateTimeStatusItem(timeStatusItem);
+            vscode.window.showInformationMessage('时间状态栏已显示 - 鼠标悬停查看日期和温馨话语');
         } else {
-            // failed：path not found 等
-            // 已经在函数内弹出过警告
+            timeStatusItem.hide();
+            vscode.window.showInformationMessage('时间状态栏已隐藏');
         }
     });
     context.subscriptions.push(toggleTimeBgDisposable);
 
-    // 2. 时间背景设置（自动/手动/关闭）
-    let timeBgSettingsDisposable = vscode.commands.registerCommand('myPlugin.timeBackgroundSettings', async () => {
-        const current = context.globalState.get('timeBackgroundMode', 'never');
-        const options = [
-            { label: '✅ 设为自动模式（推荐）', description: '每次启动 VSCode 自动开启时间背景', value: 'auto' },
-            { label: '⏸️ 设为手动模式', description: '每次启动 VSCode 不自动开启，需要时手动点击开启', value: 'manual' },
-            { label: '❌ 关闭自动模式（恢复默认）', description: '以后启动也不会自动开启', value: 'never' }
-        ];
-        const opt = await vscode.window.showQuickPick(options, {
-            placeHolder: '当前模式: ' + (current === 'auto' ? '自动' : current === 'manual' ? '手动' : '关闭')
-        });
-        if (!opt) return;
-        await context.globalState.update('timeBackgroundMode', opt.value);
-        vscode.window.showInformationMessage('时间背景模式已设为: ' + opt.label);
+    // 手动刷新（点击图标触发）
+    let refreshTimeStatusDisposable = vscode.commands.registerCommand('myPlugin.refreshTimeStatus', () => {
+        updateTimeStatusItem(timeStatusItem);
+        // 短暂显示 tooltip
+        vscode.window.showInformationMessage(timeStatusItem.tooltip || '时间', { modal: false });
     });
-    context.subscriptions.push(timeBgSettingsDisposable);
+    context.subscriptions.push(refreshTimeStatusDisposable);
 
     // ===== 自动爬取数据 =====
     // 1. 插件启动时自动爬取（静默，不弹通知，除非失败）
@@ -1796,126 +1787,13 @@ class LotteryTreeDataProvider {
         return item;
     }
 }
-
-function deactivate() {}
-
-/**
- * 时间背景 - 独立 CSS 文件路径（供方案A：Custom CSS and JS Loader 使用）
- * 存放在 globalStoragePath 下
- */
-function getTimeBackgroundCssPath(context) {
-    const dir = context.globalStoragePath;
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    return path.join(dir, 'time-background.css');
-}
+function deactivate() {}
 
 /**
- * 生成时间背景的 CSS 内容
- * 用纯 CSS 创建一个固定浮层 div 的样式（实际 div 由 JS 创建并更新）
- * @returns {string} CSS 文本
+ * 每日温馨话语（按一年中的第几天取用，51 条足够一年循环）
  */
-function getTimeBackgroundCss() {
-    return `/* ===== my-vscode-plugin 时间背景水印 ===== */
-/* MY_PLUGIN_TIME_BG_START */
-.myplugin-time-overlay {
-    position: fixed !important;
-    top: 50% !important;
-    left: 50% !important;
-    transform: translate(-50%, -50%) !important;
-    font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif !important;
-    font-size: 140px !important;
-    font-weight: 700 !important;
-    color: rgba(80, 160, 255, 0.18) !important;
-    text-align: center !important;
-    user-select: none !important;
-    pointer-events: none !important;
-    letter-spacing: 4px !important;
-    text-shadow: 0 0 40px rgba(80, 160, 255, 0.12) !important;
-    z-index: 9999 !important;
-    white-space: nowrap !important;
-    animation: mypluginTimePulse 2s ease-in-out infinite !important;
-}
-.myplugin-time-date {
-    font-size: 32px !important;
-    color: rgba(120, 180, 255, 0.22) !important;
-    margin-top: 12px !important;
-    letter-spacing: 6px !important;
-}
-@keyframes mypluginTimePulse {
-    0%, 100% { opacity: 0.18; }
-    50% { opacity: 0.30; }
-}
-/* MY_PLUGIN_TIME_BG_END */
-`;
-}
-
-/**
- * 生成时间背景的 JS 内容（注入到 workbench.desktop.main.js）
- * 创建一个 div 每秒显示当前时间
- * @returns {string} JS 文本
- */
-function getTimeBackgroundJs() {
-    return `/* ===== my-vscode-plugin 时间背景 JS ===== */
-// MY_PLUGIN_TIME_BG_JS_START
-(function(){
-    if(window.__mypluginTimeBg) return;
-    window.__mypluginTimeBg = true;
-    var quotes = ${JSON.stringify(getDailyQuotes())};
-    function getQuote(){
-        var now = new Date();
-        var start = new Date(now.getFullYear(),0,0);
-        var dayOfYear = Math.floor((now-start)/(1000*60*60*24));
-        return quotes[dayOfYear % quotes.length];
-    }
-    function pad(n){return n<10?'0'+n:''+n;}
-    // 外层容器：固定在窗口中央
-    var wrap = document.createElement('div');
-    wrap.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);'
-        + 'text-align:center;user-select:none;pointer-events:none;z-index:99999;'
-        + "font-family:'Segoe UI','Microsoft YaHei',sans-serif;";
-    // 大字时间（最上方）- 透明度极低
-    var tEl = document.createElement('div');
-    tEl.style.cssText = 'font-size:140px;font-weight:700;'
-        + 'color:rgba(80,160,255,0.06);letter-spacing:4px;'
-        + 'text-shadow:0 0 40px rgba(80,160,255,0.04);'
-        + 'white-space:nowrap;line-height:1;';
-    // 日期（中间）
-    var dEl = document.createElement('div');
-    dEl.style.cssText = 'font-size:32px;color:rgba(120,180,255,0.08);'
-        + 'letter-spacing:6px;margin-top:20px;white-space:nowrap;';
-    // 温馨话语（最下方）
-    var qEl = document.createElement('div');
-    qEl.style.cssText = 'font-size:20px;color:rgba(255,200,120,0.12);'
-        + 'letter-spacing:2px;margin-top:16px;'
-        + 'max-width:80vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-    wrap.appendChild(tEl);
-    wrap.appendChild(dEl);
-    wrap.appendChild(qEl);
-    function upd(){
-        var d = new Date();
-        tEl.textContent = pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
-        var w = ['日','一','二','三','四','五','六'][d.getDay()];
-        dEl.textContent = d.getFullYear()+'年'+pad(d.getMonth()+1)+'月'+pad(d.getDate())+'日 星期'+w;
-        qEl.textContent = '✨ ' + getQuote();
-    }
-    function mount(){
-        if(!document.body){setTimeout(mount,500);return;}
-        document.body.appendChild(wrap);
-        upd();
-        setInterval(upd, 1000); // 时间需要每秒更新
-    }
-    mount();
-})();
-// MY_PLUGIN_TIME_BG_JS_END
-`;
-}
-
-/**
- * 每日温馨话语列表（按一年中的第几天循环取用）
- * @returns {string[]}
- */
-function getDailyQuotes() {
-    return [
+function getDailyQuote() {
+    var quotes = [
         '每一天都是新的开始，加油！',
         '今天的努力，是明天的底气。',
         '心怀热爱，奔赴山海。',
@@ -1924,7 +1802,7 @@ function getDailyQuotes() {
         '生活明朗，万物可爱，人间值得，未来可期。',
         '认真生活，就能找到被人生偷藏起来的糖果。',
         '星光不问赶路人，时光不负有心人。',
-        '你现在的付出，都会是一种沉淀。',
+        '你现在的付出，都是一种沉淀。',
         '愿你有前进一步的勇气，亦有退后一步的从容。',
         '保持热爱，奔赴下一场山海。',
         '愿你眼中有光，心中有爱，脚下有路。',
@@ -1968,204 +1846,23 @@ function getDailyQuotes() {
         '笑口常开，好运自然来。',
         '今天的你，也是限量版。'
     ];
+    var now = new Date();
+    var start = new Date(now.getFullYear(), 0, 0);
+    var dayOfYear = Math.floor((now - start) / 86400000);
+    return quotes[dayOfYear % quotes.length];
 }
 
 /**
- * 方案B：注入/移除 CSS+JS 到 VSCode 的 workbench.desktop.main.{css,js}
- * 方案A：同时生成独立 css 文件供 Custom CSS and JS Loader 使用
- * @param {vscode.ExtensionContext} context
- * @param {string} standaloneCssPath - 独立 CSS 文件路径
- * @param {boolean} silent - 静默模式（启动时自动调用，不弹错误）
- * @returns {Promise<'opened'|'closed'|'failed'>} 状态
+ * 更新状态栏时间项
+ * 状态栏右侧显示 HH:MM:SS，鼠标悬停 tooltip 显示日期+温馨话语
  */
-async function toggleWorkbenchTimeBackground(context, standaloneCssPath, silent) {
-    // 1. 生成/更新独立 CSS 文件（方案A用）
-    const cssContent = getTimeBackgroundCss();
-    try {
-        fs.writeFileSync(standaloneCssPath, cssContent, 'utf-8');
-        console.log('时间背景独立 CSS 已生成:', standaloneCssPath);
-    } catch (e) {
-        console.error('生成独立 CSS 失败:', e.message);
-    }
-
-    // 2. 查找 workbench 文件（多种方式）
-    let workbenchCss = null;
-    let workbenchJs = null;
-    const candidates = [];
-
-    // 方式1：vscode.env.appRoot（VSCode 1.30+ 内置 API，最可靠）
-    try {
-        if (vscode.env.appRoot) {
-            const base = path.join(vscode.env.appRoot, 'out', 'vs', 'workbench');
-            candidates.push(
-                path.join(base, 'workbench.desktop.main.css'),
-                path.join(base, 'workbench.desktop.main.js')
-            );
-        }
-    } catch (e) {}
-
-    // 方式2：从 process.execPath 推导（Code.exe/Code 所在目录）
-    try {
-        if (process.execPath) {
-            // 假设 execPath 是 .../Microsoft VS Code/Code.exe
-            const appRoot = path.dirname(path.dirname(process.execPath));
-            const base = path.join(appRoot, 'resources', 'app', 'out', 'vs', 'workbench');
-            candidates.push(
-                path.join(base, 'workbench.desktop.main.css'),
-                path.join(base, 'workbench.desktop.main.js')
-            );
-            // 某些 portable 版本
-            const base2 = path.join(appRoot, 'out', 'vs', 'workbench');
-            candidates.push(
-                path.join(base2, 'workbench.desktop.main.css'),
-                path.join(base2, 'workbench.desktop.main.js')
-            );
-        }
-    } catch (e) {}
-
-    // 方式3：从 require.main.filename 推导（如果插件作为扩展宿主的一部分运行）
-    try {
-        if (require.main && require.main.filename) {
-            const vscodeDir = path.dirname(require.main.filename);
-            candidates.push(
-                path.join(vscodeDir, '..', '..', 'workbench', 'workbench.desktop.main.css'),
-                path.join(vscodeDir, 'workbench', 'workbench.desktop.main.css'),
-                path.join(vscodeDir, '..', '..', 'workbench', 'workbench.desktop.main.js'),
-                path.join(vscodeDir, 'workbench', 'workbench.desktop.main.js')
-            );
-        }
-    } catch (e) {}
-
-    // 方式4：常见固定路径（兜底）
-    if (process.platform === 'win32') {
-        const fixedPaths = [
-            'D:\\Microsoft VS Code\\resources\\app\\out\\vs\\workbench\\workbench.desktop.main.css',
-            'D:\\Microsoft VS Code\\resources\\app\\out\\vs\\workbench\\workbench.desktop.main.js',
-            'C:\\Program Files\\Microsoft VS Code\\resources\\app\\out\\vs\\workbench\\workbench.desktop.main.css',
-            'C:\\Program Files\\Microsoft VS Code\\resources\\app\\out\\vs\\workbench\\workbench.desktop.main.js'
-        ];
-        candidates.push(...fixedPaths);
-    }
-
-    // 去重
-    const uniqCandidates = [...new Set(candidates)];
-    for (const p of uniqCandidates) {
-        if (!workbenchCss && p.endsWith('.css') && fs.existsSync(p)) workbenchCss = p;
-        if (!workbenchJs && p.endsWith('.js') && fs.existsSync(p)) workbenchJs = p;
-    }
-
-    console.log('[时间背景] 查找到的 CSS:', workbenchCss);
-    console.log('[时间背景] 查找到的 JS:', workbenchJs);
-
-    if (!workbenchCss || !workbenchJs) {
-        const msg = '未找到 workbench.desktop.main.css/js，无法直接注入。\n' +
-                    '可使用方案A：安装 "Custom CSS and JS Loader" 插件，在 settings.json 中配置：\n' +
-                    '  "vscode_custom_css.imports": ["file:///' + standaloneCssPath.replace(/\\/g, '/') + '"]\n' +
-                    '独立 CSS 文件路径已生成: ' + standaloneCssPath;
-        console.warn('[时间背景] ' + msg);
-        if (!silent) {
-            vscode.window.showWarningMessage(msg, '复制路径', '查看方案A教程').then(sel => {
-                if (sel === '复制路径') {
-                    vscode.env.clipboard.writeText(standaloneCssPath);
-                    vscode.window.showInformationMessage('已复制: ' + standaloneCssPath);
-                } else if (sel === '查看方案A教程') {
-                    vscode.commands.executeCommand('vscode.open', vscode.Uri.parse('https://blog.iks-ran.com/2026/04/03/vsc_bg/'));
-                }
-            });
-        }
-        return 'failed';
-    }
-
-    // 3. 读取并注入/移除 CSS
-    let cssInjected = false;
-    let cssOriginal = '';
-    try { cssOriginal = fs.readFileSync(workbenchCss, 'utf-8'); }
-    catch (e) {
-        const m = '读取 workbench CSS 失败: ' + e.message;
-        console.error('[时间背景] ' + m);
-        if (!silent) vscode.window.showErrorMessage(m);
-        return 'failed';
-    }
-
-    const CSS_START = '/* MY_PLUGIN_TIME_BG_START */';
-    const CSS_END = '/* MY_PLUGIN_TIME_BG_END */';
-    if (cssOriginal.includes(CSS_START)) {
-        // 移除
-        const regex = new RegExp(CSS_START + '[\\s\\S]*?' + CSS_END + '\\n*', 'g');
-        try {
-            fs.writeFileSync(workbenchCss, cssOriginal.replace(regex, ''), 'utf-8');
-            cssInjected = false;
-        } catch (e) {
-            const m = '移除 CSS 失败（可能需要管理员权限运行 VSCode）: ' + e.message;
-            console.error('[时间背景] ' + m);
-            if (!silent) vscode.window.showErrorMessage(m);
-            return 'failed';
-        }
-    } else {
-        // 追加
-        try {
-            if (!fs.existsSync(workbenchCss + '.myplugin.bak')) {
-                fs.writeFileSync(workbenchCss + '.myplugin.bak', cssOriginal, 'utf-8');
-            }
-            fs.writeFileSync(workbenchCss, cssOriginal + '\n\n' + cssContent, 'utf-8');
-            cssInjected = true;
-        } catch (e) {
-            const m = '注入 CSS 失败（需要管理员权限运行 VSCode）: ' + e.message + '\n建议以管理员身份运行 VSCode，或改用方案A';
-            console.error('[时间背景] ' + m);
-            if (!silent) vscode.window.showErrorMessage(m, '了解方案A').then(sel => {
-                if (sel === '了解方案A') {
-                    vscode.commands.executeCommand('vscode.open', vscode.Uri.parse('https://blog.iks-ran.com/2026/04/03/vsc_bg/'));
-                }
-            });
-            return 'failed';
-        }
-    }
-
-    // 4. 读取并注入/移除 JS
-    let jsInjected = false;
-    let jsOriginal = '';
-    try { jsOriginal = fs.readFileSync(workbenchJs, 'utf-8'); }
-    catch (e) {
-        const m = '读取 workbench JS 失败: ' + e.message;
-        console.error('[时间背景] ' + m);
-        if (!silent) vscode.window.showErrorMessage(m);
-        return cssInjected ? 'opened' : 'closed';
-    }
-
-    const JS_START = '// MY_PLUGIN_TIME_BG_JS_START';
-    const JS_END = '// MY_PLUGIN_TIME_BG_JS_END';
-    const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    if (jsOriginal.includes(JS_START)) {
-        // 移除
-        const regex = new RegExp(escapeRegex(JS_START) + '[\\s\\S]*?' + escapeRegex(JS_END) + '\\n*', 'g');
-        try {
-            fs.writeFileSync(workbenchJs, jsOriginal.replace(regex, ''), 'utf-8');
-            jsInjected = false;
-        } catch (e) {
-            const m = '移除 JS 失败（可能需要管理员权限）: ' + e.message;
-            console.error('[时间背景] ' + m);
-            if (!silent) vscode.window.showErrorMessage(m);
-            return 'failed';
-        }
-    } else {
-        // 追加
-        try {
-            if (!fs.existsSync(workbenchJs + '.myplugin.bak')) {
-                fs.writeFileSync(workbenchJs + '.myplugin.bak', jsOriginal, 'utf-8');
-            }
-            fs.writeFileSync(workbenchJs, jsOriginal + '\n' + getTimeBackgroundJs(), 'utf-8');
-            jsInjected = true;
-        } catch (e) {
-            const m = '注入 JS 失败（需要管理员权限运行 VSCode）: ' + e.message;
-            console.error('[时间背景] ' + m);
-            if (!silent) vscode.window.showErrorMessage(m);
-            return 'failed';
-        }
-    }
-
-    // cssInjected 为 true 表示当前是"注入后"状态，false 表示"移除后"状态
-    console.log('[时间背景]', cssInjected ? '已注入' : '已移除', '| CSS:', workbenchCss, '| JS:', workbenchJs);
-    return cssInjected ? 'opened' : 'closed';
+function updateTimeStatusItem(item) {
+    var d = new Date();
+    var pad = function (n) { return n < 10 ? '0' + n : '' + n; };
+    item.text = '$(clock) ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    var week = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+    var dateStr = d.getFullYear() + '年' + pad(d.getMonth() + 1) + '月' + pad(d.getDate()) + '日 星期' + week;
+    item.tooltip = '🕐 ' + dateStr + '\n\n✨ ' + getDailyQuote() + '\n\n(点击查看，菜单"时间背景水印"可隐藏)';
 }
 
 /**
