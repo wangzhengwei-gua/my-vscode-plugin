@@ -1529,11 +1529,19 @@ function activate(context) {
     timeStatusItem.command = 'myPlugin.refreshTimeStatus';
     // 加载彩色 SVG 时钟图标
     try {
-        const iconPath = path.join(__dirname, '..', 'images', 'time-clock.svg');
+        const iconPath = path.join(context.extensionPath, 'images', 'time-clock.svg');
+        console.log('[时间状态栏] 图标路径:', iconPath, '| 存在:', fs.existsSync(iconPath));
         if (fs.existsSync(iconPath)) {
-            timeStatusItem.iconPath = vscode.Uri.file(iconPath);
+            // 用 { light, dark } 形式提供，兼容性最好
+            const iconUri = vscode.Uri.file(iconPath);
+            timeStatusItem.iconPath = { light: iconUri, dark: iconUri };
+            console.log('[时间状态栏] 图标已设置');
+        } else {
+            console.warn('[时间状态栏] 图标文件不存在:', iconPath);
         }
-    } catch (e) { /* 图标加载失败不影响功能 */ }
+    } catch (e) {
+        console.error('[时间状态栏] 图标加载失败:', e.message);
+    }
     timeStatusItem.text = '--:--:--';
     context.subscriptions.push(timeStatusItem);
 
