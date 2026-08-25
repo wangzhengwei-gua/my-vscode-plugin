@@ -1531,8 +1531,7 @@ function activate(context) {
     context.subscriptions.push(timeStatusItem);
 
     // 启动时根据之前的设置决定是否显示
-    const timeStatusMode = context.globalState.get('timeStatusMode', 'shown'); // 'shown' | 'hidden'
-    if (timeStatusMode === 'shown') {
+    if (context.globalState.get('timeStatusMode', 'shown') === 'shown') {
         timeStatusItem.show();
     }
     updateTimeStatusItem(timeStatusItem);
@@ -1541,12 +1540,10 @@ function activate(context) {
     const timeStatusTimer = setInterval(() => updateTimeStatusItem(timeStatusItem), 1000);
     context.subscriptions.push({ dispose: () => clearInterval(timeStatusTimer) });
 
-    // 切换显示/隐藏
+    // 切换显示/隐藏（每次点击重新读取 globalState，避免 const 缓存旧值）
     let toggleTimeBgDisposable = vscode.commands.registerCommand('myPlugin.toggleTimeBackground', async () => {
-        if (timeStatusItem.text.includes('--')) {
-            // 当前是 --:--，说明没显示（但状态栏item已创建，先显示再刷）
-        }
-        const newMode = timeStatusMode === 'shown' ? 'hidden' : 'shown';
+        const currentMode = context.globalState.get('timeStatusMode', 'shown');
+        const newMode = currentMode === 'shown' ? 'hidden' : 'shown';
         await context.globalState.update('timeStatusMode', newMode);
         if (newMode === 'shown') {
             timeStatusItem.show();
@@ -1763,7 +1760,6 @@ class LotteryTreeDataProvider {
                 this.createItem('🔮 预测记录', 'myPlugin.showPredictions', '🔮'),
                 this.createItem('🕐 显示当前时间', 'myPlugin.showTime', '🕐'),
                 this.createItem('🕙 时间背景水印', 'myPlugin.toggleTimeBackground', '🕙'),
-                this.createItem('⚙️ 时间背景设置', 'myPlugin.timeBackgroundSettings', '⚙️'),
                 this.createItem('👋 Hello World', 'myPlugin.helloWorld', '👋')
             ];
         }
