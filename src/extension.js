@@ -1527,7 +1527,14 @@ function activate(context) {
     // 状态栏 item（始终创建，通过 visibility 控制显示）
     const timeStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     timeStatusItem.command = 'myPlugin.refreshTimeStatus';
-    timeStatusItem.text = '$(clock) --:--:--';
+    // 加载彩色 SVG 时钟图标
+    try {
+        const iconPath = path.join(__dirname, '..', 'images', 'time-clock.svg');
+        if (fs.existsSync(iconPath)) {
+            timeStatusItem.iconPath = vscode.Uri.file(iconPath);
+        }
+    } catch (e) { /* 图标加载失败不影响功能 */ }
+    timeStatusItem.text = '--:--:--';
     context.subscriptions.push(timeStatusItem);
 
     // 启动时根据之前的设置决定是否显示
@@ -1783,7 +1790,8 @@ class LotteryTreeDataProvider {
         return item;
     }
 }
-function deactivate() {}
+
+function deactivate() {}
 
 /**
  * 每日温馨话语（按一年中的第几天取用，51 条足够一年循环）
@@ -1855,7 +1863,8 @@ function getDailyQuote() {
 function updateTimeStatusItem(item) {
     var d = new Date();
     var pad = function (n) { return n < 10 ? '0' + n : '' + n; };
-    item.text = '$(clock) ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    // 图标已单独显示，text 只保留时间
+    item.text = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
     var week = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
     var dateStr = d.getFullYear() + '年' + pad(d.getMonth() + 1) + '月' + pad(d.getDate()) + '日 星期' + week;
     item.tooltip = '🕐 ' + dateStr + '\n\n✨ ' + getDailyQuote() + '\n\n(点击查看，菜单"时间背景水印"可隐藏)';
