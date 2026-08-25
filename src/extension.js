@@ -1527,8 +1527,10 @@ function activate(context) {
     // 状态栏 item（始终创建，通过 visibility 控制显示）
     const timeStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     timeStatusItem.command = 'myPlugin.refreshTimeStatus';
-    // 用彩色 emoji 作为图标（emoji 是 unicode，VSCode 状态栏 100% 支持，无需图标文件）
-    timeStatusItem.text = '🕐 --:--:--';
+    // 用 codicon + 颜色 - VSCode 内置图标，用 color 属性让它变成彩色
+    timeStatusItem.text = '$(clock) --:--:--';
+    // 关键：color 让图标 + 文字一起变彩色（橘黄色）
+    timeStatusItem.color = '#FFB45B';
     context.subscriptions.push(timeStatusItem);
 
     // 启动时根据之前的设置决定是否显示
@@ -1857,8 +1859,8 @@ function getDailyQuote() {
 function updateTimeStatusItem(item) {
     var d = new Date();
     var pad = function (n) { return n < 10 ? '0' + n : '' + n; };
-    // 用彩色 emoji 作为图标
-    item.text = '🕐 ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    // codicon 时钟图标，color 已在外部设置成彩色
+    item.text = '$(clock) ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
     var week = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
     var dateStr = d.getFullYear() + '年' + pad(d.getMonth() + 1) + '月' + pad(d.getDate()) + '日 星期' + week;
     item.tooltip = '🕐 ' + dateStr + '\n\n✨ ' + getDailyQuote() + '\n\n(点击查看，菜单"时间背景水印"可隐藏)';
