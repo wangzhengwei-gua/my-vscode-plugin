@@ -2,6 +2,18 @@
 
 All notable changes to the "my-vscode-plugin" extension will be documented in this file.
 
+## [0.9.0] - 2026-08-25
+
+✨ Features:
+  - 更新主扩展代码（功能菜单/Webview/命令注册）
+🔧 Chore:
+  - 更新打包文件: .gitignore
+  - 改动: _fix2.js
+  - 改动: _fix_quotes.js
+  - 更新打包文件: my-vscode-plugin-0.8.9.vsix -> my-vscode-plugin-0.9.0.vsix
+  - 更新 package.json（版本/依赖）
+
+
 ## [0.8.9] - 2026-08-25
 
 ✨ Features:

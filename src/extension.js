@@ -1858,39 +1858,106 @@ function getTimeBackgroundJs() {
     return `/* ===== my-vscode-plugin 时间背景 JS ===== */
 // MY_PLUGIN_TIME_BG_JS_START
 (function(){
-    if(window.__mypluginTimeBg) return; // 防止重复注入
+    if(window.__mypluginTimeBg) return;
     window.__mypluginTimeBg = true;
-    var o=document.createElement('div');
-    o.className='myplugin-time-overlay';
-    o.style.position='fixed';o.style.top='50%';o.style.left='50%';
-    o.style.transform='translate(-50%,-50%)';
-    o.style.fontFamily="'Segoe UI','Microsoft YaHei',sans-serif";
-    o.style.fontSize='140px';o.style.fontWeight='700';
-    o.style.color='rgba(80,160,255,0.18)';o.style.textAlign='center';
-    o.style.userSelect='none';o.style.pointerEvents='none';
-    o.style.letterSpacing='4px';o.style.zIndex='99999';
-    o.style.whiteSpace='nowrap';
-    var d2=document.createElement('div');
-    d2.className='myplugin-time-date';
-    d2.style.fontSize='32px';d2.style.color='rgba(120,180,255,0.22)';
-    d2.style.marginTop='12px';d2.style.letterSpacing='6px';
+    var quotes = ${JSON.stringify(getDailyQuotes())};
+    function getQuote(){
+        var now = new Date();
+        var start = new Date(now.getFullYear(),0,0);
+        var dayOfYear = Math.floor((now-start)/(1000*60*60*24));
+        return quotes[dayOfYear % quotes.length];
+    }
     function pad(n){return n<10?'0'+n:''+n;}
+    var dEl = document.createElement('div');
+    dEl.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);'
+        + "font-family:'Segoe UI','Microsoft YaHei',sans-serif;"
+        + 'font-size:22px;color:rgba(120,180,255,0.30);'
+        + 'letter-spacing:4px;text-align:center;'
+        + 'user-select:none;pointer-events:none;z-index:99999;white-space:nowrap;';
+    var qEl = document.createElement('div');
+    qEl.style.cssText = 'position:fixed;bottom:40px;left:50%;transform:translateX(-50%);'
+        + "font-family:'Segoe UI','Microsoft YaHei',sans-serif;"
+        + 'font-size:18px;color:rgba(255,200,120,0.35);'
+        + 'letter-spacing:2px;text-align:center;'
+        + 'user-select:none;pointer-events:none;z-index:99999;'
+        + 'max-width:80%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
     function upd(){
-        var d=new Date();
-        o.textContent=pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
-        var w=['日','一','二','三','四','五','六'][d.getDay()];
-        d2.textContent=d.getFullYear()+'年'+pad(d.getMonth()+1)+'月'+pad(d.getDate())+'日 星期'+w;
+        var d = new Date();
+        var w = ['日','一','二','三','四','五','六'][d.getDay()];
+        dEl.textContent = d.getFullYear()+'年'+pad(d.getMonth()+1)+'月'+pad(d.getDate())+'日 星期'+w;
+        qEl.textContent = '✨ ' + getQuote();
     }
     function mount(){
         if(!document.body){setTimeout(mount,500);return;}
-        document.body.appendChild(o);
-        document.body.appendChild(d2);
-        upd();setInterval(upd,1000);
+        document.body.appendChild(dEl);
+        document.body.appendChild(qEl);
+        upd();
+        setInterval(upd, 60000);
     }
     mount();
 })();
 // MY_PLUGIN_TIME_BG_JS_END
 `;
+}
+
+/**
+ * 每日温馨话语列表（按一年中的第几天循环取用）
+ * @returns {string[]}
+ */
+function getDailyQuotes() {
+    return [
+        '每一天都是新的开始，加油！',
+        '今天的努力，是明天的底气。',
+        '心怀热爱，奔赴山海。',
+        '你只管努力，剩下的交给时间。',
+        '愿所有的美好，都如约而至。',
+        '生活明朗，万物可爱，人间值得，未来可期。',
+        '认真生活，就能找到被人生偷藏起来的糖果。',
+        '星光不问赶路人，时光不负有心人。',
+        '你现在的付出，都会是一种沉淀。',
+        '愿你有前进一步的勇气，亦有退后一步的从容。',
+        '保持热爱，奔赴下一场山海。',
+        '愿你眼中有光，心中有爱，脚下有路。',
+        '微笑面对每一天，阳光会照亮每个角落。',
+        '愿你的努力，都不被辜负。',
+        '种一棵树最好的时间是十年前，其次是现在。',
+        '细节决定成败，态度决定一切。',
+        '行动是治愈恐惧的良药。',
+        '宁可辛苦一阵子，不要苦一辈子。',
+        '每一个不曾起舞的日子，都是对生命的辜负。',
+        '愿你成为自己的太阳，无需借谁的光。',
+        '时光知味，岁月沉香。',
+        '愿你出走半生，归来仍是少年。',
+        '心若向阳，无谓悲伤。',
+        '慢慢来，比较快。',
+        '想全是问题，做全是答案。',
+        '越努力，越幸运。',
+        '不乱于心，不困于情，不畏将来，不念过往。',
+        '你若盛开，清风自来。',
+        '愿所有的遗憾，都是惊喜的铺垫。',
+        '愿你被这世界温柔以待。',
+        '人生没有白走的路，每一步都算数。',
+        '愿时光能缓，愿故人不散。',
+        '愿你三冬暖，愿你春不寒。',
+        '愿你天黑有灯，下雨有伞。',
+        '愿你所求皆如愿，所行皆坦途。',
+        '愿你的生活，如诗如画。',
+        '愿你的日子，每天都是好天气。',
+        '一切都会过去，一切都会好起来。',
+        '愿你成为自己喜欢的样子。',
+        '不必太纠结于当下，也不必太忧虑未来。',
+        '愿你历尽千帆，归来仍是少年。',
+        '愿你眼中星辰大海，心中日月星光。',
+        '愿你余生有风也有酒，有诗也有茶。',
+        '愿你今后眼里是阳光，笑里是坦荡。',
+        '愿你遍历山河，觉得人间值得。',
+        '愿你前程似锦，不负韶华。',
+        '愿你不负光阴，不负自己。',
+        '生活不止眼前的苟且，还有诗和远方。',
+        '面朝大海，春暖花开。',
+        '笑口常开，好运自然来。',
+        '今天的你，也是限量版。'
+    ];
 }
 
 /**
