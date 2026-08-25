@@ -1520,6 +1520,34 @@ function activate(context) {
     });
     context.subscriptions.push(boidsNumberDisposable);
 
+    // ===== 整窗时间背景 =====
+    // 用 webview 做半透明全屏浮层，在窗口背景层显示时间
+    let timeBgPanel = null;
+
+    let toggleTimeBgDisposable = vscode.commands.registerCommand('myPlugin.toggleTimeBackground', () => {
+        if (timeBgPanel) {
+            // 关闭
+            timeBgPanel.dispose();
+            timeBgPanel = null;
+            vscode.window.showInformationMessage('时间背景已关闭');
+        } else {
+            // 开启：在活动列右侧以"拆分"方式打开，但用 CSS 透明背景铺满
+            timeBgPanel = vscode.window.createWebviewPanel(
+                'timeBackground',
+                '时间背景',
+                vscode.ViewColumn.Active,
+                {
+                    enableScripts: true,
+                    retainContextWhenHidden: true
+                }
+            );
+            timeBgPanel.webview.html = getTimeBackgroundHtml();
+            timeBgPanel.onDidDispose(() => { timeBgPanel = null; });
+            vscode.window.showInformationMessage('时间背景已开启 - 大字时间显示在窗口中央');
+        }
+    });
+    context.subscriptions.push(toggleTimeBgDisposable);
+
     // ===== 自动爬取数据 =====
     // 1. 插件启动时自动爬取（静默，不弹通知，除非失败）
     autoRefresh(500, true);
@@ -1715,6 +1743,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🎲 群鸟号码模拟', 'myPlugin.boidsNumber', '🎲'),
                 this.createItem('🔮 预测记录', 'myPlugin.showPredictions', '🔮'),
                 this.createItem('🕐 显示当前时间', 'myPlugin.showTime', '🕐'),
+                this.createItem('🕙 时间背景水印', 'myPlugin.toggleTimeBackground', '🕙'),
                 this.createItem('👋 Hello World', 'myPlugin.helloWorld', '👋')
             ];
         }
@@ -1740,6 +1769,80 @@ class LotteryTreeDataProvider {
 }
 
 function deactivate() {}
+
+/**
+ * 生成时间背景的 HTML
+ * 全屏半透明浮层，大字显示当前时间，每秒刷新
+ */
+function getTimeBackgroundHtml() {
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: transparent;
+  }
+  #clock {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    font-size: 120px;
+    font-weight: 700;
+    color: rgba(80, 160, 255, 0.25);
+    text-align: center;
+    user-select: none;
+    pointer-events: none;
+    letter-spacing: 2px;
+    text-shadow: 0 0 30px rgba(80, 160, 255, 0.15);
+  }
+  #date {
+    position: fixed;
+    top: calc(50% + 80px); left: 50%;
+    transform: translateX(-50%);
+    font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    font-size: 32px;
+    color: rgba(120, 180, 255, 0.2);
+    text-align: center;
+    user-select: none;
+    pointer-events: none;
+    letter-spacing: 4px;
+  }
+  #watermark {
+    position: fixed;
+    top: 20px; right: 30px;
+    font-family: 'Segoe UI', sans-serif;
+    font-size: 14px;
+    color: rgba(150,150,150,0.4);
+    user-select: none; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+  <div id="clock">--:--:--</div>
+  <div id="date">----年--月--日</div>
+  <div id="watermark">时间背景 · 再次执行命令可关闭</div>
+  <script>
+    function pad(n){ return n<10 ? '0'+n : ''+n; }
+    function update(){
+      const d = new Date();
+      const h = pad(d.getHours()), m = pad(d.getMinutes()), s = pad(d.getSeconds());
+      document.getElementById('clock').textContent = h+':'+m+':'+s;
+      const y = d.getFullYear(), mo = pad(d.getMonth()+1), da = pad(d.getDate());
+      const week = ['日','一','二','三','四','五','六'][d.getDay()];
+      document.getElementById('date').textContent = y+'年'+mo+'月'+da+'日 星期'+week;
+    }
+    update();
+    setInterval(update, 1000);
+  </script>
+</body>
+</html>`;
+}
 
 /**
  * 生成随机 nonce（用于 Webview CSP）
