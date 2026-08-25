@@ -1520,23 +1520,61 @@ function activate(context) {
     });
     context.subscriptions.push(boidsNumberDisposable);
 
-    // ===== 整窗时间背景（注入 CSS 到 workbench.desktop.main.css） =====
-    // 方案B：插件直接修改 VSCode 核心 CSS，注入时间水印背景（用伪元素 + JS 注入动态时间）
+    // ===== 整窗时间背景（注入 CSS/JS 到 workbench.desktop.main.css/.js） =====
+    // 方案B：插件直接修改 VSCode 核心 CSS+JS，注入时间水印背景
     // 方案A：同时生成独立 css 文件供 Custom CSS and JS Loader 使用
+    // 状态保存到 globalState（跨会话记忆：auto/never）
+
+    // 如果上次选择了 auto 模式，启动时自动注入
+    const timeBgMode = context.globalState.get('timeBackgroundMode', 'never'); // 'auto' | 'manual' | 'never'
+    if (timeBgMode === 'auto') {
+        const cssPath = getTimeBackgroundCssPath(context);
+        toggleWorkbenchTimeBackground(context, cssPath, /*silent*/ true)
+            .then(ok => {
+                if (ok) console.log('[时间背景] 启动时自动注入成功');
+                else console.log('[时间背景] 启动时自动注入失败');
+            });
+    }
+
+    // 1. 切换时间背景（开/关）
     let toggleTimeBgDisposable = vscode.commands.registerCommand('myPlugin.toggleTimeBackground', async () => {
         const cssPath = getTimeBackgroundCssPath(context);
-        const injected = await toggleWorkbenchTimeBackground(context, cssPath);
-        if (injected) {
-            vscode.window.showInformationMessage('时间背景已开启 - 已注入 CSS，请重新加载窗口生效 (Ctrl+Shift+P → Reload Window)', '重新加载').then(sel => {
+        const result = await toggleWorkbenchTimeBackground(context, cssPath, false);
+        if (result === 'opened') {
+            vscode.window.showInformationMessage('时间背景已开启 - 请重新加载窗口生效 (Ctrl+Shift+P → Reload Window)', '重新加载', '自动模式').then(sel => {
                 if (sel === '重新加载') vscode.commands.executeCommand('workbench.action.reloadWindow');
+                else if (sel === '自动模式') {
+                    context.globalState.update('timeBackgroundMode', 'auto');
+                    vscode.window.showInformationMessage('已设为自动模式 - 下次启动 VSCode 将自动开启时间背景');
+                }
             });
-        } else {
+        } else if (result === 'closed') {
             vscode.window.showInformationMessage('时间背景已关闭 - 请重新加载窗口生效 (Ctrl+Shift+P → Reload Window)', '重新加载').then(sel => {
                 if (sel === '重新加载') vscode.commands.executeCommand('workbench.action.reloadWindow');
             });
+        } else {
+            // failed：path not found 等
+            // 已经在函数内弹出过警告
         }
     });
     context.subscriptions.push(toggleTimeBgDisposable);
+
+    // 2. 时间背景设置（自动/手动/关闭）
+    let timeBgSettingsDisposable = vscode.commands.registerCommand('myPlugin.timeBackgroundSettings', async () => {
+        const current = context.globalState.get('timeBackgroundMode', 'never');
+        const options = [
+            { label: '✅ 设为自动模式（推荐）', description: '每次启动 VSCode 自动开启时间背景', value: 'auto' },
+            { label: '⏸️ 设为手动模式', description: '每次启动 VSCode 不自动开启，需要时手动点击开启', value: 'manual' },
+            { label: '❌ 关闭自动模式（恢复默认）', description: '以后启动也不会自动开启', value: 'never' }
+        ];
+        const opt = await vscode.window.showQuickPick(options, {
+            placeHolder: '当前模式: ' + (current === 'auto' ? '自动' : current === 'manual' ? '手动' : '关闭')
+        });
+        if (!opt) return;
+        await context.globalState.update('timeBackgroundMode', opt.value);
+        vscode.window.showInformationMessage('时间背景模式已设为: ' + opt.label);
+    });
+    context.subscriptions.push(timeBgSettingsDisposable);
 
     // ===== 自动爬取数据 =====
     // 1. 插件启动时自动爬取（静默，不弹通知，除非失败）
@@ -1734,6 +1772,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🔮 预测记录', 'myPlugin.showPredictions', '🔮'),
                 this.createItem('🕐 显示当前时间', 'myPlugin.showTime', '🕐'),
                 this.createItem('🕙 时间背景水印', 'myPlugin.toggleTimeBackground', '🕙'),
+                this.createItem('⚙️ 时间背景设置', 'myPlugin.timeBackgroundSettings', '⚙️'),
                 this.createItem('👋 Hello World', 'myPlugin.helloWorld', '👋')
             ];
         }
@@ -1859,9 +1898,10 @@ function getTimeBackgroundJs() {
  * 方案A：同时生成独立 css 文件供 Custom CSS and JS Loader 使用
  * @param {vscode.ExtensionContext} context
  * @param {string} standaloneCssPath - 独立 CSS 文件路径
- * @returns {Promise<boolean>} true=已开启，false=已关闭
+ * @param {boolean} silent - 静默模式（启动时自动调用，不弹错误）
+ * @returns {Promise<'opened'|'closed'|'failed'>} 状态
  */
-async function toggleWorkbenchTimeBackground(context, standaloneCssPath) {
+async function toggleWorkbenchTimeBackground(context, standaloneCssPath, silent) {
     // 1. 生成/更新独立 CSS 文件（方案A用）
     const cssContent = getTimeBackgroundCss();
     try {
@@ -1871,133 +1911,184 @@ async function toggleWorkbenchTimeBackground(context, standaloneCssPath) {
         console.error('生成独立 CSS 失败:', e.message);
     }
 
-    // 2. 查找 workbench 文件
+    // 2. 查找 workbench 文件（多种方式）
     let workbenchCss = null;
     let workbenchJs = null;
     const candidates = [];
-    // 从 vscode 可执行文件查找
-    try {
-        const vscodeExePath = process.env.VSCODE_CLI || process.execPath;
-        const appRoot = path.dirname(path.dirname(vscodeExePath));
-        const base = path.join(appRoot, 'resources', 'app', 'out', 'vs', 'workbench');
-        candidates.push(
-            path.join(base, 'workbench.desktop.main.css'),
-            path.join(base, 'workbench.desktop.main.js')
-        );
-    } catch (e) {}
-    // 从 require.main 查找
-    try {
-        const vscodeDir = path.dirname(require.main.filename);
-        candidates.push(
-            path.join(vscodeDir, '..', '..', 'workbench', 'workbench.desktop.main.css'),
-            path.join(vscodeDir, 'workbench', 'workbench.desktop.main.css'),
-            path.join(vscodeDir, '..', '..', 'workbench', 'workbench.desktop.main.js'),
-            path.join(vscodeDir, 'workbench', 'workbench.desktop.main.js')
-        );
-    } catch (e) {}
 
-    // 兜底：glob 搜索
+    // 方式1：vscode.env.appRoot（VSCode 1.30+ 内置 API，最可靠）
     try {
-        const { execSync } = require('child_process');
-        const searchRoot = process.env.LOCALAPPDATA || 'C:\\Program Files';
-        if (process.platform === 'win32') {
-            const out = execSync(`where /r "${searchRoot}" workbench.desktop.main.css 2>nul`, { encoding: 'utf-8', timeout: 5000 }).trim().split(/\r?\n/);
-            for (const f of out) { if (f && fs.existsSync(f)) { workbenchCss = workbenchCss || f; } }
-            const out2 = execSync(`where /r "${searchRoot}" workbench.desktop.main.js 2>nul`, { encoding: 'utf-8', timeout: 5000 }).trim().split(/\r?\n/);
-            for (const f of out2) { if (f && fs.existsSync(f)) { workbenchJs = workbenchJs || f; } }
+        if (vscode.env.appRoot) {
+            const base = path.join(vscode.env.appRoot, 'out', 'vs', 'workbench');
+            candidates.push(
+                path.join(base, 'workbench.desktop.main.css'),
+                path.join(base, 'workbench.desktop.main.js')
+            );
         }
     } catch (e) {}
 
-    for (const p of candidates) {
+    // 方式2：从 process.execPath 推导（Code.exe/Code 所在目录）
+    try {
+        if (process.execPath) {
+            // 假设 execPath 是 .../Microsoft VS Code/Code.exe
+            const appRoot = path.dirname(path.dirname(process.execPath));
+            const base = path.join(appRoot, 'resources', 'app', 'out', 'vs', 'workbench');
+            candidates.push(
+                path.join(base, 'workbench.desktop.main.css'),
+                path.join(base, 'workbench.desktop.main.js')
+            );
+            // 某些 portable 版本
+            const base2 = path.join(appRoot, 'out', 'vs', 'workbench');
+            candidates.push(
+                path.join(base2, 'workbench.desktop.main.css'),
+                path.join(base2, 'workbench.desktop.main.js')
+            );
+        }
+    } catch (e) {}
+
+    // 方式3：从 require.main.filename 推导（如果插件作为扩展宿主的一部分运行）
+    try {
+        if (require.main && require.main.filename) {
+            const vscodeDir = path.dirname(require.main.filename);
+            candidates.push(
+                path.join(vscodeDir, '..', '..', 'workbench', 'workbench.desktop.main.css'),
+                path.join(vscodeDir, 'workbench', 'workbench.desktop.main.css'),
+                path.join(vscodeDir, '..', '..', 'workbench', 'workbench.desktop.main.js'),
+                path.join(vscodeDir, 'workbench', 'workbench.desktop.main.js')
+            );
+        }
+    } catch (e) {}
+
+    // 方式4：常见固定路径（兜底）
+    if (process.platform === 'win32') {
+        const fixedPaths = [
+            'D:\\Microsoft VS Code\\resources\\app\\out\\vs\\workbench\\workbench.desktop.main.css',
+            'D:\\Microsoft VS Code\\resources\\app\\out\\vs\\workbench\\workbench.desktop.main.js',
+            'C:\\Program Files\\Microsoft VS Code\\resources\\app\\out\\vs\\workbench\\workbench.desktop.main.css',
+            'C:\\Program Files\\Microsoft VS Code\\resources\\app\\out\\vs\\workbench\\workbench.desktop.main.js'
+        ];
+        candidates.push(...fixedPaths);
+    }
+
+    // 去重
+    const uniqCandidates = [...new Set(candidates)];
+    for (const p of uniqCandidates) {
         if (!workbenchCss && p.endsWith('.css') && fs.existsSync(p)) workbenchCss = p;
         if (!workbenchJs && p.endsWith('.js') && fs.existsSync(p)) workbenchJs = p;
     }
 
+    console.log('[时间背景] 查找到的 CSS:', workbenchCss);
+    console.log('[时间背景] 查找到的 JS:', workbenchJs);
+
     if (!workbenchCss || !workbenchJs) {
-        vscode.window.showWarningMessage(
-            '未找到 workbench.desktop.main.css/js，无法直接注入。\n' +
-            '可使用方案A：安装 "Custom CSS and JS Loader" 插件，在 settings.json 中配置：\n' +
-            '  "vscode_custom_css.imports": ["file:///' + standaloneCssPath.replace(/\\/g, '/') + '"]\n' +
-            '独立 CSS 文件路径已生成: ' + standaloneCssPath,
-            '复制路径', '查看方案A教程'
-        ).then(sel => {
-            if (sel === '复制路径') {
-                vscode.env.clipboard.writeText(standaloneCssPath);
-                vscode.window.showInformationMessage('已复制: ' + standaloneCssPath);
-            } else if (sel === '查看方案A教程') {
-                vscode.commands.executeCommand('vscode.open', vscode.Uri.parse('https://blog.iks-ran.com/2026/04/03/vsc_bg/'));
-            }
-        });
-        return true;
+        const msg = '未找到 workbench.desktop.main.css/js，无法直接注入。\n' +
+                    '可使用方案A：安装 "Custom CSS and JS Loader" 插件，在 settings.json 中配置：\n' +
+                    '  "vscode_custom_css.imports": ["file:///' + standaloneCssPath.replace(/\\/g, '/') + '"]\n' +
+                    '独立 CSS 文件路径已生成: ' + standaloneCssPath;
+        console.warn('[时间背景] ' + msg);
+        if (!silent) {
+            vscode.window.showWarningMessage(msg, '复制路径', '查看方案A教程').then(sel => {
+                if (sel === '复制路径') {
+                    vscode.env.clipboard.writeText(standaloneCssPath);
+                    vscode.window.showInformationMessage('已复制: ' + standaloneCssPath);
+                } else if (sel === '查看方案A教程') {
+                    vscode.commands.executeCommand('vscode.open', vscode.Uri.parse('https://blog.iks-ran.com/2026/04/03/vsc_bg/'));
+                }
+            });
+        }
+        return 'failed';
     }
 
     // 3. 读取并注入/移除 CSS
     let cssInjected = false;
-    if (workbenchCss) {
-        let cssOriginal = '';
-        try { cssOriginal = fs.readFileSync(workbenchCss, 'utf-8'); }
-        catch (e) { vscode.window.showErrorMessage('读取 workbench CSS 失败: ' + e.message); return false; }
+    let cssOriginal = '';
+    try { cssOriginal = fs.readFileSync(workbenchCss, 'utf-8'); }
+    catch (e) {
+        const m = '读取 workbench CSS 失败: ' + e.message;
+        console.error('[时间背景] ' + m);
+        if (!silent) vscode.window.showErrorMessage(m);
+        return 'failed';
+    }
 
-        const CSS_START = '/* MY_PLUGIN_TIME_BG_START */';
-        const CSS_END = '/* MY_PLUGIN_TIME_BG_END */';
-        if (cssOriginal.includes(CSS_START)) {
-            // 移除
-            const regex = new RegExp(CSS_START + '[\\s\\S]*?' + CSS_END + '\\n*', 'g');
-            try {
-                fs.writeFileSync(workbenchCss, cssOriginal.replace(regex, ''), 'utf-8');
-                cssInjected = false;
-            } catch (e) {
-                vscode.window.showErrorMessage('移除 CSS 失败（可能需要管理员权限运行 VSCode）: ' + e.message);
-                return true;
-            }
-        } else {
-            // 追加
-            try {
+    const CSS_START = '/* MY_PLUGIN_TIME_BG_START */';
+    const CSS_END = '/* MY_PLUGIN_TIME_BG_END */';
+    if (cssOriginal.includes(CSS_START)) {
+        // 移除
+        const regex = new RegExp(CSS_START + '[\\s\\S]*?' + CSS_END + '\\n*', 'g');
+        try {
+            fs.writeFileSync(workbenchCss, cssOriginal.replace(regex, ''), 'utf-8');
+            cssInjected = false;
+        } catch (e) {
+            const m = '移除 CSS 失败（可能需要管理员权限运行 VSCode）: ' + e.message;
+            console.error('[时间背景] ' + m);
+            if (!silent) vscode.window.showErrorMessage(m);
+            return 'failed';
+        }
+    } else {
+        // 追加
+        try {
+            if (!fs.existsSync(workbenchCss + '.myplugin.bak')) {
                 fs.writeFileSync(workbenchCss + '.myplugin.bak', cssOriginal, 'utf-8');
-                fs.writeFileSync(workbenchCss, cssOriginal + '\n\n' + cssContent, 'utf-8');
-                cssInjected = true;
-            } catch (e) {
-                vscode.window.showErrorMessage('注入 CSS 失败（可能需要管理员权限）: ' + e.message + '\n建议改用方案A');
-                return false;
             }
+            fs.writeFileSync(workbenchCss, cssOriginal + '\n\n' + cssContent, 'utf-8');
+            cssInjected = true;
+        } catch (e) {
+            const m = '注入 CSS 失败（需要管理员权限运行 VSCode）: ' + e.message + '\n建议以管理员身份运行 VSCode，或改用方案A';
+            console.error('[时间背景] ' + m);
+            if (!silent) vscode.window.showErrorMessage(m, '了解方案A').then(sel => {
+                if (sel === '了解方案A') {
+                    vscode.commands.executeCommand('vscode.open', vscode.Uri.parse('https://blog.iks-ran.com/2026/04/03/vsc_bg/'));
+                }
+            });
+            return 'failed';
         }
     }
 
     // 4. 读取并注入/移除 JS
     let jsInjected = false;
-    if (workbenchJs) {
-        let jsOriginal = '';
-        try { jsOriginal = fs.readFileSync(workbenchJs, 'utf-8'); }
-        catch (e) { vscode.window.showErrorMessage('读取 workbench JS 失败: ' + e.message); return cssInjected; }
+    let jsOriginal = '';
+    try { jsOriginal = fs.readFileSync(workbenchJs, 'utf-8'); }
+    catch (e) {
+        const m = '读取 workbench JS 失败: ' + e.message;
+        console.error('[时间背景] ' + m);
+        if (!silent) vscode.window.showErrorMessage(m);
+        return cssInjected ? 'opened' : 'closed';
+    }
 
-        const JS_START = '// MY_PLUGIN_TIME_BG_JS_START';
-        const JS_END = '// MY_PLUGIN_TIME_BG_JS_END';
-        if (jsOriginal.includes(JS_START)) {
-            // 移除
-            const regex = new RegExp(JS_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s\\S]*?' + JS_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\n*', 'g');
-            try {
-                fs.writeFileSync(workbenchJs, jsOriginal.replace(regex, ''), 'utf-8');
-                jsInjected = false;
-            } catch (e) {
-                vscode.window.showErrorMessage('移除 JS 失败: ' + e.message);
-                return true;
-            }
-        } else {
-            // 追加
-            try {
+    const JS_START = '// MY_PLUGIN_TIME_BG_JS_START';
+    const JS_END = '// MY_PLUGIN_TIME_BG_JS_END';
+    const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (jsOriginal.includes(JS_START)) {
+        // 移除
+        const regex = new RegExp(escapeRegex(JS_START) + '[\\s\\S]*?' + escapeRegex(JS_END) + '\\n*', 'g');
+        try {
+            fs.writeFileSync(workbenchJs, jsOriginal.replace(regex, ''), 'utf-8');
+            jsInjected = false;
+        } catch (e) {
+            const m = '移除 JS 失败（可能需要管理员权限）: ' + e.message;
+            console.error('[时间背景] ' + m);
+            if (!silent) vscode.window.showErrorMessage(m);
+            return 'failed';
+        }
+    } else {
+        // 追加
+        try {
+            if (!fs.existsSync(workbenchJs + '.myplugin.bak')) {
                 fs.writeFileSync(workbenchJs + '.myplugin.bak', jsOriginal, 'utf-8');
-                fs.writeFileSync(workbenchJs, jsOriginal + '\n' + getTimeBackgroundJs(), 'utf-8');
-                jsInjected = true;
-            } catch (e) {
-                vscode.window.showErrorMessage('注入 JS 失败（可能需要管理员权限）: ' + e.message);
-                return false;
             }
+            fs.writeFileSync(workbenchJs, jsOriginal + '\n' + getTimeBackgroundJs(), 'utf-8');
+            jsInjected = true;
+        } catch (e) {
+            const m = '注入 JS 失败（需要管理员权限运行 VSCode）: ' + e.message;
+            console.error('[时间背景] ' + m);
+            if (!silent) vscode.window.showErrorMessage(m);
+            return 'failed';
         }
     }
 
-    const result = cssInjected || jsInjected; // 任一注入成功即为开启
-    console.log('时间背景', result ? '已注入' : '已移除', '| CSS:', workbenchCss, '| JS:', workbenchJs);
-    return result;
+    // cssInjected 为 true 表示当前是"注入后"状态，false 表示"移除后"状态
+    console.log('[时间背景]', cssInjected ? '已注入' : '已移除', '| CSS:', workbenchCss, '| JS:', workbenchJs);
+    return cssInjected ? 'opened' : 'closed';
 }
 
 /**

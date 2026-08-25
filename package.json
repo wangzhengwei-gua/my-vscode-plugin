@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.8.8",
+    "version": "0.8.9",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -38,6 +38,7 @@
         "onCommand:myPlugin.boidsLife",
         "onCommand:myPlugin.boidsNumber",
         "onCommand:myPlugin.toggleTimeBackground",
+        "onCommand:myPlugin.timeBackgroundSettings",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -121,6 +122,10 @@
             {
                 "command": "myPlugin.toggleTimeBackground",
                 "title": "Toggle Time Background"
+            },
+            {
+                "command": "myPlugin.timeBackgroundSettings",
+                "title": "Time Background Settings"
             }
         ],
         "viewsContainers": {
