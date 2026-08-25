@@ -1831,37 +1831,36 @@ function getDrawMachineHtml(cfg) {
 <title>3D 摇奖机 - ${cfg.name}</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a1a; color: #fff; font-family: "Segoe UI","Microsoft YaHei",sans-serif; }
-#app { position: relative; width: 100vw; height: 100vh; }
+html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-family: "Segoe UI","Microsoft YaHei",sans-serif; }
+#app { position: relative; width: 100vw; height: 100vh; background: radial-gradient(ellipse at 50% 35%, #1a1f3a 0%, #0a0c1a 60%, #050610 100%); }
 #canvas3d { display: block; width: 100%; height: 100%; }
 
-/* 顶部标题 */
-.top-bar { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); z-index: 10; text-align: center; }
-.top-bar h1 { font-size: 22px; font-weight: 600; color: #ffd700; text-shadow: 0 0 8px rgba(255,215,0,.5); }
-.top-bar .sub { font-size: 13px; color: #9aa; margin-top: 4px; }
+.top-bar { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); z-index: 10; text-align: center; pointer-events: none; }
+.top-bar h1 { font-size: 22px; font-weight: 700; color: #ffd700; text-shadow: 0 0 12px rgba(255,215,0,.6), 0 2px 4px rgba(0,0,0,.8); letter-spacing: 1px; }
+.top-bar .sub { font-size: 12px; color: #8a93b8; margin-top: 4px; text-shadow: 0 1px 2px rgba(0,0,0,.8); }
 
-/* 控制按钮 */
-.controls { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 12px; }
-.btn { padding: 10px 24px; font-size: 15px; border: none; border-radius: 24px; cursor: pointer; color: #fff; background: linear-gradient(135deg,#667eea,#764ba2); box-shadow: 0 4px 14px rgba(118,75,162,.5); transition: transform .15s; }
-.btn:hover { transform: translateY(-2px); }
-.btn:disabled { opacity: .4; cursor: not-allowed; }
-.btn.success { background: linear-gradient(135deg,#11998e,#38ef7d); box-shadow: 0 4px 14px rgba(56,239,125,.5); }
+.controls { position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 14px; }
+.btn { padding: 11px 28px; font-size: 15px; font-weight: 600; border: none; border-radius: 28px; cursor: pointer; color: #fff; background: linear-gradient(135deg,#11998e,#38ef7d); box-shadow: 0 6px 18px rgba(56,239,125,.45), inset 0 1px 0 rgba(255,255,255,.3); transition: transform .15s, box-shadow .15s; }
+.btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(56,239,125,.6), inset 0 1px 0 rgba(255,255,255,.3); }
+.btn:disabled { opacity: .35; cursor: not-allowed; }
+.btn.secondary { background: linear-gradient(135deg,#4b6cb7,#182848); box-shadow: 0 6px 18px rgba(75,108,183,.45), inset 0 1px 0 rgba(255,255,255,.2); }
 
-/* 结果展示 */
-.result-panel { position: absolute; top: 16px; right: 16px; z-index: 10; background: rgba(20,20,40,.85); border: 1px solid rgba(255,215,0,.3); border-radius: 10px; padding: 12px 16px; min-width: 180px; }
-.result-panel .label { font-size: 12px; color: #888; margin-bottom: 6px; }
-.result-panel .nums { display: flex; flex-wrap: wrap; gap: 6px; }
-.result-panel .ball { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 700; color: #fff; background: radial-gradient(circle at 30% 30%, #ff6b6b, #c0392b); box-shadow: 0 0 8px rgba(231,76,60,.6); }
-.result-panel .ball.empty { background: #333; box-shadow: none; color: #555; }
+.result-panel { position: absolute; top: 18px; right: 18px; z-index: 10; background: linear-gradient(135deg, rgba(30,32,55,.92), rgba(20,22,40,.92)); border: 1px solid rgba(255,215,0,.35); border-radius: 12px; padding: 14px 18px; min-width: 200px; box-shadow: 0 8px 24px rgba(0,0,0,.5); backdrop-filter: blur(6px); }
+.result-panel .label { font-size: 12px; color: #ffd700; margin-bottom: 8px; letter-spacing: 1px; }
+.result-panel .nums { display: flex; flex-wrap: wrap; gap: 8px; }
+.result-panel .ball { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 800; color: #fff; background: radial-gradient(circle at 32% 28%, #ff8a8a, #c0392b 60%, #7a1a14 100%); box-shadow: 0 0 12px rgba(231,76,60,.7), inset -2px -3px 6px rgba(0,0,0,.4), inset 2px 2px 4px rgba(255,255,255,.3); }
+.result-panel .ball.empty { background: radial-gradient(circle at 32% 28%, #2a2a3a, #15151f); box-shadow: inset 0 0 6px rgba(0,0,0,.6); color: #445; }
 
-/* 历史记录 */
-.history-panel { position: absolute; top: 16px; left: 16px; z-index: 10; background: rgba(20,20,40,.85); border: 1px solid rgba(80,120,255,.3); border-radius: 10px; padding: 10px 14px; max-height: 50vh; overflow-y: auto; min-width: 160px; }
-.history-panel .label { font-size: 12px; color: #888; margin-bottom: 6px; }
-.history-panel .item { font-size: 13px; color: #cde; margin: 4px 0; font-family: "Consolas",monospace; }
-.history-panel .item .badge { display: inline-block; min-width: 18px; height: 18px; line-height: 18px; text-align: center; border-radius: 4px; background: #2d4a8a; margin-right: 4px; font-size: 11px; }
+.history-panel { position: absolute; top: 18px; left: 18px; z-index: 10; background: linear-gradient(135deg, rgba(30,32,55,.92), rgba(20,22,40,.92)); border: 1px solid rgba(80,120,255,.35); border-radius: 12px; padding: 12px 16px; max-height: 55vh; overflow-y: auto; min-width: 170px; box-shadow: 0 8px 24px rgba(0,0,0,.5); backdrop-filter: blur(6px); }
+.history-panel .label { font-size: 12px; color: #6ea0ff; margin-bottom: 8px; letter-spacing: 1px; }
+.history-panel .item { font-size: 13px; color: #cde; margin: 5px 0; font-family: "Consolas",monospace; }
+.history-panel .item .badge { display: inline-block; min-width: 20px; height: 20px; line-height: 20px; text-align: center; border-radius: 5px; background: linear-gradient(135deg,#2d4a8a,#1a3a6a); margin-right: 6px; font-size: 11px; color: #fff; }
+.history-panel::-webkit-scrollbar { width: 6px; }
+.history-panel::-webkit-scrollbar-thumb { background: rgba(120,160,255,.4); border-radius: 3px; }
 
-/* 状态文字 */
-.status-text { position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%); z-index: 10; font-size: 14px; color: #ffcc00; }
+.status-text { position: absolute; bottom: 88px; left: 50%; transform: translateX(-50%); z-index: 10; font-size: 14px; color: #ffcc00; text-shadow: 0 1px 4px rgba(0,0,0,.8); pointer-events: none; }
+
+.hint { position: absolute; bottom: 12px; right: 18px; z-index: 10; font-size: 11px; color: #555a72; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -1872,216 +1871,442 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a1a; c
     <div class="sub">位号：${posLabels} ｜ 每位 0-9</div>
   </div>
   <div class="history-panel">
-    <div class="label">历史摇奖</div>
+    <div class="label">📜 历史摇奖</div>
     <div id="historyList"></div>
   </div>
   <div class="result-panel">
-    <div class="label">本期结果</div>
+    <div class="label">🎯 本期结果</div>
     <div class="nums" id="resultNums"></div>
   </div>
   <div class="status-text" id="statusText">点击"开始摇奖"启动</div>
   <div class="controls">
-    <button class="btn success" id="btnStart">🎰 开始摇奖</button>
-    <button class="btn" id="btnReset" disabled>🔄 重置</button>
+    <button class="btn" id="btnStart">🎰 开始摇奖</button>
+    <button class="btn secondary" id="btnReset" disabled>🔄 重置</button>
   </div>
+  <div class="hint">🖱️ 拖拽旋转 · 滚轮缩放</div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 <script>
 (function(){
   const POS_COUNT = ${posCount};
-  const NUM_RANGE = 10; // 0-9
+  const NUM_RANGE = 10;
 
-  // ====== Three.js 场景 ======
+  // ====== Renderer + Scene ======
   const canvas = document.getElementById('canvas3d');
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.1;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0a0a1a);
+  scene.background = new THREE.Color(0x070810);
+  scene.fog = new THREE.Fog(0x070810, 12, 28);
 
-  // 相机
-  let camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 1000);
-  camera.position.set(0, 2, 8);
-  camera.lookAt(0, 0, 0);
+  // ====== 程序化环境贴图（替代 HDR，给金属/玻璃材质提供反射）======
+  const envCanvas = document.createElement('canvas');
+  envCanvas.width = 512; envCanvas.height = 256;
+  const ectx = envCanvas.getContext('2d');
+  // 上半：暖色舞台灯
+  const eg = ectx.createLinearGradient(0, 0, 0, 256);
+  eg.addColorStop(0, '#3a2a1a');
+  eg.addColorStop(0.35, '#1a1f3a');
+  eg.addColorStop(0.55, '#0a0c1a');
+  eg.addColorStop(1, '#050610');
+  ectx.fillStyle = eg; ectx.fillRect(0, 0, 512, 256);
+  // 几个亮点作为"灯"
+  const lights = [{x:100,y:40,r:50,c:'rgba(255,220,150,0.9)'},{x:380,y:30,r:40,c:'rgba(150,180,255,0.85)'},{x:256,y:20,r:35,c:'rgba(255,255,200,0.7)'}];
+  lights.forEach(l => {
+    const rg = ectx.createRadialGradient(l.x, l.y, 0, l.x, l.y, l.r);
+    rg.addColorStop(0, l.c); rg.addColorStop(1, 'rgba(0,0,0,0)');
+    ectx.fillStyle = rg; ectx.fillRect(0, 0, 512, 256);
+  });
+  const envTex = new THREE.CanvasTexture(envCanvas);
+  envTex.mapping = THREE.EquirectangularReflectionMapping;
+  envTex.colorSpace = THREE.SRGBColorSpace;
+  scene.environment = envTex;
 
-  // 灯光
-  scene.add(new THREE.AmbientLight(0xffffff, 0.4));
-  const keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
-  keyLight.position.set(5, 10, 6);
+  // ====== 相机 ======
+  let camera = new THREE.PerspectiveCamera(42, window.innerWidth/window.innerHeight, 0.1, 100);
+  camera.position.set(0, 2.2, 9);
+
+  // ====== 灯光（三点布光 + 聚光）======
+  scene.add(new THREE.AmbientLight(0x404868, 0.35));
+
+  const keyLight = new THREE.DirectionalLight(0xfff0d0, 1.4);
+  keyLight.position.set(4, 8, 5);
+  keyLight.castShadow = true;
+  keyLight.shadow.mapSize.set(1024, 1024);
+  keyLight.shadow.camera.left = -6;
+  keyLight.shadow.camera.right = 6;
+  keyLight.shadow.camera.top = 6;
+  keyLight.shadow.camera.bottom = -6;
+  keyLight.shadow.bias = -0.0005;
   scene.add(keyLight);
-  const fillLight = new THREE.PointLight(0x6699ff, 0.6, 30);
-  fillLight.position.set(-4, 2, 4);
+
+  const fillLight = new THREE.DirectionalLight(0x6088ff, 0.55);
+  fillLight.position.set(-5, 3, 3);
   scene.add(fillLight);
 
-  // 底座
-  const baseGeo = new THREE.CylinderGeometry(2.2, 2.4, 0.3, 48);
-  const baseMat = new THREE.MeshPhongMaterial({ color: 0x2a2a3e, shininess: 60 });
+  const rimLight = new THREE.DirectionalLight(0xff88cc, 0.4);
+  rimLight.position.set(0, -2, -6);
+  scene.add(rimLight);
+
+  // 顶部聚光灯（照亮出球口）
+  const spot = new THREE.SpotLight(0xffe8b0, 2.5, 12, Math.PI/7, 0.4, 1.5);
+  spot.position.set(0, 6, 2);
+  spot.target.position.set(0, 2.5, 0);
+  scene.add(spot); scene.add(spot.target);
+
+  // ====== 舞台地板（带反射感）======
+  const floorGeo = new THREE.CircleGeometry(6, 64);
+  const floorMat = new THREE.MeshStandardMaterial({
+    color: 0x12152a, metalness: 0.85, roughness: 0.35,
+    envMapIntensity: 1.2
+  });
+  const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.rotation.x = -Math.PI/2;
+  floor.position.y = -2.2;
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // 地板发光环
+  const ringGeo = new THREE.RingGeometry(2.8, 3.0, 64);
+  const ringMat = new THREE.MeshBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.6, side: THREE.DoubleSide });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.rotation.x = -Math.PI/2;
+  ring.position.y = -2.19;
+  scene.add(ring);
+
+  // ====== 底座（金属圆柱）======
+  const baseGeo = new THREE.CylinderGeometry(2.0, 2.3, 0.45, 48);
+  const baseMat = new THREE.MeshStandardMaterial({
+    color: 0x2a2d4a, metalness: 0.9, roughness: 0.25, envMapIntensity: 1.5
+  });
   const base = new THREE.Mesh(baseGeo, baseMat);
-  base.position.y = -1.6;
+  base.position.y = -2.0;
+  base.castShadow = true; base.receiveShadow = true;
   scene.add(base);
 
-  // 摇奖球体（透明玻璃球）
-  const sphereRadius = 1.8;
-  const sphereGeo = new THREE.SphereGeometry(sphereRadius, 48, 32);
-  const sphereMat = new THREE.MeshPhongMaterial({
-    color: 0x88aaff, transparent: true, opacity: 0.18, shininess: 120,
+  // 底座顶部金色环
+  const baseTopGeo = new THREE.TorusGeometry(2.0, 0.06, 16, 64);
+  const baseTopMat = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 1.0, roughness: 0.2, envMapIntensity: 2.0 });
+  const baseTop = new THREE.Mesh(baseTopGeo, baseTopMat);
+  baseTop.rotation.x = Math.PI/2;
+  baseTop.position.y = -1.77;
+  scene.add(baseTop);
+
+  // ====== 玻璃球壳（双层 + 顶部缺口）======
+  const sphereRadius = 1.85;
+  // 外层：物理玻璃材质
+  const outerGeo = new THREE.SphereGeometry(sphereRadius, 64, 48);
+  const outerMat = new THREE.MeshPhysicalMaterial({
+    color: 0xaaccff, metalness: 0, roughness: 0.02,
+    transmission: 0.95, transparent: true, opacity: 0.35,
+    thickness: 0.4, ior: 1.45, envMapIntensity: 2.5,
+    clearcoat: 1.0, clearcoatRoughness: 0.02,
     side: THREE.DoubleSide
   });
-  const sphere = new THREE.Mesh(sphereGeo, sphereMat);
-  scene.add(sphere);
+  const outerSphere = new THREE.Mesh(outerGeo, outerMat);
+  outerSphere.position.y = 0;
+  scene.add(outerSphere);
 
-  // 球体线框（更立体感）
-  const wireGeo = new THREE.SphereGeometry(sphereRadius, 16, 12);
-  const wireMat = new THREE.LineBasicMaterial({ color: 0x6699ff, transparent: true, opacity: 0.3 });
-  const wire = new THREE.LineSegments(new THREE.WireframeGeometry(wireGeo), wireMat);
-  scene.add(wire);
+  // 内层：薄壳增加厚度感
+  const innerGeo = new THREE.SphereGeometry(sphereRadius - 0.04, 48, 36);
+  const innerMat = new THREE.MeshPhysicalMaterial({
+    color: 0xffffff, metalness: 0, roughness: 0.05,
+    transmission: 0.9, transparent: true, opacity: 0.15,
+    thickness: 0.2, ior: 1.4, side: THREE.BackSide
+  });
+  const innerSphere = new THREE.Mesh(innerGeo, innerMat);
+  scene.add(innerSphere);
 
-  // 号码球（10 个小球，编号 0-9）
-  // 每个小球：几何 + 材质 + 文理
-  const ballRadius = 0.42;
-  const ballGeo = new THREE.SphereGeometry(ballRadius, 24, 18);
+  // 玻璃球赤道金属环（装饰，真实摇奖机有）
+  const equatorGeo = new THREE.TorusGeometry(sphereRadius, 0.05, 12, 96);
+  const equatorMat = new THREE.MeshStandardMaterial({ color: 0xc8a050, metalness: 1.0, roughness: 0.3, envMapIntensity: 2.0 });
+  const equator = new THREE.Mesh(equatorGeo, equatorMat);
+  scene.add(equator);
 
-  // 生成号码纹理
-  function makeNumberTexture(num, hue) {
+  // ====== 号码球（高质量纹理）======
+  const ballRadius = 0.38;
+  const ballGeo = new THREE.SphereGeometry(ballRadius, 48, 36);
+
+  // 经典摇奖球配色（参考福彩/体彩真实色系）
+  const BALL_COLORS = [
+    { base: '#e74c3c', dark: '#922b21', light: '#ff8a80' }, // 0 红
+    { base: '#f39c12', dark: '#9c6c0a', light: '#ffd180' }, // 1 橙
+    { base: '#f1c40f', dark: '#9c7c0a', light: '#fff44f' }, // 2 黄
+    { base: '#1abc9c', dark: '#0e7c66', light: '#5fffd0' }, // 3 青绿
+    { base: '#3498db', dark: '#1c6090', light: '#7ec6ff' }, // 4 蓝
+    { base: '#9b59b6', dark: '#5e3370', light: '#d09bdb' }, // 5 紫
+    { base: '#e84393', dark: '#8a2858', light: '#ff7dba' }, // 6 粉
+    { base: '#00b894', dark: '#00705a', light: '#3fffd0' }, // 7 翠绿
+    { base: '#fd79a8', dark: '#8a4060', light: '#ffb0c8' }, // 8 玫粉
+    { base: '#6c5ce7', dark: '#3a3090', light: '#a89bff' }, // 9 蓝紫
+  ];
+
+  // 生成号码球纹理（512x512，真实感）
+  function makeBallTexture(num, color) {
+    const S = 512;
     const c = document.createElement('canvas');
-    c.width = 128; c.height = 128;
+    c.width = S; c.height = S;
     const ctx = c.getContext('2d');
-    // 背景
-    const grad = ctx.createRadialGradient(40, 40, 10, 64, 64, 80);
-    grad.addColorStop(0, 'hsl(' + hue + ', 80%, 65%)');
-    grad.addColorStop(1, 'hsl(' + hue + ', 70%, 40%)');
+
+    // 主背景：双色球面（上半浅、下半深）
+    const grad = ctx.createLinearGradient(0, 0, 0, S);
+    grad.addColorStop(0, color.light);
+    grad.addColorStop(0.45, color.base);
+    grad.addColorStop(0.55, color.base);
+    grad.addColorStop(1, color.dark);
     ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 128, 128);
-    // 号码
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 72px Arial';
+    ctx.fillRect(0, 0, S, S);
+
+    // 高光带（顶部斜向）
+    ctx.save();
+    ctx.translate(S*0.5, S*0.4);
+    ctx.rotate(-0.4);
+    const hg = ctx.createRadialGradient(0, 0, 0, 0, 0, S*0.35);
+    hg.addColorStop(0, 'rgba(255,255,255,0.55)');
+    hg.addColorStop(0.6, 'rgba(255,255,255,0.1)');
+    hg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = hg;
+    ctx.beginPath(); ctx.ellipse(0, 0, S*0.35, S*0.18, 0, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+
+    // 中央号码圆盘（凹陷感）
+    const cx = S/2, cy = S/2;
+    const diskR = S * 0.28;
+    // 凹陷阴影
+    const dg = ctx.createRadialGradient(cx - diskR*0.3, cy - diskR*0.3, diskR*0.1, cx, cy, diskR);
+    dg.addColorStop(0, 'rgba(255,255,255,0.15)');
+    dg.addColorStop(0.8, 'rgba(0,0,0,0.25)');
+    dg.addColorStop(1, 'rgba(0,0,0,0.5)');
+    ctx.fillStyle = dg;
+    ctx.beginPath(); ctx.arc(cx, cy, diskR, 0, Math.PI*2); ctx.fill();
+
+    // 号码文字（带描边和阴影）
+    ctx.font = 'bold 180px Arial';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.shadowColor = 'rgba(0,0,0,.6)';
-    ctx.shadowBlur = 6;
-    ctx.fillText(String(num), 64, 70);
+    ctx.shadowColor = 'rgba(0,0,0,0.7)';
+    ctx.shadowBlur = 12;
+    ctx.shadowOffsetY = 4;
+    ctx.fillStyle = '#fff';
+    ctx.fillText(String(num), cx, cy + 8);
+    // 描边
+    ctx.shadowColor = 'transparent';
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+    ctx.strokeText(String(num), cx, cy + 8);
+
+    // 底部投影（暗角）
+    const vg = ctx.createRadialGradient(cx, cy, S*0.3, cx, cy, S*0.5);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, 'rgba(0,0,0,0.4)');
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, S, S);
+
     const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
     tex.needsUpdate = true;
     return tex;
   }
 
-  // 创建号码球数组
+  // 创建号码球
   const numberBalls = [];
   for (let i = 0; i < NUM_RANGE; i++) {
-    const hue = (i / NUM_RANGE) * 360;
-    const mat = new THREE.MeshPhongMaterial({ map: makeNumberTexture(i, hue), shininess: 80 });
+    const tex = makeBallTexture(i, BALL_COLORS[i]);
+    const mat = new THREE.MeshStandardMaterial({
+      map: tex,
+      metalness: 0.15,
+      roughness: 0.35,
+      envMapIntensity: 1.4,
+      emissive: new THREE.Color(BALL_COLORS[i].base),
+      emissiveIntensity: 0.06
+    });
     const mesh = new THREE.Mesh(ballGeo, mat);
+    mesh.castShadow = true;
     mesh.userData.number = i;
-    mesh.userData.velocity = new THREE.Vector3(
-      (Math.random() - 0.5) * 0.06,
-      Math.random() * 0.08,
-      (Math.random() - 0.5) * 0.06
-    );
-    mesh.userData.angularVel = new THREE.Vector3(
-      (Math.random() - 0.5) * 0.15,
-      (Math.random() - 0.5) * 0.15,
-      (Math.random() - 0.5) * 0.15
-    );
-    // 随机起始位置
-    const r = sphereRadius - ballRadius - 0.05;
-    mesh.position.set(
-      (Math.random() - 0.5) * r * 1.4,
-      (Math.random() - 0.5) * r * 1.4,
-      (Math.random() - 0.5) * r * 1.4
-    );
+    mesh.userData.color = BALL_COLORS[i];
+    resetBall(mesh);
     scene.add(mesh);
     numberBalls.push(mesh);
   }
 
-  // 出球管道（顶部出口）
-  const tubeGeo = new THREE.CylinderGeometry(0.5, 0.5, 1.2, 24, 1, true);
-  const tubeMat = new THREE.MeshPhongMaterial({ color: 0x555577, transparent: true, opacity: 0.4, side: THREE.DoubleSide });
-  const tube = new THREE.Mesh(tubeGeo, tubeMat);
-  tube.position.y = sphereRadius + 0.6;
-  scene.add(tube);
+  function resetBall(mesh) {
+    mesh.userData.exited = false;
+    mesh.userData.ejecting = false;
+    mesh.userData.ejectTime = 0;
+    mesh.userData.velocity = new THREE.Vector3(
+      (Math.random() - 0.5) * 0.10,
+      Math.random() * 0.12,
+      (Math.random() - 0.5) * 0.10
+    );
+    mesh.userData.angularVel = new THREE.Vector3(
+      (Math.random() - 0.5) * 0.20,
+      (Math.random() - 0.5) * 0.20,
+      (Math.random() - 0.5) * 0.20
+    );
+    const r = sphereRadius - ballRadius - 0.08;
+    mesh.position.set(
+      (Math.random() - 0.5) * r * 1.3,
+      (Math.random() - 0.2) * r * 1.0,
+      (Math.random() - 0.5) * r * 1.3
+    );
+  }
 
-  // 出球收集盘（底部下方）
-  const trayGeo = new THREE.CylinderGeometry(1.0, 1.2, 0.15, 32);
-  const trayMat = new THREE.MeshPhongMaterial({ color: 0x1a1a2a, shininess: 50 });
-  const tray = new THREE.Mesh(trayGeo, trayMat);
-  tray.position.y = -1.3;
-  scene.add(tray);
+  // ====== 出球轨道（从顶部弯到前方展示架）======
+  // 导轨：弯曲管道
+  const railCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, sphereRadius - 0.1, 0),
+    new THREE.Vector3(0, sphereRadius + 0.4, 0),
+    new THREE.Vector3(0, sphereRadius + 0.8, 0.3),
+    new THREE.Vector3(0, sphereRadius + 0.6, 1.2),
+    new THREE.Vector3(0, 1.8, 2.4),
+    new THREE.Vector3(0, 1.4, 3.2)
+  ]);
+  const railGeo = new THREE.TubeGeometry(railCurve, 64, 0.16, 12, false);
+  const railMat = new THREE.MeshStandardMaterial({
+    color: 0xc8a050, metalness: 1.0, roughness: 0.25, envMapIntensity: 2.0
+  });
+  const rail = new THREE.Mesh(railGeo, railMat);
+  rail.castShadow = true;
+  scene.add(rail);
 
-  // 鼠标拖拽控制相机角度
+  // 出球口金属环
+  const exitRingGeo = new THREE.TorusGeometry(0.22, 0.05, 12, 32);
+  const exitRing = new THREE.Mesh(exitRingGeo, railMat);
+  exitRing.position.set(0, sphereRadius + 0.05, 0);
+  exitRing.rotation.x = Math.PI/2;
+  scene.add(exitRing);
+
+  // ====== 展示架（出球后落入的凹槽台）======
+  const stageY = 1.4;
+  const stageZ = 3.2;
+  const stageGeo = new THREE.BoxGeometry(POS_COUNT * 0.9 + 0.3, 0.15, 0.6);
+  const stageMat = new THREE.MeshStandardMaterial({
+    color: 0x1a1d35, metalness: 0.8, roughness: 0.3, envMapIntensity: 1.5
+  });
+  const stage = new THREE.Mesh(stageGeo, stageMat);
+  stage.position.set(0, stageY - 0.1, stageZ);
+  stage.castShadow = true; stage.receiveShadow = true;
+  scene.add(stage);
+
+  // 展示架金色边框
+  const stageEdgeGeo = new THREE.BoxGeometry(POS_COUNT * 0.9 + 0.4, 0.04, 0.7);
+  const stageEdgeMat = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 1.0, roughness: 0.2, envMapIntensity: 2.5 });
+  const stageEdge = new THREE.Mesh(stageEdgeGeo, stageEdgeMat);
+  stageEdge.position.set(0, stageY - 0.005, stageZ);
+  scene.add(stageEdge);
+
+  // 展示凹槽（每个位置一个凹陷圆柱）
+  const slots = [];
+  for (let i = 0; i < POS_COUNT; i++) {
+    const x = (i - (POS_COUNT-1)/2) * 0.9;
+    // 凹槽
+    const slotGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.08, 32);
+    const slotMesh = new THREE.Mesh(slotGeo, new THREE.MeshStandardMaterial({ color: 0x0a0c1a, metalness: 0.5, roughness: 0.4 }));
+    slotMesh.position.set(x, stageY + 0.01, stageZ);
+    scene.add(slotMesh);
+    slots.push({ x, y: stageY + 0.05, z: stageZ });
+  }
+
+  // ====== 接触阴影（每个球的伪阴影圆片）======
+  // 不用真实 shadow（性能差），用贴地的暗圆片
+  const shadowMeshes = [];
+  numberBalls.forEach(() => {
+    const sg = new THREE.CircleGeometry(ballRadius * 0.9, 24);
+    const sm = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3 });
+    const s = new THREE.Mesh(sg, sm);
+    s.rotation.x = -Math.PI/2;
+    s.visible = false;
+    scene.add(s);
+    shadowMeshes.push(s);
+  });
+
+  // ====== 鼠标交互（球面坐标控制）======
   let isDragging = false, lastX = 0, lastY = 0;
-  let camTheta = 0, camPhi = 0.25;
+  let camTheta = 0.3, camPhi = 0.15;
+  let camDist = 9;
   function updateCamera() {
-    const r = 8;
-    camera.position.x = r * Math.cos(camPhi) * Math.sin(camTheta);
-    camera.position.z = r * Math.cos(camPhi) * Math.cos(camTheta);
-    camera.position.y = 2 + r * Math.sin(camPhi);
-    camera.lookAt(0, 0, 0);
+    camera.position.x = camDist * Math.cos(camPhi) * Math.sin(camTheta);
+    camera.position.z = camDist * Math.cos(camPhi) * Math.cos(camTheta);
+    camera.position.y = 1.5 + camDist * Math.sin(camPhi);
+    camera.lookAt(0, 0.5, 0.5);
   }
   updateCamera();
   canvas.addEventListener('mousedown', e => { isDragging = true; lastX = e.clientX; lastY = e.clientY; });
   window.addEventListener('mouseup', () => { isDragging = false; });
   window.addEventListener('mousemove', e => {
     if (!isDragging) return;
-    camTheta += (e.clientX - lastX) * 0.005;
-    camPhi = Math.max(-1.2, Math.min(1.2, camPhi + (e.clientY - lastY) * 0.005));
+    camTheta -= (e.clientX - lastX) * 0.006;
+    camPhi = Math.max(-0.5, Math.min(1.0, camPhi + (e.clientY - lastY) * 0.005));
     lastX = e.clientX; lastY = e.clientY;
     updateCamera();
   });
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
-    const factor = e.deltaY > 0 ? 1.1 : 0.9;
-    camera.position.multiplyScalar(factor);
-    if (camera.position.length() < 4) camera.position.normalize().multiplyScalar(4);
-    if (camera.position.length() > 20) camera.position.normalize().multiplyScalar(20);
+    camDist *= e.deltaY > 0 ? 1.08 : 0.93;
+    camDist = Math.max(5, Math.min(18, camDist));
+    updateCamera();
   }, { passive: false });
 
-  // ====== 摇奖状态 ======
-  // status: idle | running | drawing | done
+  // ====== 物理：球在球内翻滚 ======
   let status = 'idle';
-  let pickedBalls = []; // 已出球（号码）
-  let drawQueue = [];   // 待出球的位（剩余次数）
-  let isInside = (mesh) => {
-    const r = mesh.position.length();
-    return r <= sphereRadius - ballRadius - 0.02;
-  };
-  let exitCooldown = 0; // 出球冷却帧
-  let spinningBoost = 0; // 摇动强度
+  let pickedBalls = [];
+  let drawQueue = [];
+  let exitCooldown = 0;
+  let spinningBoost = 0;
+  let spinTimer = 0;       // 摇动持续时间
+  const SPIN_DURATION = 200; // 约 3.3s 强力摇动后开始出球
 
-  // 物理：球在球内反弹
-  function stepPhysics(dt) {
-    const innerR = sphereRadius - ballRadius - 0.02;
-    // 摇动力（模拟风机）
-    const forceStrength = 0.012 + spinningBoost;
+  function stepPhysics() {
+    const innerR = sphereRadius - ballRadius - 0.05;
+    const forceStrength = 0.020 + spinningBoost;
+    // 摇动力随时间正弦波动（模拟风机方向变化）
+    spinTimer++;
+    const fx = Math.sin(spinTimer * 0.05) * forceStrength * 0.5;
+    const fy = (Math.cos(spinTimer * 0.07) * 0.5 + 0.5) * forceStrength * 0.8;
+    const fz = Math.cos(spinTimer * 0.04) * forceStrength * 0.5;
+
     numberBalls.forEach(ball => {
-      if (ball.userData.exited) return; // 已出球不再模拟
-      // 随机扰动
-      ball.userData.velocity.x += (Math.random() - 0.5) * forceStrength;
-      ball.userData.velocity.y += (Math.random() - 0.3) * forceStrength * 1.2;
-      ball.userData.velocity.z += (Math.random() - 0.5) * forceStrength;
-      // 重力
-      ball.userData.velocity.y -= 0.006;
+      if (ball.userData.exited) return;
+      // 周期性扰动力 + 随机抖动
+      ball.userData.velocity.x += fx + (Math.random() - 0.5) * forceStrength * 0.4;
+      ball.userData.velocity.y += fy + (Math.random() - 0.2) * forceStrength * 0.5;
+      ball.userData.velocity.z += fz + (Math.random() - 0.5) * forceStrength * 0.4;
+      // 轻微重力（在强力摇动下几乎无影响，让球真正翻滚）
+      ball.userData.velocity.y -= 0.003;
       // 阻尼
-      ball.userData.velocity.multiplyScalar(0.992);
-      ball.userData.angularVel.multiplyScalar(0.985);
+      ball.userData.velocity.multiplyScalar(0.991);
+      ball.userData.angularVel.multiplyScalar(0.988);
+      // 限速
+      const maxV = 0.22;
+      if (ball.userData.velocity.length() > maxV) ball.userData.velocity.setLength(maxV);
       // 移动
       ball.position.add(ball.userData.velocity);
       ball.rotation.x += ball.userData.angularVel.x;
       ball.rotation.y += ball.userData.angularVel.y;
       ball.rotation.z += ball.userData.angularVel.z;
-      // 边界（反弹）
+      // 球壁反弹
       const dist = ball.position.length();
       if (dist > innerR) {
         ball.position.normalize().multiplyScalar(innerR);
-        // 反弹速度
         const n = ball.position.clone().normalize();
         const dot = ball.userData.velocity.dot(n);
         if (dot > 0) {
-          ball.userData.velocity.sub(n.multiplyScalar(dot * 1.8));
+          ball.userData.velocity.sub(n.multiplyScalar(dot * 1.7));
+          // 撞墙增加旋转
+          ball.userData.angularVel.x += (Math.random() - 0.5) * 0.1;
+          ball.userData.angularVel.z += (Math.random() - 0.5) * 0.1;
         }
       }
-      // 球与球碰撞
+      // 球-球碰撞
       for (let j = 0; j < numberBalls.length; j++) {
         const b2 = numberBalls[j];
         if (b2 === ball || b2.userData.exited) continue;
@@ -2096,100 +2321,138 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a1a; c
           const va = ball.userData.velocity.dot(n);
           const vb = b2.userData.velocity.dot(n);
           if (va - vb < 0) {
-            const m = 0.5;
+            const m = 0.6;
             ball.userData.velocity.add(n.clone().multiplyScalar((vb - va) * m));
             b2.userData.velocity.sub(n.clone().multiplyScalar((vb - va) * m));
+            // 碰撞增加旋转
+            ball.userData.angularVel.y += (Math.random() - 0.5) * 0.05;
+            b2.userData.angularVel.y += (Math.random() - 0.5) * 0.05;
           }
         }
       }
     });
   }
 
-  // 出球动画：让选中的球从顶部"射"出
+  // 出球：球从顶部出口沿导轨滑到展示架
   function ejectBall(ball) {
     ball.userData.exited = true;
-    ball.userData.velocity.set(0, 0.25, 0);
     ball.userData.ejecting = true;
     ball.userData.ejectTime = 0;
+    ball.userData.ejectPath = railCurve;
+    ball.userData.velocity.set(0, 0.2, 0); // 初始向上冲
   }
 
-  // 渲染循环
   function animate() {
     requestAnimationFrame(animate);
-    const dt = 1/60;
 
     if (status === 'running') {
-      spinningBoost = Math.min(0.04, spinningBoost + 0.002);
-      stepPhysics(dt);
-      // 球体微微晃动
-      sphere.rotation.y += 0.003;
-      wire.rotation.y += 0.003;
-      // 检查是否需要出球
+      // 前 3s 强力摇动，之后减弱但维持
+      if (spinTimer < SPIN_DURATION) {
+        spinningBoost = Math.min(0.05, spinningBoost + 0.003);
+      } else {
+        spinningBoost = Math.max(0.015, spinningBoost - 0.001);
+      }
+      stepPhysics();
+
+      // 玻璃球微转
+      outerSphere.rotation.y += 0.002;
+      innerSphere.rotation.y -= 0.001;
+      equator.rotation.y += 0.002;
+
+      // 出球
       if (exitCooldown > 0) exitCooldown--;
-      if (drawQueue.length > 0 && exitCooldown === 0) {
-        // 随机选一个仍在球内的球
+      if (drawQueue.length > 0 && exitCooldown === 0 && spinTimer > SPIN_DURATION) {
         const candidates = numberBalls.filter(b => !b.userData.exited);
         if (candidates.length > 0) {
-          // 取靠近顶部的球（最自然）
-          candidates.sort((a, b) => b.position.y - a.position.y);
+          // 取离顶部出口最近的球
+          candidates.sort((a, b) => {
+            const da = a.position.clone().sub(new THREE.Vector3(0, sphereRadius, 0)).length();
+            const db = b.position.clone().sub(new THREE.Vector3(0, sphereRadius, 0)).length();
+            return da - db;
+          });
           const target = candidates[0];
           ejectBall(target);
           pickedBalls.push(target.userData.number);
           drawQueue.shift();
-          exitCooldown = 70; // 约 1.2s 后再出下一球
+          exitCooldown = 90; // 约 1.5s 出下一球
           updateResultUI();
           if (drawQueue.length === 0) {
-            // 全部出完
             setTimeout(() => {
               status = 'done';
               setStatusText('🎉 摇奖结束！号码：' + pickedBalls.join(' '));
               saveToHistory();
               document.getElementById('btnReset').disabled = false;
-            }, 1500);
+            }, 1800);
           }
         }
       }
     }
 
-    // 出球动画
+    // 出球沿轨道动画
     numberBalls.forEach(ball => {
       if (ball.userData.ejecting) {
         ball.userData.ejectTime++;
-        // 上升 -> 落入收集盘
         const t = ball.userData.ejectTime;
-        if (t < 30) {
-          ball.position.y += 0.08;
-          ball.position.x *= 0.97;
-          ball.position.z *= 0.97;
-        } else if (t < 60) {
-          ball.position.y -= 0.15;
+        // 前 20 帧冲向出口
+        if (t < 20) {
+          ball.userData.velocity.y = Math.max(0.15, ball.userData.velocity.y * 0.95);
+          ball.position.add(ball.userData.velocity);
+          ball.rotation.y += 0.15;
         } else {
-          // 落到收集盘
-          const idx = pickedBalls.indexOf(ball.userData.number);
-          const slot = idx - (POS_COUNT - 1) / 2;
-          ball.position.set(slot * 1.0, -1.2, 0);
-          ball.userData.velocity.set(0, 0, 0);
-          ball.userData.angularVel.set(0, 0, 0);
-          ball.userData.ejecting = false;
+          // 沿导轨滑动
+          const pt = Math.min(1, (t - 20) / 70);
+          const pos = ball.userData.ejectPath.getPointAt(pt);
+          ball.position.copy(pos);
+          // 球滚动旋转
+          ball.rotation.x += 0.2;
+          ball.rotation.y += 0.1;
+          if (pt >= 1) {
+            // 落入展示架对应位置
+            const idx = pickedBalls.indexOf(ball.userData.number);
+            const slot = slots[idx];
+            ball.position.set(slot.x, slot.y + ballRadius, slot.z);
+            ball.userData.velocity.set(0, 0, 0);
+            ball.userData.angularVel.set(0, 0, 0);
+            ball.userData.ejecting = false;
+          }
         }
-        ball.rotation.y += 0.1;
       }
     });
 
-    // 待机轻微晃动
+    // 待机时球微动
     if (status === 'idle' || status === 'done') {
       numberBalls.forEach(b => {
         if (!b.userData.exited) {
-          b.rotation.y += 0.005;
+          b.rotation.y += 0.004;
         }
       });
+      outerSphere.rotation.y += 0.0008;
+      innerSphere.rotation.y -= 0.0004;
+      equator.rotation.y += 0.0008;
     }
+
+    // 接触阴影更新（球在球内时投影到底座顶部）
+    numberBalls.forEach((ball, i) => {
+      const sm = shadowMeshes[i];
+      if (ball.userData.exited || ball.userData.ejecting) {
+        sm.visible = false;
+      } else {
+        sm.visible = true;
+        sm.position.set(ball.position.x, -1.75, ball.position.z);
+        const h = ball.position.y + 1.75;
+        sm.scale.setScalar(Math.max(0.3, 1 - h * 0.15));
+        sm.material.opacity = Math.max(0.05, 0.35 - h * 0.06);
+      }
+    });
+
+    // 地板光环呼吸
+    ring.material.opacity = 0.4 + Math.sin(Date.now() * 0.002) * 0.2;
 
     renderer.render(scene, camera);
   }
   animate();
 
-  // ====== UI 控制 ======
+  // ====== UI ======
   const btnStart = document.getElementById('btnStart');
   const btnReset = document.getElementById('btnReset');
   const statusText = document.getElementById('statusText');
@@ -2202,7 +2465,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a1a; c
     let html = '';
     for (let i = 0; i < POS_COUNT; i++) {
       if (i < pickedBalls.length) {
-        html += '<div class="ball">' + pickedBalls[i] + '</div>';
+        const c = BALL_COLORS[pickedBalls[i]];
+        html += '<div class="ball" style="background: radial-gradient(circle at 32% 28%, ' + c.light + ', ' + c.base + ' 60%, ' + c.dark + ' 100%);">' + pickedBalls[i] + '</div>';
       } else {
         html += '<div class="ball empty">?</div>';
       }
@@ -2210,7 +2474,6 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a1a; c
     resultNums.innerHTML = html;
   }
 
-  // 历史记录（内存中，刷新页面即清空）
   const history = [];
   function saveToHistory() {
     const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
@@ -2234,8 +2497,9 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a1a; c
     status = 'running';
     pickedBalls = [];
     drawQueue = new Array(POS_COUNT).fill(0).map((_, i) => i);
-    exitCooldown = 100; // 启动后约 1.7s 出第一球
-    spinningBoost = 0.02;
+    exitCooldown = 0;
+    spinningBoost = 0.025;
+    spinTimer = 0;
     btnStart.disabled = true;
     btnReset.disabled = true;
     setStatusText('🌀 正在摇奖...');
@@ -2243,38 +2507,18 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a1a; c
   });
 
   btnReset.addEventListener('click', () => {
-    // 复位所有球
-    numberBalls.forEach(ball => {
-      ball.userData.exited = false;
-      ball.userData.ejecting = false;
-      const r = sphereRadius - ballRadius - 0.05;
-      ball.position.set(
-        (Math.random() - 0.5) * r * 1.4,
-        (Math.random() - 0.5) * r * 1.4,
-        (Math.random() - 0.5) * r * 1.4
-      );
-      ball.userData.velocity.set(
-        (Math.random() - 0.5) * 0.06,
-        Math.random() * 0.08,
-        (Math.random() - 0.5) * 0.06
-      );
-      ball.userData.angularVel.set(
-        (Math.random() - 0.5) * 0.15,
-        (Math.random() - 0.5) * 0.15,
-        (Math.random() - 0.5) * 0.15
-      );
-    });
+    numberBalls.forEach(b => resetBall(b));
     pickedBalls = [];
     drawQueue = [];
     status = 'idle';
     spinningBoost = 0;
+    spinTimer = 0;
     btnStart.disabled = false;
     btnReset.disabled = true;
     setStatusText('已重置，点击"开始摇奖"启动');
     updateResultUI();
   });
 
-  // 窗口大小变化
   window.addEventListener('resize', () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
     camera.aspect = window.innerWidth / window.innerHeight;
