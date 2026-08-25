@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.9.9",
+    "version": "0.8.7",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -37,6 +37,7 @@
         "onCommand:myPlugin.mlCompare",
         "onCommand:myPlugin.boidsLife",
         "onCommand:myPlugin.boidsNumber",
+        "onCommand:myPlugin.zhiHeAnalysis",
         "onCommand:myPlugin.toggleTimeBackground",
         "onCommand:myPlugin.drawMachine",
         "onView:lotteryMenu"
@@ -118,6 +119,10 @@
             {
                 "command": "myPlugin.boidsNumber",
                 "title": "Boids Number Sim"
+            },
+            {
+                "command": "myPlugin.zhiHeAnalysis",
+                "title": "Zhi-He Analysis"
             },
             {
                 "command": "myPlugin.toggleTimeBackground",

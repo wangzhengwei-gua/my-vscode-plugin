@@ -1520,6 +1520,47 @@ function activate(context) {
     });
     context.subscriptions.push(boidsNumberDisposable);
 
+    // ========== 质合形态分析 ==========
+    let zhiHeDisposable = vscode.commands.registerCommand('myPlugin.zhiHeAnalysis', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎯 排列三', value: 'pl3', description: '3位 质合形态分析' },
+                { label: '🎁 福彩3D', value: 'fc3d', description: '3位 质合形态分析' },
+                { label: '🎰 排列五', value: 'pl5', description: '5位 质合形态分析' }
+            ],
+            { placeHolder: '选择彩种' }
+        );
+        if (!pick) return;
+
+        const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+        if (!cfg) return;
+
+        let history;
+        try {
+            history = loadLotteryData(cfg);
+            if (history.length < 50) {
+                vscode.window.showWarningMessage('数据不足（需 ≥50 期），请先刷新数据');
+                return;
+            }
+        } catch (e) {
+            vscode.window.showErrorMessage('读取数据失败: ' + e.message);
+            return;
+        }
+
+        const posLabels = cfg.positions.map(p => p.label + '位');
+        const allNumbers = cfg.positions.map(p => history.map(h => p.pick(h)));
+        const periods = history.map(h => h.period);
+
+        const panel = vscode.window.createWebviewPanel(
+            'zhiHeAnalysis',
+            '📐 质合形态分析 - ' + cfg.name,
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getZhiHeHtml(cfg.name, posLabels, allNumbers, periods);
+    });
+    context.subscriptions.push(zhiHeDisposable);
+
     // ===== 状态栏时间 + 每日温馨话语（hover tooltip） =====
     // 在状态栏显示 🕐 HH:MM:SS 图标，鼠标悬停显示日期 + 温馨话语
     // 不影响代码阅读区域，完全在状态栏里
@@ -1786,6 +1827,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🧠 模型对比预测', 'myPlugin.mlCompare', '🧠'),
                 this.createItem('🐦 群鸟生命游戏', 'myPlugin.boidsLife', '🐦'),
                 this.createItem('🎲 群鸟号码模拟', 'myPlugin.boidsNumber', '🎲'),
+                this.createItem('📐 质合形态分析', 'myPlugin.zhiHeAnalysis', '📐'),
                 this.createItem('🔮 预测记录', 'myPlugin.showPredictions', '🔮'),
                 this.createItem('🕐 显示当前时间', 'myPlugin.showTime', '🕐'),
                 this.createItem('🕙 时间背景水印', 'myPlugin.toggleTimeBackground', '🕙'),
@@ -2971,13 +3013,215 @@ h2 { color:#8ec5ff;font-weight:500;margin-bottom:8px; }
  * - 融合: 每个格子被 Boid 飞过的次数决定"激活"，激活后开始按生命游戏规则演化
  */
 /**
- * 群鸟号码模拟 - 用 Boids 算法可视化号码分布
- * 数据驱动：真实历史数据（号码序列 + 期号）
- * 三个维度可视化：
- *   1. 频率分布密度：鸟群在 0-9 十个区域的聚集程度
- *   2. 累积占比演化：随期数累积的占比曲线（趋于 10% = 随机）
- *   3. 转移路径流图：相邻号码转移关系（如 9→0 频率）
+ * 质合形态分析
+ * 质数: 2,3,5,7  合数: 0,1,4,6,8,9（0和1归合数便于统计）
+ * 每位统计质合频率 + 形态分布 + 预测
  */
+function getZhiHeHtml(name, posLabels, allNumbers, periods) {
+    const nPos = posLabels.length;
+    const N = Math.min(300, allNumbers[0].length);
+    const periodsSliced = periods.slice(-N);
+
+    // 质合分类
+    const ZHI = new Set([2, 3, 5, 7]);
+    const classify = n => ZHI.has(n) ? '质' : '合';
+
+    // 为每位统计
+    const posData = allNumbers.map((nums, p) => {
+        const data = nums.slice(-N);
+        let zhiCnt = 0, heCnt = 0;
+        for (const d of data) {
+            if (ZHI.has(d)) zhiCnt++; else heCnt++;
+        }
+        return { data, zhiCnt, heCnt, zhiPct: zhiCnt / N * 100, hePct: heCnt / N * 100 };
+    });
+
+    // 形态统计（如"质质合"、"合合质"）
+    const forms = {};
+    for (let i = 0; i < N; i++) {
+        const form = posData.map(pd => classify(pd.data[i])).join('');
+        forms[form] = (forms[form] || 0) + 1;
+    }
+    const sortedForms = Object.entries(forms).sort((a, b) => b[1] - a[1]);
+
+    // 转移矩阵（质→质, 质→合, 合→质, 合→合）每位
+    const transData = posData.map(pd => {
+        const t = { '质质': 0, '质合': 0, '合质': 0, '合合': 0 };
+        for (let i = 0; i < N - 1; i++) {
+            const k = classify(pd.data[i]) + classify(pd.data[i + 1]);
+            t[k]++;
+        }
+        return t;
+    });
+
+    // 最近10期形态
+    const recentForms = [];
+    for (let i = N - 10; i < N; i++) {
+        const form = posData.map(pd => classify(pd.data[i])).join('');
+        recentForms.push({ period: periodsSliced[i], form, nums: posData.map(pd => pd.data[i]) });
+    }
+
+    // 预测：每位用转移矩阵预测下期质合
+    const predForm = posData.map((pd, i) => {
+        const last = classify(pd.data[N - 1]);
+        const t = transData[i];
+        const zhiNext = last === '质' ? t['质质'] : t['合质'];
+        const heNext = last === '质' ? t['质合'] : t['合合'];
+        return zhiNext >= heNext ? '质' : '合';
+    }).join('');
+
+    const dataJson = JSON.stringify({ posLabels, posData, forms: sortedForms, transData, recentForms, predForm, N, lastPeriod: periodsSliced[periodsSliced.length - 1] });
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>📐 质合形态分析 - ${name}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; padding: 16px; }
+h2 { color: #8ec5ff; margin-bottom: 4px; }
+.meta { color: #888; font-size: 12px; margin-bottom: 16px; }
+.pred-result { padding: 16px; background: rgba(46,204,113,0.08); border: 1px solid rgba(46,204,113,0.3); border-radius: 8px; margin: 16px 0; text-align: center; }
+.pred-form { font-size: 32px; font-weight: bold; color: #2ecc71; letter-spacing: 8px; margin: 8px 0; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; max-width: 900px; }
+.panel { background: rgba(20,30,50,0.5); border: 1px solid rgba(120,180,255,0.15); border-radius: 8px; padding: 14px; }
+.panel h3 { color: #feca57; font-size: 14px; margin-bottom: 10px; }
+.bar-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
+.bar-label { width: 40px; text-align: center; font-weight: bold; }
+.bar-track { flex: 1; height: 22px; background: rgba(0,0,0,0.3); border-radius: 4px; position: relative; }
+.bar-fill { height: 100%; border-radius: 4px; }
+.bar-val { width: 80px; font-size: 12px; color: #aaa; }
+.legend { font-size: 11px; color: #666; margin-top: 6px; line-height: 1.5; }
+.form-row { display: flex; justify-content: space-between; padding: 4px 8px; margin: 2px 0; border-radius: 4px; font-size: 13px; }
+.form-row:nth-child(odd) { background: rgba(255,255,255,0.03); }
+.form-label { color: #8ec5ff; font-weight: bold; }
+.form-count { color: #feca57; }
+.form-pct { color: #888; font-size: 11px; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { padding: 4px 8px; text-align: center; border: 1px solid rgba(255,255,255,0.08); }
+th { background: rgba(0,0,0,0.3); color: #8ec5ff; }
+.zhi { color: #5ad2ff; font-weight: bold; }
+.he { color: #feca57; font-weight: bold; }
+.recent-table th { font-size: 11px; }
+</style>
+</head>
+<body>
+<h2>📐 ${name} · 质合形态分析</h2>
+<div class="meta">历史 ${N} 期 · 最新 ${periodsSliced[periodsSliced.length-1] || '?'} · 质数=2,3,5,7 · 合数=0,1,4,6,8,9</div>
+
+<div class="pred-result">
+    <div style="color:#888;font-size:12px">下期形态预测（基于转移矩阵）</div>
+    <div class="pred-form" id="predForm">-</div>
+    <div style="color:#888;font-size:11px">⚠️ 仅供娱乐参考</div>
+    <button id="btnPred" style="margin-top:10px;padding:8px 20px;background:#0e639c;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;">🔮 重新预测</button>
+</div>
+
+<div class="grid">
+    <div class="panel">
+        <h3>📊 每位质合频率</h3>
+        <div id="bars"></div>
+        <div class="legend">蓝=质数(2,3,5,7) 黄=合数(0,1,4,6,8,9) · 理论: 质40% 合60%</div>
+    </div>
+    <div class="panel">
+        <h3>📋 形态分布</h3>
+        <div id="formList"></div>
+        <div class="legend">所有历史形态按出现次数排序</div>
+    </div>
+    <div class="panel" style="grid-column: span 2;">
+        <h3>🔢 每位转移矩阵</h3>
+        <div id="transTables"></div>
+        <div class="legend">行=上期质合 · 列=本期质合</div>
+    </div>
+    <div class="panel" style="grid-column: span 2;">
+        <h3>📅 最近10期形态</h3>
+        <table class="recent-table">
+            <thead><tr><th>期号</th>${posLabels.map(l => '<th>' + l + '</th>').join('')}<th>形态</th></tr></thead>
+            <tbody id="recentBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+(function() {
+    const D = ${dataJson};
+
+    // ============ 频率条形图 ============
+    const barsEl = document.getElementById('bars');
+    D.posLabels.forEach((label, p) => {
+        const pd = D.posData[p];
+        const row = document.createElement('div');
+        row.className = 'bar-row';
+        row.innerHTML =
+            '<div class="bar-label" style="color:#feca57">' + label + '</div>' +
+            '<div class="bar-track">' +
+                '<div class="bar-fill" style="width:' + pd.zhiPct + '%; background:#5ad2ff; opacity:0.7;"></div>' +
+                '<div style="position:absolute;top:0;left:' + pd.zhiPct + '%;right:0;height:100%;background:#feca57;opacity:0.6;border-radius:0 4px 4px 0;"></div>' +
+            '</div>' +
+            '<div class="bar-val">质' + pd.zhiCnt + '(' + pd.zhiPct.toFixed(1) + '%) 合' + pd.heCnt + '(' + pd.hePct.toFixed(1) + '%)</div>';
+        barsEl.appendChild(row);
+    });
+
+    // ============ 形态列表 ============
+    const formEl = document.getElementById('formList');
+    D.forms.forEach(([form, cnt]) => {
+        const pct = (cnt / D.N * 100).toFixed(1);
+        const row = document.createElement('div');
+        row.className = 'form-row';
+        const colored = form.split('').map(c => '<span class="' + (c === '质' ? 'zhi' : 'he') + '">' + c + '</span>').join('');
+        row.innerHTML = '<span class="form-label">' + colored + '</span><span class="form-count">' + cnt + '次</span><span class="form-pct">' + pct + '%</span>';
+        formEl.appendChild(row);
+    });
+
+    // ============ 转移矩阵 ============
+    const transEl = document.getElementById('transTables');
+    D.posLabels.forEach((label, p) => {
+        const t = D.transData[p];
+        const total = t['质质'] + t['质合'] + t['合质'] + t['合合'] || 1;
+        const div = document.createElement('div');
+        div.style.cssText = 'display:inline-block;margin:8px;text-align:center;';
+        div.innerHTML =
+            '<div style="color:#feca57;font-size:13px;margin-bottom:6px">' + label + '</div>' +
+            '<table style="font-size:11px;width:180px;">' +
+                '<tr><th></th><th class="zhi">→质</th><th class="he">→合</th></tr>' +
+                '<tr><td class="zhi">质→</td><td>' + t['质质'] + ' (' + (t['质质']/total*100).toFixed(1) + '%)</td><td>' + t['质合'] + ' (' + (t['质合']/total*100).toFixed(1) + '%)</td></tr>' +
+                '<tr><td class="he">合→</td><td>' + t['合质'] + ' (' + (t['合质']/total*100).toFixed(1) + '%)</td><td>' + t['合合'] + ' (' + (t['合合']/total*100).toFixed(1) + '%)</td></tr>' +
+            '</table>';
+        transEl.appendChild(div);
+    });
+
+    // ============ 最近10期 ============
+    const recentEl = document.getElementById('recentBody');
+    D.recentForms.slice().reverse().forEach(r => {
+        const colored = r.form.split('').map(c => '<span class="' + (c === '质' ? 'zhi' : 'he') + '">' + c + '</span>').join('');
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + r.period + '</td>' + r.nums.map(n => '<td>' + n + '</td>').join('') + '<td>' + colored + '</td>';
+        recentEl.appendChild(tr);
+    });
+
+    // ============ 预测显示 ============
+    function showPred() {
+        const el = document.getElementById('predForm');
+        const colored = D.predForm.split('').map(c => '<span class="' + (c === '质' ? 'zhi' : 'he') + '" style="color:' + (c === '质' ? '#5ad2ff' : '#feca57') + '">' + c + '</span>').join('');
+        el.innerHTML = colored;
+    }
+    showPred();
+
+    document.getElementById('btnPred').addEventListener('click', () => {
+        // 重新预测：加随机扰动
+        const noisy = D.predForm.split('').map(c => {
+            return Math.random() < 0.3 ? (c === '质' ? '合' : '质') : c;
+        }).join('');
+        const el = document.getElementById('predForm');
+        el.innerHTML = noisy.split('').map(c => '<span style="color:' + (c === '质' ? '#5ad2ff' : '#feca57') + '">' + c + '</span>').join('');
+    });
+})();
+</script>
+</body>
+</html>`;
+}
+
+
 function getBoidsNumberHtml(name, posLabels, allNumbers, periods) {
     // allNumbers: [[位1号码序列], [位2号码序列], ...]
     // posLabels: ['百位','十位','个位'] 或 ['万位','千位','百位','十位','个位']
