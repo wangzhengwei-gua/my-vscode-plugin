@@ -1824,6 +1824,8 @@ function deactivate() {}
 function getDrawMachineHtml(cfg) {
     const posCount = cfg.positions.length;
     const posLabels = cfg.positions.map(p => p.label).join(' / ');
+    // 多位独立摇奖机：每位一台机器，并排排列
+    // 每台机器独立有自己的玻璃球、号码球、出球口、展示槽
     return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -1845,9 +1847,11 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
 .btn:disabled { opacity: .35; cursor: not-allowed; }
 .btn.secondary { background: linear-gradient(135deg,#4b6cb7,#182848); box-shadow: 0 6px 18px rgba(75,108,183,.45), inset 0 1px 0 rgba(255,255,255,.2); }
 
-.result-panel { position: absolute; top: 18px; right: 18px; z-index: 10; background: linear-gradient(135deg, rgba(30,32,55,.92), rgba(20,22,40,.92)); border: 1px solid rgba(255,215,0,.35); border-radius: 12px; padding: 14px 18px; min-width: 200px; box-shadow: 0 8px 24px rgba(0,0,0,.5); backdrop-filter: blur(6px); }
+.result-panel { position: absolute; top: 18px; right: 18px; z-index: 10; background: linear-gradient(135deg, rgba(30,32,55,.92), rgba(20,22,40,.92)); border: 1px solid rgba(255,215,0,.35); border-radius: 12px; padding: 14px 18px; min-width: ${Math.max(200, posCount * 46 + 30)}px; box-shadow: 0 8px 24px rgba(0,0,0,.5); backdrop-filter: blur(6px); }
 .result-panel .label { font-size: 12px; color: #ffd700; margin-bottom: 8px; letter-spacing: 1px; }
-.result-panel .nums { display: flex; flex-wrap: wrap; gap: 8px; }
+.result-panel .nums { display: flex; flex-wrap: nowrap; gap: 8px; justify-content: center; }
+.result-panel .pos-label { display: flex; gap: 8px; justify-content: center; margin-bottom: 6px; }
+.result-panel .pos-label span { width: 38px; text-align: center; font-size: 11px; color: #6ea0ff; }
 .result-panel .ball { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 800; color: #fff; background: radial-gradient(circle at 32% 28%, #ff8a8a, #c0392b 60%, #7a1a14 100%); box-shadow: 0 0 12px rgba(231,76,60,.7), inset -2px -3px 6px rgba(0,0,0,.4), inset 2px 2px 4px rgba(255,255,255,.3); }
 .result-panel .ball.empty { background: radial-gradient(circle at 32% 28%, #2a2a3a, #15151f); box-shadow: inset 0 0 6px rgba(0,0,0,.6); color: #445; }
 
@@ -1875,7 +1879,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
     <div id="historyList"></div>
   </div>
   <div class="result-panel">
-    <div class="label">🎯 本期结果</div>
+    <div class="label">🎯 本期结果（每位独立摇奖机）</div>
+    <div class="pos-label">${cfg.positions.map(p => `<span>${p.label}位</span>`).join('')}</div>
     <div class="nums" id="resultNums"></div>
   </div>
   <div class="status-text" id="statusText">点击"开始摇奖"启动</div>
@@ -1891,6 +1896,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
 (function(){
   const POS_COUNT = ${posCount};
   const NUM_RANGE = 10;
+  // 位号标签
+  const POS_LABELS = ${JSON.stringify(cfg.positions.map(p => p.label))};
 
   // ====== Renderer + Scene ======
   const canvas = document.getElementById('canvas3d');
@@ -1905,20 +1912,18 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x070810);
-  scene.fog = new THREE.Fog(0x070810, 12, 28);
+  scene.fog = new THREE.Fog(0x070810, 14, 32);
 
-  // ====== 程序化环境贴图（替代 HDR，给金属/玻璃材质提供反射）======
+  // ====== 程序化环境贴图 ======
   const envCanvas = document.createElement('canvas');
   envCanvas.width = 512; envCanvas.height = 256;
   const ectx = envCanvas.getContext('2d');
-  // 上半：暖色舞台灯
   const eg = ectx.createLinearGradient(0, 0, 0, 256);
   eg.addColorStop(0, '#3a2a1a');
   eg.addColorStop(0.35, '#1a1f3a');
   eg.addColorStop(0.55, '#0a0c1a');
   eg.addColorStop(1, '#050610');
   ectx.fillStyle = eg; ectx.fillRect(0, 0, 512, 256);
-  // 几个亮点作为"灯"
   const lights = [{x:100,y:40,r:50,c:'rgba(255,220,150,0.9)'},{x:380,y:30,r:40,c:'rgba(150,180,255,0.85)'},{x:256,y:20,r:35,c:'rgba(255,255,200,0.7)'}];
   lights.forEach(l => {
     const rg = ectx.createRadialGradient(l.x, l.y, 0, l.x, l.y, l.r);
@@ -1932,23 +1937,28 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
 
   // ====== 相机 ======
   let camera = new THREE.PerspectiveCamera(42, window.innerWidth/window.innerHeight, 0.1, 100);
-  camera.position.set(0, 2.2, 9);
+  // 自动机位：根据位数横向拉远，保证所有机器都在画面里
+  const MACHINE_SPACING = 2.6;          // 每台机器横向间距
+  const MACHINE_RADIUS = 1.55;          // 单台玻璃球半径（缩小一些以并排显示）
+  const TOTAL_WIDTH = (POS_COUNT - 1) * MACHINE_SPACING;
+  let camDist = Math.max(9, TOTAL_WIDTH * 1.4 + 4);
+  camera.position.set(0, 2.5, camDist);
 
-  // ====== 灯光（三点布光 + 聚光）======
-  scene.add(new THREE.AmbientLight(0x404868, 0.35));
+  // ====== 灯光 ======
+  scene.add(new THREE.AmbientLight(0x404868, 0.4));
 
-  const keyLight = new THREE.DirectionalLight(0xfff0d0, 1.4);
-  keyLight.position.set(4, 8, 5);
+  const keyLight = new THREE.DirectionalLight(0xfff0d0, 1.3);
+  keyLight.position.set(4, 10, 5);
   keyLight.castShadow = true;
-  keyLight.shadow.mapSize.set(1024, 1024);
-  keyLight.shadow.camera.left = -6;
-  keyLight.shadow.camera.right = 6;
-  keyLight.shadow.camera.top = 6;
-  keyLight.shadow.camera.bottom = -6;
+  keyLight.shadow.mapSize.set(2048, 2048);
+  keyLight.shadow.camera.left = -TOTAL_WIDTH/2 - 3;
+  keyLight.shadow.camera.right = TOTAL_WIDTH/2 + 3;
+  keyLight.shadow.camera.top = 5;
+  keyLight.shadow.camera.bottom = -3;
   keyLight.shadow.bias = -0.0005;
   scene.add(keyLight);
 
-  const fillLight = new THREE.DirectionalLight(0x6088ff, 0.55);
+  const fillLight = new THREE.DirectionalLight(0x6088ff, 0.5);
   fillLight.position.set(-5, 3, 3);
   scene.add(fillLight);
 
@@ -1956,17 +1966,10 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
   rimLight.position.set(0, -2, -6);
   scene.add(rimLight);
 
-  // 顶部聚光灯（照亮出球口）
-  const spot = new THREE.SpotLight(0xffe8b0, 2.5, 12, Math.PI/7, 0.4, 1.5);
-  spot.position.set(0, 6, 2);
-  spot.target.position.set(0, 2.5, 0);
-  scene.add(spot); scene.add(spot.target);
-
-  // ====== 舞台地板（带反射感）======
-  const floorGeo = new THREE.CircleGeometry(6, 64);
+  // ====== 舞台地板 ======
+  const floorGeo = new THREE.CircleGeometry(Math.max(6, TOTAL_WIDTH/2 + 3), 64);
   const floorMat = new THREE.MeshStandardMaterial({
-    color: 0x12152a, metalness: 0.85, roughness: 0.35,
-    envMapIntensity: 1.2
+    color: 0x12152a, metalness: 0.85, roughness: 0.35, envMapIntensity: 1.2
   });
   const floor = new THREE.Mesh(floorGeo, floorMat);
   floor.rotation.x = -Math.PI/2;
@@ -1974,16 +1977,21 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
   floor.receiveShadow = true;
   scene.add(floor);
 
-  // 地板发光环
-  const ringGeo = new THREE.RingGeometry(2.8, 3.0, 64);
-  const ringMat = new THREE.MeshBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.6, side: THREE.DoubleSide });
-  const ring = new THREE.Mesh(ringGeo, ringMat);
-  ring.rotation.x = -Math.PI/2;
-  ring.position.y = -2.19;
-  scene.add(ring);
+  // 地板呼吸光环（每位下方一个）
+  const floorRings = [];
+  for (let i = 0; i < POS_COUNT; i++) {
+    const x = (i - (POS_COUNT-1)/2) * MACHINE_SPACING;
+    const rg = new THREE.RingGeometry(MACHINE_RADIUS + 0.3, MACHINE_RADIUS + 0.45, 64);
+    const rm = new THREE.MeshBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.5, side: THREE.DoubleSide });
+    const r = new THREE.Mesh(rg, rm);
+    r.rotation.x = -Math.PI/2;
+    r.position.set(x, -2.19, 0);
+    scene.add(r);
+    floorRings.push(r);
+  }
 
-  // ====== 底座（金属圆柱）======
-  const baseGeo = new THREE.CylinderGeometry(2.0, 2.3, 0.45, 48);
+  // 长条底座（所有机器共用一个长台基）
+  const baseGeo = new THREE.BoxGeometry(TOTAL_WIDTH + 3, 0.45, 1.6);
   const baseMat = new THREE.MeshStandardMaterial({
     color: 0x2a2d4a, metalness: 0.9, roughness: 0.25, envMapIntensity: 1.5
   });
@@ -1992,71 +2000,33 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
   base.castShadow = true; base.receiveShadow = true;
   scene.add(base);
 
-  // 底座顶部金色环
-  const baseTopGeo = new THREE.TorusGeometry(2.0, 0.06, 16, 64);
+  // 长条底座金色顶边
+  const baseTopGeo = new THREE.BoxGeometry(TOTAL_WIDTH + 3.1, 0.04, 1.7);
   const baseTopMat = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 1.0, roughness: 0.2, envMapIntensity: 2.0 });
   const baseTop = new THREE.Mesh(baseTopGeo, baseTopMat);
-  baseTop.rotation.x = Math.PI/2;
   baseTop.position.y = -1.77;
+  baseTop.receiveShadow = true;
   scene.add(baseTop);
 
-  // ====== 玻璃球壳（双层 + 顶部缺口）======
-  const sphereRadius = 1.85;
-  // 外层：物理玻璃材质
-  const outerGeo = new THREE.SphereGeometry(sphereRadius, 64, 48);
-  const outerMat = new THREE.MeshPhysicalMaterial({
-    color: 0xaaccff, metalness: 0, roughness: 0.02,
-    transmission: 0.95, transparent: true, opacity: 0.35,
-    thickness: 0.4, ior: 1.45, envMapIntensity: 2.5,
-    clearcoat: 1.0, clearcoatRoughness: 0.02,
-    side: THREE.DoubleSide
-  });
-  const outerSphere = new THREE.Mesh(outerGeo, outerMat);
-  outerSphere.position.y = 0;
-  scene.add(outerSphere);
-
-  // 内层：薄壳增加厚度感
-  const innerGeo = new THREE.SphereGeometry(sphereRadius - 0.04, 48, 36);
-  const innerMat = new THREE.MeshPhysicalMaterial({
-    color: 0xffffff, metalness: 0, roughness: 0.05,
-    transmission: 0.9, transparent: true, opacity: 0.15,
-    thickness: 0.2, ior: 1.4, side: THREE.BackSide
-  });
-  const innerSphere = new THREE.Mesh(innerGeo, innerMat);
-  scene.add(innerSphere);
-
-  // 玻璃球赤道金属环（装饰，真实摇奖机有）
-  const equatorGeo = new THREE.TorusGeometry(sphereRadius, 0.05, 12, 96);
-  const equatorMat = new THREE.MeshStandardMaterial({ color: 0xc8a050, metalness: 1.0, roughness: 0.3, envMapIntensity: 2.0 });
-  const equator = new THREE.Mesh(equatorGeo, equatorMat);
-  scene.add(equator);
-
-  // ====== 号码球（高质量纹理）======
-  const ballRadius = 0.38;
-  const ballGeo = new THREE.SphereGeometry(ballRadius, 48, 36);
-
-  // 经典摇奖球配色（参考福彩/体彩真实色系）
+  // ====== 号码球纹理生成（共享函数）======
   const BALL_COLORS = [
-    { base: '#e74c3c', dark: '#922b21', light: '#ff8a80' }, // 0 红
-    { base: '#f39c12', dark: '#9c6c0a', light: '#ffd180' }, // 1 橙
-    { base: '#f1c40f', dark: '#9c7c0a', light: '#fff44f' }, // 2 黄
-    { base: '#1abc9c', dark: '#0e7c66', light: '#5fffd0' }, // 3 青绿
-    { base: '#3498db', dark: '#1c6090', light: '#7ec6ff' }, // 4 蓝
-    { base: '#9b59b6', dark: '#5e3370', light: '#d09bdb' }, // 5 紫
-    { base: '#e84393', dark: '#8a2858', light: '#ff7dba' }, // 6 粉
-    { base: '#00b894', dark: '#00705a', light: '#3fffd0' }, // 7 翠绿
-    { base: '#fd79a8', dark: '#8a4060', light: '#ffb0c8' }, // 8 玫粉
-    { base: '#6c5ce7', dark: '#3a3090', light: '#a89bff' }, // 9 蓝紫
+    { base: '#e74c3c', dark: '#922b21', light: '#ff8a80' },
+    { base: '#f39c12', dark: '#9c6c0a', light: '#ffd180' },
+    { base: '#f1c40f', dark: '#9c7c0a', light: '#fff44f' },
+    { base: '#1abc9c', dark: '#0e7c66', light: '#5fffd0' },
+    { base: '#3498db', dark: '#1c6090', light: '#7ec6ff' },
+    { base: '#9b59b6', dark: '#5e3370', light: '#d09bdb' },
+    { base: '#e84393', dark: '#8a2858', light: '#ff7dba' },
+    { base: '#00b894', dark: '#00705a', light: '#3fffd0' },
+    { base: '#fd79a8', dark: '#8a4060', light: '#ffb0c8' },
+    { base: '#6c5ce7', dark: '#3a3090', light: '#a89bff' },
   ];
 
-  // 生成号码球纹理（512x512，真实感）
   function makeBallTexture(num, color) {
     const S = 512;
     const c = document.createElement('canvas');
     c.width = S; c.height = S;
     const ctx = c.getContext('2d');
-
-    // 主背景：双色球面（上半浅、下半深）
     const grad = ctx.createLinearGradient(0, 0, 0, S);
     grad.addColorStop(0, color.light);
     grad.addColorStop(0.45, color.base);
@@ -2064,8 +2034,6 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
     grad.addColorStop(1, color.dark);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, S, S);
-
-    // 高光带（顶部斜向）
     ctx.save();
     ctx.translate(S*0.5, S*0.4);
     ctx.rotate(-0.4);
@@ -2076,19 +2044,14 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
     ctx.fillStyle = hg;
     ctx.beginPath(); ctx.ellipse(0, 0, S*0.35, S*0.18, 0, 0, Math.PI*2); ctx.fill();
     ctx.restore();
-
-    // 中央号码圆盘（凹陷感）
     const cx = S/2, cy = S/2;
     const diskR = S * 0.28;
-    // 凹陷阴影
     const dg = ctx.createRadialGradient(cx - diskR*0.3, cy - diskR*0.3, diskR*0.1, cx, cy, diskR);
     dg.addColorStop(0, 'rgba(255,255,255,0.15)');
     dg.addColorStop(0.8, 'rgba(0,0,0,0.25)');
     dg.addColorStop(1, 'rgba(0,0,0,0.5)');
     ctx.fillStyle = dg;
     ctx.beginPath(); ctx.arc(cx, cy, diskR, 0, Math.PI*2); ctx.fill();
-
-    // 号码文字（带描边和阴影）
     ctx.font = 'bold 180px Arial';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -2097,19 +2060,15 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
     ctx.shadowOffsetY = 4;
     ctx.fillStyle = '#fff';
     ctx.fillText(String(num), cx, cy + 8);
-    // 描边
     ctx.shadowColor = 'transparent';
     ctx.lineWidth = 6;
     ctx.strokeStyle = 'rgba(0,0,0,0.5)';
     ctx.strokeText(String(num), cx, cy + 8);
-
-    // 底部投影（暗角）
     const vg = ctx.createRadialGradient(cx, cy, S*0.3, cx, cy, S*0.5);
     vg.addColorStop(0, 'rgba(0,0,0,0)');
     vg.addColorStop(1, 'rgba(0,0,0,0.4)');
     ctx.fillStyle = vg;
     ctx.fillRect(0, 0, S, S);
-
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 8;
@@ -2117,28 +2076,132 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
     return tex;
   }
 
-  // 创建号码球
-  const numberBalls = [];
+  // 预生成 10 个号码球的纹理和材质（每位机器共享同一套材质，节省内存）
+  const sharedBallTextures = [];
+  const sharedBallMaterials = [];
   for (let i = 0; i < NUM_RANGE; i++) {
     const tex = makeBallTexture(i, BALL_COLORS[i]);
-    const mat = new THREE.MeshStandardMaterial({
+    sharedBallTextures.push(tex);
+    sharedBallMaterials.push(new THREE.MeshStandardMaterial({
       map: tex,
       metalness: 0.15,
       roughness: 0.35,
       envMapIntensity: 1.4,
       emissive: new THREE.Color(BALL_COLORS[i].base),
       emissiveIntensity: 0.06
-    });
-    const mesh = new THREE.Mesh(ballGeo, mat);
-    mesh.castShadow = true;
-    mesh.userData.number = i;
-    mesh.userData.color = BALL_COLORS[i];
-    resetBall(mesh);
-    scene.add(mesh);
-    numberBalls.push(mesh);
+    }));
   }
 
-  function resetBall(mesh) {
+  const ballRadius = 0.32;
+  const ballGeo = new THREE.SphereGeometry(ballRadius, 36, 28);
+
+  // ====== 创建 POS_COUNT 个独立的摇奖机 ======
+  // 每位一台：自己的玻璃球、10 个号码球、出球口、展示槽
+  // 每位用 Group 组织，便于整体管理
+  const machines = [];
+  for (let i = 0; i < POS_COUNT; i++) {
+    const x = (i - (POS_COUNT-1)/2) * MACHINE_SPACING;
+    const group = new THREE.Group();
+    group.position.set(x, 0, 0);
+
+    // 玻璃球壳（外层）
+    const outerGeo = new THREE.SphereGeometry(MACHINE_RADIUS, 48, 36);
+    const outerMat = new THREE.MeshPhysicalMaterial({
+      color: 0xaaccff, metalness: 0, roughness: 0.02,
+      transmission: 0.95, transparent: true, opacity: 0.35,
+      thickness: 0.4, ior: 1.45, envMapIntensity: 2.5,
+      clearcoat: 1.0, clearcoatRoughness: 0.02,
+      side: THREE.DoubleSide
+    });
+    const outerSphere = new THREE.Mesh(outerGeo, outerMat);
+    group.add(outerSphere);
+
+    // 内层薄壳
+    const innerGeo = new THREE.SphereGeometry(MACHINE_RADIUS - 0.04, 36, 28);
+    const innerMat = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff, metalness: 0, roughness: 0.05,
+      transmission: 0.9, transparent: true, opacity: 0.15,
+      thickness: 0.2, ior: 1.4, side: THREE.BackSide
+    });
+    const innerSphere = new THREE.Mesh(innerGeo, innerMat);
+    group.add(innerSphere);
+
+    // 赤道金属环
+    const equatorGeo = new THREE.TorusGeometry(MACHINE_RADIUS, 0.04, 10, 64);
+    const equatorMat = new THREE.MeshStandardMaterial({ color: 0xc8a050, metalness: 1.0, roughness: 0.3, envMapIntensity: 2.0 });
+    const equator = new THREE.Mesh(equatorGeo, equatorMat);
+    group.add(equator);
+
+    // 出球口金属环（顶部）
+    const exitRingGeo = new THREE.TorusGeometry(0.18, 0.04, 10, 24);
+    const exitRing = new THREE.Mesh(exitRingGeo, equatorMat);
+    exitRing.position.set(0, MACHINE_RADIUS + 0.02, 0);
+    exitRing.rotation.x = Math.PI/2;
+    group.add(exitRing);
+
+    // 位号标签（机器上方 3D 文字）
+    const labelTex = (function(){
+      const c = document.createElement('canvas');
+      c.width = 128; c.height = 128;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#ffd700';
+      ctx.font = 'bold 80px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.shadowColor = 'rgba(0,0,0,0.8)';
+      ctx.shadowBlur = 8;
+      ctx.fillText(POS_LABELS[i], 64, 70);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    })();
+    const labelMat = new THREE.MeshBasicMaterial({ map: labelTex, transparent: true });
+    const labelGeo = new THREE.PlaneGeometry(0.6, 0.6);
+    const labelMesh = new THREE.Mesh(labelGeo, labelMat);
+    labelMesh.position.set(0, MACHINE_RADIUS + 0.7, 0);
+    group.add(labelMesh);
+
+    // 创建本机位的 10 个号码球
+    const balls = [];
+    for (let n = 0; n < NUM_RANGE; n++) {
+      const mesh = new THREE.Mesh(ballGeo, sharedBallMaterials[n]);
+      mesh.castShadow = true;
+      mesh.userData.number = n;
+      mesh.userData.color = BALL_COLORS[n];
+      resetBall(mesh, MACHINE_RADIUS);
+      group.add(mesh);
+      balls.push(mesh);
+    }
+
+    // 本机位的小型接触阴影
+    const shadowMeshes = [];
+    balls.forEach(() => {
+      const sg = new THREE.CircleGeometry(ballRadius * 0.9, 20);
+      const sm = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3 });
+      const s = new THREE.Mesh(sg, sm);
+      s.rotation.x = -Math.PI/2;
+      s.visible = false;
+      group.add(s);
+      shadowMeshes.push(s);
+    });
+
+    scene.add(group);
+    machines.push({
+      group, x,
+      outerSphere, innerSphere, equator,
+      balls, shadowMeshes,
+      // 状态
+      status: 'idle',            // idle | running | done
+      pickedBall: null,          // 已出的号码球 mesh
+      pickedNumber: null,        // 已出的号码
+      spinTimer: 0,
+      spinningBoost: 0,
+      exitCooldown: 0,
+      startDelay: i * 50         // 错峰启动，避免所有机器同时出球
+    });
+  }
+
+  function resetBall(mesh, sphereRadius) {
     mesh.userData.exited = false;
     mesh.userData.ejecting = false;
     mesh.userData.ejectTime = 0;
@@ -2160,140 +2223,32 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
     );
   }
 
-  // ====== 出球轨道（从顶部弯到前方展示架）======
-  // 导轨：弯曲管道
-  const railCurve = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(0, sphereRadius - 0.1, 0),
-    new THREE.Vector3(0, sphereRadius + 0.4, 0),
-    new THREE.Vector3(0, sphereRadius + 0.8, 0.3),
-    new THREE.Vector3(0, sphereRadius + 0.6, 1.2),
-    new THREE.Vector3(0, 1.8, 2.4),
-    new THREE.Vector3(0, 1.4, 3.2)
-  ]);
-  const railGeo = new THREE.TubeGeometry(railCurve, 64, 0.16, 12, false);
-  const railMat = new THREE.MeshStandardMaterial({
-    color: 0xc8a050, metalness: 1.0, roughness: 0.25, envMapIntensity: 2.0
-  });
-  const rail = new THREE.Mesh(railGeo, railMat);
-  rail.castShadow = true;
-  scene.add(rail);
+  // ====== 单台机器物理模拟 ======
+  const SPIN_DURATION = 200;
 
-  // 出球口金属环
-  const exitRingGeo = new THREE.TorusGeometry(0.22, 0.05, 12, 32);
-  const exitRing = new THREE.Mesh(exitRingGeo, railMat);
-  exitRing.position.set(0, sphereRadius + 0.05, 0);
-  exitRing.rotation.x = Math.PI/2;
-  scene.add(exitRing);
+  function stepMachinePhysics(m) {
+    const innerR = MACHINE_RADIUS - ballRadius - 0.05;
+    const forceStrength = 0.020 + m.spinningBoost;
+    m.spinTimer++;
+    const fx = Math.sin(m.spinTimer * 0.05 + m.x) * forceStrength * 0.5;
+    const fy = (Math.cos(m.spinTimer * 0.07 + m.x) * 0.5 + 0.5) * forceStrength * 0.8;
+    const fz = Math.cos(m.spinTimer * 0.04 + m.x) * forceStrength * 0.5;
 
-  // ====== 展示架（出球后落入的凹槽台）======
-  const stageY = 1.4;
-  const stageZ = 3.2;
-  const stageGeo = new THREE.BoxGeometry(POS_COUNT * 0.9 + 0.3, 0.15, 0.6);
-  const stageMat = new THREE.MeshStandardMaterial({
-    color: 0x1a1d35, metalness: 0.8, roughness: 0.3, envMapIntensity: 1.5
-  });
-  const stage = new THREE.Mesh(stageGeo, stageMat);
-  stage.position.set(0, stageY - 0.1, stageZ);
-  stage.castShadow = true; stage.receiveShadow = true;
-  scene.add(stage);
-
-  // 展示架金色边框
-  const stageEdgeGeo = new THREE.BoxGeometry(POS_COUNT * 0.9 + 0.4, 0.04, 0.7);
-  const stageEdgeMat = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 1.0, roughness: 0.2, envMapIntensity: 2.5 });
-  const stageEdge = new THREE.Mesh(stageEdgeGeo, stageEdgeMat);
-  stageEdge.position.set(0, stageY - 0.005, stageZ);
-  scene.add(stageEdge);
-
-  // 展示凹槽（每个位置一个凹陷圆柱）
-  const slots = [];
-  for (let i = 0; i < POS_COUNT; i++) {
-    const x = (i - (POS_COUNT-1)/2) * 0.9;
-    // 凹槽
-    const slotGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.08, 32);
-    const slotMesh = new THREE.Mesh(slotGeo, new THREE.MeshStandardMaterial({ color: 0x0a0c1a, metalness: 0.5, roughness: 0.4 }));
-    slotMesh.position.set(x, stageY + 0.01, stageZ);
-    scene.add(slotMesh);
-    slots.push({ x, y: stageY + 0.05, z: stageZ });
-  }
-
-  // ====== 接触阴影（每个球的伪阴影圆片）======
-  // 不用真实 shadow（性能差），用贴地的暗圆片
-  const shadowMeshes = [];
-  numberBalls.forEach(() => {
-    const sg = new THREE.CircleGeometry(ballRadius * 0.9, 24);
-    const sm = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3 });
-    const s = new THREE.Mesh(sg, sm);
-    s.rotation.x = -Math.PI/2;
-    s.visible = false;
-    scene.add(s);
-    shadowMeshes.push(s);
-  });
-
-  // ====== 鼠标交互（球面坐标控制）======
-  let isDragging = false, lastX = 0, lastY = 0;
-  let camTheta = 0.3, camPhi = 0.15;
-  let camDist = 9;
-  function updateCamera() {
-    camera.position.x = camDist * Math.cos(camPhi) * Math.sin(camTheta);
-    camera.position.z = camDist * Math.cos(camPhi) * Math.cos(camTheta);
-    camera.position.y = 1.5 + camDist * Math.sin(camPhi);
-    camera.lookAt(0, 0.5, 0.5);
-  }
-  updateCamera();
-  canvas.addEventListener('mousedown', e => { isDragging = true; lastX = e.clientX; lastY = e.clientY; });
-  window.addEventListener('mouseup', () => { isDragging = false; });
-  window.addEventListener('mousemove', e => {
-    if (!isDragging) return;
-    camTheta -= (e.clientX - lastX) * 0.006;
-    camPhi = Math.max(-0.5, Math.min(1.0, camPhi + (e.clientY - lastY) * 0.005));
-    lastX = e.clientX; lastY = e.clientY;
-    updateCamera();
-  });
-  canvas.addEventListener('wheel', e => {
-    e.preventDefault();
-    camDist *= e.deltaY > 0 ? 1.08 : 0.93;
-    camDist = Math.max(5, Math.min(18, camDist));
-    updateCamera();
-  }, { passive: false });
-
-  // ====== 物理：球在球内翻滚 ======
-  let status = 'idle';
-  let pickedBalls = [];
-  let drawQueue = [];
-  let exitCooldown = 0;
-  let spinningBoost = 0;
-  let spinTimer = 0;       // 摇动持续时间
-  const SPIN_DURATION = 200; // 约 3.3s 强力摇动后开始出球
-
-  function stepPhysics() {
-    const innerR = sphereRadius - ballRadius - 0.05;
-    const forceStrength = 0.020 + spinningBoost;
-    // 摇动力随时间正弦波动（模拟风机方向变化）
-    spinTimer++;
-    const fx = Math.sin(spinTimer * 0.05) * forceStrength * 0.5;
-    const fy = (Math.cos(spinTimer * 0.07) * 0.5 + 0.5) * forceStrength * 0.8;
-    const fz = Math.cos(spinTimer * 0.04) * forceStrength * 0.5;
-
-    numberBalls.forEach(ball => {
+    m.balls.forEach(ball => {
       if (ball.userData.exited) return;
-      // 周期性扰动力 + 随机抖动
       ball.userData.velocity.x += fx + (Math.random() - 0.5) * forceStrength * 0.4;
       ball.userData.velocity.y += fy + (Math.random() - 0.2) * forceStrength * 0.5;
       ball.userData.velocity.z += fz + (Math.random() - 0.5) * forceStrength * 0.4;
-      // 轻微重力（在强力摇动下几乎无影响，让球真正翻滚）
       ball.userData.velocity.y -= 0.003;
-      // 阻尼
       ball.userData.velocity.multiplyScalar(0.991);
       ball.userData.angularVel.multiplyScalar(0.988);
-      // 限速
       const maxV = 0.22;
       if (ball.userData.velocity.length() > maxV) ball.userData.velocity.setLength(maxV);
-      // 移动
+      // 注意：球的位置在 group 局部坐标系
       ball.position.add(ball.userData.velocity);
       ball.rotation.x += ball.userData.angularVel.x;
       ball.rotation.y += ball.userData.angularVel.y;
       ball.rotation.z += ball.userData.angularVel.z;
-      // 球壁反弹
       const dist = ball.position.length();
       if (dist > innerR) {
         ball.position.normalize().multiplyScalar(innerR);
@@ -2301,14 +2256,13 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
         const dot = ball.userData.velocity.dot(n);
         if (dot > 0) {
           ball.userData.velocity.sub(n.multiplyScalar(dot * 1.7));
-          // 撞墙增加旋转
           ball.userData.angularVel.x += (Math.random() - 0.5) * 0.1;
           ball.userData.angularVel.z += (Math.random() - 0.5) * 0.1;
         }
       }
-      // 球-球碰撞
-      for (let j = 0; j < numberBalls.length; j++) {
-        const b2 = numberBalls[j];
+      // 球-球碰撞（同机内）
+      for (let j = 0; j < m.balls.length; j++) {
+        const b2 = m.balls[j];
         if (b2 === ball || b2.userData.exited) continue;
         const diff = ball.position.clone().sub(b2.position);
         const d = diff.length();
@@ -2321,10 +2275,9 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
           const va = ball.userData.velocity.dot(n);
           const vb = b2.userData.velocity.dot(n);
           if (va - vb < 0) {
-            const m = 0.6;
-            ball.userData.velocity.add(n.clone().multiplyScalar((vb - va) * m));
-            b2.userData.velocity.sub(n.clone().multiplyScalar((vb - va) * m));
-            // 碰撞增加旋转
+            const mm = 0.6;
+            ball.userData.velocity.add(n.clone().multiplyScalar((vb - va) * mm));
+            b2.userData.velocity.sub(n.clone().multiplyScalar((vb - va) * mm));
             ball.userData.angularVel.y += (Math.random() - 0.5) * 0.05;
             b2.userData.angularVel.y += (Math.random() - 0.5) * 0.05;
           }
@@ -2333,120 +2286,192 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
     });
   }
 
-  // 出球：球从顶部出口沿导轨滑到展示架
-  function ejectBall(ball) {
-    ball.userData.exited = true;
-    ball.userData.ejecting = true;
-    ball.userData.ejectTime = 0;
-    ball.userData.ejectPath = railCurve;
-    ball.userData.velocity.set(0, 0.2, 0); // 初始向上冲
+  // 单台机器出球：球从顶部出口弹出（不再走长导轨，直接落到底座上方的展示位）
+  function ejectBallFromMachine(m) {
+    const candidates = m.balls.filter(b => !b.userData.exited);
+    if (candidates.length === 0) return false;
+    // 取离顶部出口最近的球
+    const topPos = new THREE.Vector3(0, MACHINE_RADIUS, 0);
+    candidates.sort((a, b) => a.position.distanceTo(topPos) - b.position.distanceTo(topPos));
+    const target = candidates[0];
+    target.userData.exited = true;
+    target.userData.ejecting = true;
+    target.userData.ejectTime = 0;
+    target.userData.fallTarget = new THREE.Vector3(0, -MACHINE_RADIUS - 0.5, MACHINE_RADIUS + 0.8); // 落到机器前方
+    m.pickedBall = target;
+    m.pickedNumber = target.userData.number;
+    return true;
   }
+
+  // ====== 鼠标交互 ======
+  let isDragging = false, lastX = 0, lastY = 0;
+  let camTheta = 0, camPhi = 0.18;
+  function updateCamera() {
+    camera.position.x = camDist * Math.cos(camPhi) * Math.sin(camTheta);
+    camera.position.z = camDist * Math.cos(camPhi) * Math.cos(camTheta);
+    camera.position.y = 1.8 + camDist * Math.sin(camPhi);
+    camera.lookAt(0, 0.3, 0);
+  }
+  updateCamera();
+  canvas.addEventListener('mousedown', e => { isDragging = true; lastX = e.clientX; lastY = e.clientY; });
+  window.addEventListener('mouseup', () => { isDragging = false; });
+  window.addEventListener('mousemove', e => {
+    if (!isDragging) return;
+    camTheta -= (e.clientX - lastX) * 0.005;
+    camPhi = Math.max(-0.4, Math.min(1.0, camPhi + (e.clientY - lastY) * 0.004));
+    lastX = e.clientX; lastY = e.clientY;
+    updateCamera();
+  });
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    camDist *= e.deltaY > 0 ? 1.08 : 0.93;
+    camDist = Math.max(Math.max(7, TOTAL_WIDTH * 1.2 + 3), Math.min(22, camDist));
+    updateCamera();
+  }, { passive: false });
+
+  // ====== 渲染循环 ======
+  let globalStatus = 'idle'; // idle | running | done
+  let globalTimer = 0;
+  const MACHINE_DONE_TARGET = 60; // 出球后 1s 落到展示位
 
   function animate() {
     requestAnimationFrame(animate);
+    globalTimer++;
 
-    if (status === 'running') {
-      // 前 3s 强力摇动，之后减弱但维持
-      if (spinTimer < SPIN_DURATION) {
-        spinningBoost = Math.min(0.05, spinningBoost + 0.003);
-      } else {
-        spinningBoost = Math.max(0.015, spinningBoost - 0.001);
-      }
-      stepPhysics();
-
-      // 玻璃球微转
-      outerSphere.rotation.y += 0.002;
-      innerSphere.rotation.y -= 0.001;
-      equator.rotation.y += 0.002;
-
-      // 出球
-      if (exitCooldown > 0) exitCooldown--;
-      if (drawQueue.length > 0 && exitCooldown === 0 && spinTimer > SPIN_DURATION) {
-        const candidates = numberBalls.filter(b => !b.userData.exited);
-        if (candidates.length > 0) {
-          // 取离顶部出口最近的球
-          candidates.sort((a, b) => {
-            const da = a.position.clone().sub(new THREE.Vector3(0, sphereRadius, 0)).length();
-            const db = b.position.clone().sub(new THREE.Vector3(0, sphereRadius, 0)).length();
-            return da - db;
-          });
-          const target = candidates[0];
-          ejectBall(target);
-          pickedBalls.push(target.userData.number);
-          drawQueue.shift();
-          exitCooldown = 90; // 约 1.5s 出下一球
-          updateResultUI();
-          if (drawQueue.length === 0) {
-            setTimeout(() => {
-              status = 'done';
-              setStatusText('🎉 摇奖结束！号码：' + pickedBalls.join(' '));
-              saveToHistory();
-              document.getElementById('btnReset').disabled = false;
-            }, 1800);
+    if (globalStatus === 'running') {
+      // 更新每台机器
+      let allDone = true;
+      machines.forEach((m, idx) => {
+        if (m.status === 'idle') {
+          // 错峰启动
+          if (globalTimer > m.startDelay) {
+            m.status = 'running';
+            m.spinTimer = 0;
+            m.spinningBoost = 0.025;
           }
+          allDone = false;
         }
+        if (m.status === 'running') {
+          if (m.spinTimer < SPIN_DURATION) {
+            m.spinningBoost = Math.min(0.05, m.spinningBoost + 0.003);
+          } else {
+            m.spinningBoost = Math.max(0.015, m.spinningBoost - 0.001);
+          }
+          stepMachinePhysics(m);
+          // 玻璃球微转
+          m.outerSphere.rotation.y += 0.002;
+          m.innerSphere.rotation.y -= 0.001;
+          m.equator.rotation.y += 0.002;
+          // 出球
+          if (m.exitCooldown > 0) m.exitCooldown--;
+          if (m.spinTimer > SPIN_DURATION && m.exitCooldown === 0 && !m.pickedBall) {
+            if (ejectBallFromMachine(m)) {
+              m.exitCooldown = 99999; // 不再出球
+              updateResultUI();
+            }
+          }
+          allDone = false;
+        }
+        if (m.status === 'ejecting') {
+          allDone = false;
+        }
+      });
+      if (allDone && machines.every(m => m.pickedBall && !m.pickedBall.userData.ejecting)) {
+        globalStatus = 'done';
+        const nums = machines.map(m => m.pickedNumber);
+        setStatusText('🎉 摇奖结束！号码：' + nums.join(' '));
+        saveToHistory(nums);
+        document.getElementById('btnReset').disabled = false;
       }
     }
 
-    // 出球沿轨道动画
-    numberBalls.forEach(ball => {
-      if (ball.userData.ejecting) {
-        ball.userData.ejectTime++;
-        const t = ball.userData.ejectTime;
-        // 前 20 帧冲向出口
-        if (t < 20) {
-          ball.userData.velocity.y = Math.max(0.15, ball.userData.velocity.y * 0.95);
-          ball.position.add(ball.userData.velocity);
-          ball.rotation.y += 0.15;
-        } else {
-          // 沿导轨滑动
-          const pt = Math.min(1, (t - 20) / 70);
-          const pos = ball.userData.ejectPath.getPointAt(pt);
-          ball.position.copy(pos);
-          // 球滚动旋转
-          ball.rotation.x += 0.2;
-          ball.rotation.y += 0.1;
-          if (pt >= 1) {
-            // 落入展示架对应位置
-            const idx = pickedBalls.indexOf(ball.userData.number);
-            const slot = slots[idx];
-            ball.position.set(slot.x, slot.y + ballRadius, slot.z);
-            ball.userData.velocity.set(0, 0, 0);
-            ball.userData.angularVel.set(0, 0, 0);
-            ball.userData.ejecting = false;
+    // 出球动画：球从机器顶部弹出 → 弧线落到机器前方底座上的展示位
+    machines.forEach((m, mi) => {
+      m.balls.forEach(ball => {
+        if (ball.userData.ejecting) {
+          ball.userData.ejectTime++;
+          const t = ball.userData.ejectTime;
+          if (t < 25) {
+            // 阶段1：冲向出口（局部坐标向上）
+            ball.userData.velocity.y = Math.max(0.12, ball.userData.velocity.y * 0.93);
+            ball.position.add(ball.userData.velocity);
+            ball.rotation.y += 0.15;
+          } else if (t < 60) {
+            // 阶段2：飞到机器前方底座顶部（世界坐标）
+            // 切换到世界坐标
+            if (!ball.userData.worldMode) {
+              // 把球从 group 中移除，加到 scene
+              m.group.remove(ball);
+              scene.add(ball);
+              // 计算当前位置的世界坐标
+              const worldPos = new THREE.Vector3();
+              ball.getWorldPosition(worldPos);
+              ball.position.copy(worldPos);
+              ball.userData.worldMode = true;
+              // 目标位置：机器前方底座顶部
+              ball.userData.targetWorld = new THREE.Vector3(
+                m.x,
+                -1.6,
+                MACHINE_RADIUS + 0.6
+              );
+              ball.userData.startWorld = ball.position.clone();
+              ball.userData.arcT = 0;
+            }
+            ball.userData.arcT += 1/35;
+            const p = ball.userData.arcT;
+            const s = ball.userData.startWorld;
+            const e = ball.userData.targetWorld;
+            // 抛物线
+            ball.position.x = s.x + (e.x - s.x) * p;
+            ball.position.z = s.z + (e.z - s.z) * p;
+            ball.position.y = s.y + (e.y - s.y) * p + Math.sin(p * Math.PI) * 0.8;
+            ball.rotation.x += 0.2;
+            ball.rotation.y += 0.15;
+            if (p >= 1) {
+              ball.position.copy(e);
+              ball.userData.velocity.set(0, 0, 0);
+              ball.userData.angularVel.set(0, 0, 0);
+              ball.userData.ejecting = false;
+              m.status = 'ejecting_done';
+            }
           }
         }
-      }
+      });
     });
 
     // 待机时球微动
-    if (status === 'idle' || status === 'done') {
-      numberBalls.forEach(b => {
-        if (!b.userData.exited) {
-          b.rotation.y += 0.004;
-        }
+    if (globalStatus === 'idle' || globalStatus === 'done') {
+      machines.forEach(m => {
+        m.balls.forEach(b => {
+          if (!b.userData.exited) b.rotation.y += 0.004;
+        });
+        m.outerSphere.rotation.y += 0.0008;
+        m.innerSphere.rotation.y -= 0.0004;
+        m.equator.rotation.y += 0.0008;
       });
-      outerSphere.rotation.y += 0.0008;
-      innerSphere.rotation.y -= 0.0004;
-      equator.rotation.y += 0.0008;
     }
 
-    // 接触阴影更新（球在球内时投影到底座顶部）
-    numberBalls.forEach((ball, i) => {
-      const sm = shadowMeshes[i];
-      if (ball.userData.exited || ball.userData.ejecting) {
-        sm.visible = false;
-      } else {
-        sm.visible = true;
-        sm.position.set(ball.position.x, -1.75, ball.position.z);
-        const h = ball.position.y + 1.75;
-        sm.scale.setScalar(Math.max(0.3, 1 - h * 0.15));
-        sm.material.opacity = Math.max(0.05, 0.35 - h * 0.06);
-      }
+    // 接触阴影
+    machines.forEach(m => {
+      m.balls.forEach((ball, i) => {
+        const sm = m.shadowMeshes[i];
+        if (ball.userData.exited || ball.userData.ejecting) {
+          sm.visible = false;
+        } else {
+          sm.visible = true;
+          // 局部坐标
+          sm.position.set(ball.position.x, -MACHINE_RADIUS - 0.45, ball.position.z);
+          const h = ball.position.y + MACHINE_RADIUS + 0.45;
+          sm.scale.setScalar(Math.max(0.3, 1 - h * 0.15));
+          sm.material.opacity = Math.max(0.05, 0.35 - h * 0.06);
+        }
+      });
     });
 
     // 地板光环呼吸
-    ring.material.opacity = 0.4 + Math.sin(Date.now() * 0.002) * 0.2;
+    floorRings.forEach((r, i) => {
+      r.material.opacity = 0.4 + Math.sin(Date.now() * 0.002 + i * 0.5) * 0.2;
+    });
 
     renderer.render(scene, camera);
   }
@@ -2464,9 +2489,10 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
   function updateResultUI() {
     let html = '';
     for (let i = 0; i < POS_COUNT; i++) {
-      if (i < pickedBalls.length) {
-        const c = BALL_COLORS[pickedBalls[i]];
-        html += '<div class="ball" style="background: radial-gradient(circle at 32% 28%, ' + c.light + ', ' + c.base + ' 60%, ' + c.dark + ' 100%);">' + pickedBalls[i] + '</div>';
+      const m = machines[i];
+      if (m.pickedNumber !== null) {
+        const c = BALL_COLORS[m.pickedNumber];
+        html += '<div class="ball" style="background: radial-gradient(circle at 32% 28%, ' + c.light + ', ' + c.base + ' 60%, ' + c.dark + ' 100%);">' + m.pickedNumber + '</div>';
       } else {
         html += '<div class="ball empty">?</div>';
       }
@@ -2475,9 +2501,9 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
   }
 
   const history = [];
-  function saveToHistory() {
+  function saveToHistory(nums) {
     const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-    history.unshift({ time, nums: pickedBalls.slice() });
+    history.unshift({ time, nums: nums.slice() });
     if (history.length > 20) history.pop();
     renderHistory();
   }
@@ -2493,13 +2519,19 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
   updateResultUI();
 
   btnStart.addEventListener('click', () => {
-    if (status !== 'idle') return;
-    status = 'running';
-    pickedBalls = [];
-    drawQueue = new Array(POS_COUNT).fill(0).map((_, i) => i);
-    exitCooldown = 0;
-    spinningBoost = 0.025;
-    spinTimer = 0;
+    if (globalStatus !== 'idle') return;
+    globalStatus = 'running';
+    globalTimer = 0;
+    // 重置每台机器状态（保留 3D 位置）
+    machines.forEach((m, i) => {
+      m.status = 'idle';
+      m.pickedBall = null;
+      m.pickedNumber = null;
+      m.spinTimer = 0;
+      m.spinningBoost = 0;
+      m.exitCooldown = 0;
+      m.startDelay = i * 50; // 错峰
+    });
     btnStart.disabled = true;
     btnReset.disabled = true;
     setStatusText('🌀 正在摇奖...');
@@ -2507,12 +2539,25 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
   });
 
   btnReset.addEventListener('click', () => {
-    numberBalls.forEach(b => resetBall(b));
-    pickedBalls = [];
-    drawQueue = [];
-    status = 'idle';
-    spinningBoost = 0;
-    spinTimer = 0;
+    machines.forEach(m => {
+      // 复位所有球（包括已出球的）
+      m.balls.forEach(b => {
+        // 如果之前从 group 移到 scene 了，要移回 group
+        if (b.userData.worldMode) {
+          scene.remove(b);
+          m.group.add(b);
+          b.userData.worldMode = false;
+        }
+        resetBall(b, MACHINE_RADIUS);
+      });
+      m.status = 'idle';
+      m.pickedBall = null;
+      m.pickedNumber = null;
+      m.spinTimer = 0;
+      m.spinningBoost = 0;
+      m.exitCooldown = 0;
+    });
+    globalStatus = 'idle';
     btnStart.disabled = false;
     btnReset.disabled = true;
     setStatusText('已重置，点击"开始摇奖"启动');
