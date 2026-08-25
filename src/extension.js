@@ -1938,7 +1938,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
   // ====== 相机 ======
   let camera = new THREE.PerspectiveCamera(42, window.innerWidth/window.innerHeight, 0.1, 100);
   // 自动机位：根据位数横向拉远，保证所有机器都在画面里
-  const MACHINE_SPACING = 2.6;          // 每台机器横向间距
+  const MACHINE_SPACING = 3.4;          // 每台机器横向间距（加大间隔，避免拥挤）
   const MACHINE_RADIUS = 1.55;          // 单台玻璃球半径（缩小一些以并排显示）
   const TOTAL_WIDTH = (POS_COUNT - 1) * MACHINE_SPACING;
   let camDist = Math.max(9, TOTAL_WIDTH * 1.4 + 4);
@@ -2139,6 +2139,25 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
     exitRing.rotation.x = Math.PI/2;
     group.add(exitRing);
 
+    // 机器下方展示凹槽（球出球后落点）：在底座顶部
+    // 局部坐标 y = -底座顶面到机器中心 = -(2.0 + 0.45/2 + 0.04) ≈ -1.78（机器中心 0，底座顶面在 -1.77）
+    // 用一个金色环 + 凹陷圆盘表示
+    const slotLocalY = -1.77 + 0.04; // 凹槽中心略高于底座顶面
+    const slotRingGeo = new THREE.TorusGeometry(0.42, 0.05, 12, 32);
+    const slotRing = new THREE.Mesh(slotRingGeo, equatorMat);
+    slotRing.position.set(0, slotLocalY + 0.02, 0);
+    slotRing.rotation.x = Math.PI/2;
+    slotRing.receiveShadow = true;
+    group.add(slotRing);
+    // 凹槽内深色圆盘
+    const slotDiskGeo = new THREE.CircleGeometry(0.42, 32);
+    const slotDiskMat = new THREE.MeshStandardMaterial({ color: 0x0a0c1a, metalness: 0.4, roughness: 0.5 });
+    const slotDisk = new THREE.Mesh(slotDiskGeo, slotDiskMat);
+    slotDisk.rotation.x = -Math.PI/2;
+    slotDisk.position.set(0, slotLocalY + 0.005, 0);
+    slotDisk.receiveShadow = true;
+    group.add(slotDisk);
+
     // 位号标签（机器上方 3D 文字）
     const labelTex = (function(){
       const c = document.createElement('canvas');
@@ -2297,7 +2316,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
     target.userData.exited = true;
     target.userData.ejecting = true;
     target.userData.ejectTime = 0;
-    target.userData.fallTarget = new THREE.Vector3(0, -MACHINE_RADIUS - 0.5, MACHINE_RADIUS + 0.8); // 落到机器前方
+    target.userData.fallTarget = new THREE.Vector3(0, -MACHINE_RADIUS - 0.55, 0); // 落到机器正下方底座展示槽
     m.pickedBall = target;
     m.pickedNumber = target.userData.number;
     return true;
@@ -2408,11 +2427,12 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
               ball.getWorldPosition(worldPos);
               ball.position.copy(worldPos);
               ball.userData.worldMode = true;
-              // 目标位置：机器前方底座顶部
+              // 目标位置：机器正下方展示凹槽中心（世界坐标）
+              // 凹槽在底座顶面（局部 y=-1.77），球落点 = 底座顶面 + 球半径
               ball.userData.targetWorld = new THREE.Vector3(
                 m.x,
-                -1.6,
-                MACHINE_RADIUS + 0.6
+                -1.77 + 0.04 + ballRadius,
+                0
               );
               ball.userData.startWorld = ball.position.clone();
               ball.userData.arcT = 0;
@@ -2421,10 +2441,10 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-fami
             const p = ball.userData.arcT;
             const s = ball.userData.startWorld;
             const e = ball.userData.targetWorld;
-            // 抛物线
+            // 抛物线（出球弹起后落下）
             ball.position.x = s.x + (e.x - s.x) * p;
             ball.position.z = s.z + (e.z - s.z) * p;
-            ball.position.y = s.y + (e.y - s.y) * p + Math.sin(p * Math.PI) * 0.8;
+            ball.position.y = s.y + (e.y - s.y) * p + Math.sin(p * Math.PI) * 0.5;
             ball.rotation.x += 0.2;
             ball.rotation.y += 0.15;
             if (p >= 1) {

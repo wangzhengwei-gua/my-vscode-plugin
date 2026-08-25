@@ -74,6 +74,7 @@ data/*
 # 最新版本安装包（由 publish.js 自动维护）
 # 最新版本安装包（由 publish.js 自动维护）
 # 最新版本安装包（由 publish.js 自动维护）
+# 最新版本安装包（由 publish.js 自动维护）
 # 最新版本安装包（更新版本时改这里 + 删旧的）
 _vsix_tmp*
 .DS_Store
