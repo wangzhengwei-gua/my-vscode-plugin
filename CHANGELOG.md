@@ -6,6 +6,23 @@ All notable changes to the "my-vscode-plugin" extension will be documented in th
 
 ✨ Features:
   - 更新主扩展代码（功能菜单/Webview/命令注册）
+♻️ Refactor:
+  - 更新脚本: build-dpi-exe.ps1
+  - 更新脚本: mouse-dpi-launcher.bat
+  - 更新脚本: mouse-dpi-launcher.cs
+  - 更新脚本: mouse-dpi.ahk
+  - 更新脚本: mouse-dpi.exe
+  - 更新脚本: mouse-speed.ahk
+🔧 Chore:
+  - 更新打包文件: .gitignore
+  - 更新打包文件: my-vscode-plugin-0.9.9.vsix
+  - 更新 package.json（版本/依赖）
+
+
+## [0.9.9] - 2026-08-25
+
+✨ Features:
+  - 更新主扩展代码（功能菜单/Webview/命令注册）
 🔧 Chore:
   - 更新打包文件: .gitignore
   - 更新打包文件: my-vscode-plugin-0.9.8.vsix -> my-vscode-plugin-0.9.9.vsix

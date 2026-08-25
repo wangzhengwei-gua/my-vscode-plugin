@@ -1567,6 +1567,32 @@ function activate(context) {
     });
     context.subscriptions.push(refreshTimeStatusDisposable);
 
+    // ===== 3D 摇奖机动画 =====
+    let drawMachineDisposable = vscode.commands.registerCommand('myPlugin.drawMachine', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎯 排列三', value: 'pl3', description: '3 位号码 0-9' },
+                { label: '🎰 排列五', value: 'pl5', description: '5 位号码 0-9' },
+                { label: '🎁 福彩3D', value: 'fc3d', description: '3 位号码 0-9' }
+            ],
+            { placeHolder: '选择要模拟摇奖的彩种' }
+        );
+        if (!pick) return;
+
+        const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+        if (!cfg) return;
+
+        const panel = vscode.window.createWebviewPanel(
+            'drawMachine',
+            '3D 摇奖机 - ' + cfg.name,
+            vscode.ViewColumn.Active,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getDrawMachineHtml(cfg);
+    });
+    context.subscriptions.push(drawMachineDisposable);
+
+
     // ===== 自动爬取数据 =====
     // 1. 插件启动时自动爬取（静默，不弹通知，除非失败）
     autoRefresh(500, true);
@@ -1763,6 +1789,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🔮 预测记录', 'myPlugin.showPredictions', '🔮'),
                 this.createItem('🕐 显示当前时间', 'myPlugin.showTime', '🕐'),
                 this.createItem('🕙 时间背景水印', 'myPlugin.toggleTimeBackground', '🕙'),
+                this.createItem('🎰 3D摇奖机', 'myPlugin.drawMachine', '🎰'),
                 this.createItem('👋 Hello World', 'myPlugin.helloWorld', '👋')
             ];
         }
@@ -1788,6 +1815,476 @@ class LotteryTreeDataProvider {
 }
 
 function deactivate() {}
+
+/**
+ * 3D 摇奖机动画 HTML
+ * 使用 Three.js（CDN）模拟真实摇奖机：透明球体 + 内部翻滚的号码球
+ * @param {Object} cfg - LOTTERY_TYPES 中的彩种配置
+ */
+function getDrawMachineHtml(cfg) {
+    const posCount = cfg.positions.length;
+    const posLabels = cfg.positions.map(p => p.label).join(' / ');
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>3D 摇奖机 - ${cfg.name}</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a1a; color: #fff; font-family: "Segoe UI","Microsoft YaHei",sans-serif; }
+#app { position: relative; width: 100vw; height: 100vh; }
+#canvas3d { display: block; width: 100%; height: 100%; }
+
+/* 顶部标题 */
+.top-bar { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); z-index: 10; text-align: center; }
+.top-bar h1 { font-size: 22px; font-weight: 600; color: #ffd700; text-shadow: 0 0 8px rgba(255,215,0,.5); }
+.top-bar .sub { font-size: 13px; color: #9aa; margin-top: 4px; }
+
+/* 控制按钮 */
+.controls { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 12px; }
+.btn { padding: 10px 24px; font-size: 15px; border: none; border-radius: 24px; cursor: pointer; color: #fff; background: linear-gradient(135deg,#667eea,#764ba2); box-shadow: 0 4px 14px rgba(118,75,162,.5); transition: transform .15s; }
+.btn:hover { transform: translateY(-2px); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn.success { background: linear-gradient(135deg,#11998e,#38ef7d); box-shadow: 0 4px 14px rgba(56,239,125,.5); }
+
+/* 结果展示 */
+.result-panel { position: absolute; top: 16px; right: 16px; z-index: 10; background: rgba(20,20,40,.85); border: 1px solid rgba(255,215,0,.3); border-radius: 10px; padding: 12px 16px; min-width: 180px; }
+.result-panel .label { font-size: 12px; color: #888; margin-bottom: 6px; }
+.result-panel .nums { display: flex; flex-wrap: wrap; gap: 6px; }
+.result-panel .ball { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 700; color: #fff; background: radial-gradient(circle at 30% 30%, #ff6b6b, #c0392b); box-shadow: 0 0 8px rgba(231,76,60,.6); }
+.result-panel .ball.empty { background: #333; box-shadow: none; color: #555; }
+
+/* 历史记录 */
+.history-panel { position: absolute; top: 16px; left: 16px; z-index: 10; background: rgba(20,20,40,.85); border: 1px solid rgba(80,120,255,.3); border-radius: 10px; padding: 10px 14px; max-height: 50vh; overflow-y: auto; min-width: 160px; }
+.history-panel .label { font-size: 12px; color: #888; margin-bottom: 6px; }
+.history-panel .item { font-size: 13px; color: #cde; margin: 4px 0; font-family: "Consolas",monospace; }
+.history-panel .item .badge { display: inline-block; min-width: 18px; height: 18px; line-height: 18px; text-align: center; border-radius: 4px; background: #2d4a8a; margin-right: 4px; font-size: 11px; }
+
+/* 状态文字 */
+.status-text { position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%); z-index: 10; font-size: 14px; color: #ffcc00; }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="canvas3d"></canvas>
+  <div class="top-bar">
+    <h1>🎰 ${cfg.name} · 3D 摇奖机</h1>
+    <div class="sub">位号：${posLabels} ｜ 每位 0-9</div>
+  </div>
+  <div class="history-panel">
+    <div class="label">历史摇奖</div>
+    <div id="historyList"></div>
+  </div>
+  <div class="result-panel">
+    <div class="label">本期结果</div>
+    <div class="nums" id="resultNums"></div>
+  </div>
+  <div class="status-text" id="statusText">点击"开始摇奖"启动</div>
+  <div class="controls">
+    <button class="btn success" id="btnStart">🎰 开始摇奖</button>
+    <button class="btn" id="btnReset" disabled>🔄 重置</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+(function(){
+  const POS_COUNT = ${posCount};
+  const NUM_RANGE = 10; // 0-9
+
+  // ====== Three.js 场景 ======
+  const canvas = document.getElementById('canvas3d');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0a0a1a);
+
+  // 相机
+  let camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 1000);
+  camera.position.set(0, 2, 8);
+  camera.lookAt(0, 0, 0);
+
+  // 灯光
+  scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+  const keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
+  keyLight.position.set(5, 10, 6);
+  scene.add(keyLight);
+  const fillLight = new THREE.PointLight(0x6699ff, 0.6, 30);
+  fillLight.position.set(-4, 2, 4);
+  scene.add(fillLight);
+
+  // 底座
+  const baseGeo = new THREE.CylinderGeometry(2.2, 2.4, 0.3, 48);
+  const baseMat = new THREE.MeshPhongMaterial({ color: 0x2a2a3e, shininess: 60 });
+  const base = new THREE.Mesh(baseGeo, baseMat);
+  base.position.y = -1.6;
+  scene.add(base);
+
+  // 摇奖球体（透明玻璃球）
+  const sphereRadius = 1.8;
+  const sphereGeo = new THREE.SphereGeometry(sphereRadius, 48, 32);
+  const sphereMat = new THREE.MeshPhongMaterial({
+    color: 0x88aaff, transparent: true, opacity: 0.18, shininess: 120,
+    side: THREE.DoubleSide
+  });
+  const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+  scene.add(sphere);
+
+  // 球体线框（更立体感）
+  const wireGeo = new THREE.SphereGeometry(sphereRadius, 16, 12);
+  const wireMat = new THREE.LineBasicMaterial({ color: 0x6699ff, transparent: true, opacity: 0.3 });
+  const wire = new THREE.LineSegments(new THREE.WireframeGeometry(wireGeo), wireMat);
+  scene.add(wire);
+
+  // 号码球（10 个小球，编号 0-9）
+  // 每个小球：几何 + 材质 + 文理
+  const ballRadius = 0.42;
+  const ballGeo = new THREE.SphereGeometry(ballRadius, 24, 18);
+
+  // 生成号码纹理
+  function makeNumberTexture(num, hue) {
+    const c = document.createElement('canvas');
+    c.width = 128; c.height = 128;
+    const ctx = c.getContext('2d');
+    // 背景
+    const grad = ctx.createRadialGradient(40, 40, 10, 64, 64, 80);
+    grad.addColorStop(0, 'hsl(' + hue + ', 80%, 65%)');
+    grad.addColorStop(1, 'hsl(' + hue + ', 70%, 40%)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 128, 128);
+    // 号码
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 72px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(0,0,0,.6)';
+    ctx.shadowBlur = 6;
+    ctx.fillText(String(num), 64, 70);
+    const tex = new THREE.CanvasTexture(c);
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  // 创建号码球数组
+  const numberBalls = [];
+  for (let i = 0; i < NUM_RANGE; i++) {
+    const hue = (i / NUM_RANGE) * 360;
+    const mat = new THREE.MeshPhongMaterial({ map: makeNumberTexture(i, hue), shininess: 80 });
+    const mesh = new THREE.Mesh(ballGeo, mat);
+    mesh.userData.number = i;
+    mesh.userData.velocity = new THREE.Vector3(
+      (Math.random() - 0.5) * 0.06,
+      Math.random() * 0.08,
+      (Math.random() - 0.5) * 0.06
+    );
+    mesh.userData.angularVel = new THREE.Vector3(
+      (Math.random() - 0.5) * 0.15,
+      (Math.random() - 0.5) * 0.15,
+      (Math.random() - 0.5) * 0.15
+    );
+    // 随机起始位置
+    const r = sphereRadius - ballRadius - 0.05;
+    mesh.position.set(
+      (Math.random() - 0.5) * r * 1.4,
+      (Math.random() - 0.5) * r * 1.4,
+      (Math.random() - 0.5) * r * 1.4
+    );
+    scene.add(mesh);
+    numberBalls.push(mesh);
+  }
+
+  // 出球管道（顶部出口）
+  const tubeGeo = new THREE.CylinderGeometry(0.5, 0.5, 1.2, 24, 1, true);
+  const tubeMat = new THREE.MeshPhongMaterial({ color: 0x555577, transparent: true, opacity: 0.4, side: THREE.DoubleSide });
+  const tube = new THREE.Mesh(tubeGeo, tubeMat);
+  tube.position.y = sphereRadius + 0.6;
+  scene.add(tube);
+
+  // 出球收集盘（底部下方）
+  const trayGeo = new THREE.CylinderGeometry(1.0, 1.2, 0.15, 32);
+  const trayMat = new THREE.MeshPhongMaterial({ color: 0x1a1a2a, shininess: 50 });
+  const tray = new THREE.Mesh(trayGeo, trayMat);
+  tray.position.y = -1.3;
+  scene.add(tray);
+
+  // 鼠标拖拽控制相机角度
+  let isDragging = false, lastX = 0, lastY = 0;
+  let camTheta = 0, camPhi = 0.25;
+  function updateCamera() {
+    const r = 8;
+    camera.position.x = r * Math.cos(camPhi) * Math.sin(camTheta);
+    camera.position.z = r * Math.cos(camPhi) * Math.cos(camTheta);
+    camera.position.y = 2 + r * Math.sin(camPhi);
+    camera.lookAt(0, 0, 0);
+  }
+  updateCamera();
+  canvas.addEventListener('mousedown', e => { isDragging = true; lastX = e.clientX; lastY = e.clientY; });
+  window.addEventListener('mouseup', () => { isDragging = false; });
+  window.addEventListener('mousemove', e => {
+    if (!isDragging) return;
+    camTheta += (e.clientX - lastX) * 0.005;
+    camPhi = Math.max(-1.2, Math.min(1.2, camPhi + (e.clientY - lastY) * 0.005));
+    lastX = e.clientX; lastY = e.clientY;
+    updateCamera();
+  });
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const factor = e.deltaY > 0 ? 1.1 : 0.9;
+    camera.position.multiplyScalar(factor);
+    if (camera.position.length() < 4) camera.position.normalize().multiplyScalar(4);
+    if (camera.position.length() > 20) camera.position.normalize().multiplyScalar(20);
+  }, { passive: false });
+
+  // ====== 摇奖状态 ======
+  // status: idle | running | drawing | done
+  let status = 'idle';
+  let pickedBalls = []; // 已出球（号码）
+  let drawQueue = [];   // 待出球的位（剩余次数）
+  let isInside = (mesh) => {
+    const r = mesh.position.length();
+    return r <= sphereRadius - ballRadius - 0.02;
+  };
+  let exitCooldown = 0; // 出球冷却帧
+  let spinningBoost = 0; // 摇动强度
+
+  // 物理：球在球内反弹
+  function stepPhysics(dt) {
+    const innerR = sphereRadius - ballRadius - 0.02;
+    // 摇动力（模拟风机）
+    const forceStrength = 0.012 + spinningBoost;
+    numberBalls.forEach(ball => {
+      if (ball.userData.exited) return; // 已出球不再模拟
+      // 随机扰动
+      ball.userData.velocity.x += (Math.random() - 0.5) * forceStrength;
+      ball.userData.velocity.y += (Math.random() - 0.3) * forceStrength * 1.2;
+      ball.userData.velocity.z += (Math.random() - 0.5) * forceStrength;
+      // 重力
+      ball.userData.velocity.y -= 0.006;
+      // 阻尼
+      ball.userData.velocity.multiplyScalar(0.992);
+      ball.userData.angularVel.multiplyScalar(0.985);
+      // 移动
+      ball.position.add(ball.userData.velocity);
+      ball.rotation.x += ball.userData.angularVel.x;
+      ball.rotation.y += ball.userData.angularVel.y;
+      ball.rotation.z += ball.userData.angularVel.z;
+      // 边界（反弹）
+      const dist = ball.position.length();
+      if (dist > innerR) {
+        ball.position.normalize().multiplyScalar(innerR);
+        // 反弹速度
+        const n = ball.position.clone().normalize();
+        const dot = ball.userData.velocity.dot(n);
+        if (dot > 0) {
+          ball.userData.velocity.sub(n.multiplyScalar(dot * 1.8));
+        }
+      }
+      // 球与球碰撞
+      for (let j = 0; j < numberBalls.length; j++) {
+        const b2 = numberBalls[j];
+        if (b2 === ball || b2.userData.exited) continue;
+        const diff = ball.position.clone().sub(b2.position);
+        const d = diff.length();
+        const minD = ballRadius * 2;
+        if (d < minD && d > 0.0001) {
+          const n = diff.normalize();
+          const overlap = minD - d;
+          ball.position.add(n.clone().multiplyScalar(overlap * 0.5));
+          b2.position.sub(n.clone().multiplyScalar(overlap * 0.5));
+          const va = ball.userData.velocity.dot(n);
+          const vb = b2.userData.velocity.dot(n);
+          if (va - vb < 0) {
+            const m = 0.5;
+            ball.userData.velocity.add(n.clone().multiplyScalar((vb - va) * m));
+            b2.userData.velocity.sub(n.clone().multiplyScalar((vb - va) * m));
+          }
+        }
+      }
+    });
+  }
+
+  // 出球动画：让选中的球从顶部"射"出
+  function ejectBall(ball) {
+    ball.userData.exited = true;
+    ball.userData.velocity.set(0, 0.25, 0);
+    ball.userData.ejecting = true;
+    ball.userData.ejectTime = 0;
+  }
+
+  // 渲染循环
+  function animate() {
+    requestAnimationFrame(animate);
+    const dt = 1/60;
+
+    if (status === 'running') {
+      spinningBoost = Math.min(0.04, spinningBoost + 0.002);
+      stepPhysics(dt);
+      // 球体微微晃动
+      sphere.rotation.y += 0.003;
+      wire.rotation.y += 0.003;
+      // 检查是否需要出球
+      if (exitCooldown > 0) exitCooldown--;
+      if (drawQueue.length > 0 && exitCooldown === 0) {
+        // 随机选一个仍在球内的球
+        const candidates = numberBalls.filter(b => !b.userData.exited);
+        if (candidates.length > 0) {
+          // 取靠近顶部的球（最自然）
+          candidates.sort((a, b) => b.position.y - a.position.y);
+          const target = candidates[0];
+          ejectBall(target);
+          pickedBalls.push(target.userData.number);
+          drawQueue.shift();
+          exitCooldown = 70; // 约 1.2s 后再出下一球
+          updateResultUI();
+          if (drawQueue.length === 0) {
+            // 全部出完
+            setTimeout(() => {
+              status = 'done';
+              setStatusText('🎉 摇奖结束！号码：' + pickedBalls.join(' '));
+              saveToHistory();
+              document.getElementById('btnReset').disabled = false;
+            }, 1500);
+          }
+        }
+      }
+    }
+
+    // 出球动画
+    numberBalls.forEach(ball => {
+      if (ball.userData.ejecting) {
+        ball.userData.ejectTime++;
+        // 上升 -> 落入收集盘
+        const t = ball.userData.ejectTime;
+        if (t < 30) {
+          ball.position.y += 0.08;
+          ball.position.x *= 0.97;
+          ball.position.z *= 0.97;
+        } else if (t < 60) {
+          ball.position.y -= 0.15;
+        } else {
+          // 落到收集盘
+          const idx = pickedBalls.indexOf(ball.userData.number);
+          const slot = idx - (POS_COUNT - 1) / 2;
+          ball.position.set(slot * 1.0, -1.2, 0);
+          ball.userData.velocity.set(0, 0, 0);
+          ball.userData.angularVel.set(0, 0, 0);
+          ball.userData.ejecting = false;
+        }
+        ball.rotation.y += 0.1;
+      }
+    });
+
+    // 待机轻微晃动
+    if (status === 'idle' || status === 'done') {
+      numberBalls.forEach(b => {
+        if (!b.userData.exited) {
+          b.rotation.y += 0.005;
+        }
+      });
+    }
+
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  // ====== UI 控制 ======
+  const btnStart = document.getElementById('btnStart');
+  const btnReset = document.getElementById('btnReset');
+  const statusText = document.getElementById('statusText');
+  const resultNums = document.getElementById('resultNums');
+  const historyList = document.getElementById('historyList');
+
+  function setStatusText(s) { statusText.textContent = s; }
+
+  function updateResultUI() {
+    let html = '';
+    for (let i = 0; i < POS_COUNT; i++) {
+      if (i < pickedBalls.length) {
+        html += '<div class="ball">' + pickedBalls[i] + '</div>';
+      } else {
+        html += '<div class="ball empty">?</div>';
+      }
+    }
+    resultNums.innerHTML = html;
+  }
+
+  // 历史记录（内存中，刷新页面即清空）
+  const history = [];
+  function saveToHistory() {
+    const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    history.unshift({ time, nums: pickedBalls.slice() });
+    if (history.length > 20) history.pop();
+    renderHistory();
+  }
+  function renderHistory() {
+    let html = '';
+    history.forEach((h, i) => {
+      html += '<div class="item"><span class="badge">' + (i+1) + '</span>' +
+        h.nums.join(' ') + ' <span style="color:#666">(' + h.time + ')</span></div>';
+    });
+    historyList.innerHTML = html || '<div class="item" style="color:#555">暂无记录</div>';
+  }
+  renderHistory();
+  updateResultUI();
+
+  btnStart.addEventListener('click', () => {
+    if (status !== 'idle') return;
+    status = 'running';
+    pickedBalls = [];
+    drawQueue = new Array(POS_COUNT).fill(0).map((_, i) => i);
+    exitCooldown = 100; // 启动后约 1.7s 出第一球
+    spinningBoost = 0.02;
+    btnStart.disabled = true;
+    btnReset.disabled = true;
+    setStatusText('🌀 正在摇奖...');
+    updateResultUI();
+  });
+
+  btnReset.addEventListener('click', () => {
+    // 复位所有球
+    numberBalls.forEach(ball => {
+      ball.userData.exited = false;
+      ball.userData.ejecting = false;
+      const r = sphereRadius - ballRadius - 0.05;
+      ball.position.set(
+        (Math.random() - 0.5) * r * 1.4,
+        (Math.random() - 0.5) * r * 1.4,
+        (Math.random() - 0.5) * r * 1.4
+      );
+      ball.userData.velocity.set(
+        (Math.random() - 0.5) * 0.06,
+        Math.random() * 0.08,
+        (Math.random() - 0.5) * 0.06
+      );
+      ball.userData.angularVel.set(
+        (Math.random() - 0.5) * 0.15,
+        (Math.random() - 0.5) * 0.15,
+        (Math.random() - 0.5) * 0.15
+      );
+    });
+    pickedBalls = [];
+    drawQueue = [];
+    status = 'idle';
+    spinningBoost = 0;
+    btnStart.disabled = false;
+    btnReset.disabled = true;
+    setStatusText('已重置，点击"开始摇奖"启动');
+    updateResultUI();
+  });
+
+  // 窗口大小变化
+  window.addEventListener('resize', () => {
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+  });
+})();
+</script>
+</body>
+</html>`;
+}
 
 /**
  * 每日温馨话语（按一年中的第几天取用，51 条足够一年循环）

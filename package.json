@@ -38,6 +38,7 @@
         "onCommand:myPlugin.boidsLife",
         "onCommand:myPlugin.boidsNumber",
         "onCommand:myPlugin.toggleTimeBackground",
+        "onCommand:myPlugin.drawMachine",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -121,6 +122,10 @@
             {
                 "command": "myPlugin.toggleTimeBackground",
                 "title": "Toggle Time Background"
+            },
+            {
+                "command": "myPlugin.drawMachine",
+                "title": "3D Draw Machine"
             }
         ],
         "viewsContainers": {
