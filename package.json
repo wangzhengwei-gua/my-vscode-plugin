@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.8.7",
+    "version": "0.8.8",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",

@@ -1520,30 +1520,20 @@ function activate(context) {
     });
     context.subscriptions.push(boidsNumberDisposable);
 
-    // ===== 整窗时间背景 =====
-    // 用 webview 做半透明全屏浮层，在窗口背景层显示时间
-    let timeBgPanel = null;
-
-    let toggleTimeBgDisposable = vscode.commands.registerCommand('myPlugin.toggleTimeBackground', () => {
-        if (timeBgPanel) {
-            // 关闭
-            timeBgPanel.dispose();
-            timeBgPanel = null;
-            vscode.window.showInformationMessage('时间背景已关闭');
+    // ===== 整窗时间背景（注入 CSS 到 workbench.desktop.main.css） =====
+    // 方案B：插件直接修改 VSCode 核心 CSS，注入时间水印背景（用伪元素 + JS 注入动态时间）
+    // 方案A：同时生成独立 css 文件供 Custom CSS and JS Loader 使用
+    let toggleTimeBgDisposable = vscode.commands.registerCommand('myPlugin.toggleTimeBackground', async () => {
+        const cssPath = getTimeBackgroundCssPath(context);
+        const injected = await toggleWorkbenchTimeBackground(context, cssPath);
+        if (injected) {
+            vscode.window.showInformationMessage('时间背景已开启 - 已注入 CSS，请重新加载窗口生效 (Ctrl+Shift+P → Reload Window)', '重新加载').then(sel => {
+                if (sel === '重新加载') vscode.commands.executeCommand('workbench.action.reloadWindow');
+            });
         } else {
-            // 开启：在活动列右侧以"拆分"方式打开，但用 CSS 透明背景铺满
-            timeBgPanel = vscode.window.createWebviewPanel(
-                'timeBackground',
-                '时间背景',
-                vscode.ViewColumn.Active,
-                {
-                    enableScripts: true,
-                    retainContextWhenHidden: true
-                }
-            );
-            timeBgPanel.webview.html = getTimeBackgroundHtml();
-            timeBgPanel.onDidDispose(() => { timeBgPanel = null; });
-            vscode.window.showInformationMessage('时间背景已开启 - 大字时间显示在窗口中央');
+            vscode.window.showInformationMessage('时间背景已关闭 - 请重新加载窗口生效 (Ctrl+Shift+P → Reload Window)', '重新加载').then(sel => {
+                if (sel === '重新加载') vscode.commands.executeCommand('workbench.action.reloadWindow');
+            });
         }
     });
     context.subscriptions.push(toggleTimeBgDisposable);
@@ -1771,77 +1761,243 @@ class LotteryTreeDataProvider {
 function deactivate() {}
 
 /**
- * 生成时间背景的 HTML
- * 全屏半透明浮层，大字显示当前时间，每秒刷新
+ * 时间背景 - 独立 CSS 文件路径（供方案A：Custom CSS and JS Loader 使用）
+ * 存放在 globalStoragePath 下
  */
-function getTimeBackgroundHtml() {
-    return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>
-  html, body {
-    margin: 0; padding: 0;
-    width: 100%; height: 100%;
-    overflow: hidden;
-    background: transparent;
-  }
-  #clock {
-    position: fixed;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
-    font-size: 120px;
-    font-weight: 700;
-    color: rgba(80, 160, 255, 0.25);
-    text-align: center;
-    user-select: none;
-    pointer-events: none;
-    letter-spacing: 2px;
-    text-shadow: 0 0 30px rgba(80, 160, 255, 0.15);
-  }
-  #date {
-    position: fixed;
-    top: calc(50% + 80px); left: 50%;
-    transform: translateX(-50%);
-    font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
-    font-size: 32px;
-    color: rgba(120, 180, 255, 0.2);
-    text-align: center;
-    user-select: none;
-    pointer-events: none;
-    letter-spacing: 4px;
-  }
-  #watermark {
-    position: fixed;
-    top: 20px; right: 30px;
-    font-family: 'Segoe UI', sans-serif;
-    font-size: 14px;
-    color: rgba(150,150,150,0.4);
-    user-select: none; pointer-events: none;
-  }
-</style>
-</head>
-<body>
-  <div id="clock">--:--:--</div>
-  <div id="date">----年--月--日</div>
-  <div id="watermark">时间背景 · 再次执行命令可关闭</div>
-  <script>
-    function pad(n){ return n<10 ? '0'+n : ''+n; }
-    function update(){
-      const d = new Date();
-      const h = pad(d.getHours()), m = pad(d.getMinutes()), s = pad(d.getSeconds());
-      document.getElementById('clock').textContent = h+':'+m+':'+s;
-      const y = d.getFullYear(), mo = pad(d.getMonth()+1), da = pad(d.getDate());
-      const week = ['日','一','二','三','四','五','六'][d.getDay()];
-      document.getElementById('date').textContent = y+'年'+mo+'月'+da+'日 星期'+week;
+function getTimeBackgroundCssPath(context) {
+    const dir = context.globalStoragePath;
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return path.join(dir, 'time-background.css');
+}
+
+/**
+ * 生成时间背景的 CSS 内容
+ * 用纯 CSS 创建一个固定浮层 div 的样式（实际 div 由 JS 创建并更新）
+ * @returns {string} CSS 文本
+ */
+function getTimeBackgroundCss() {
+    return `/* ===== my-vscode-plugin 时间背景水印 ===== */
+/* MY_PLUGIN_TIME_BG_START */
+.myplugin-time-overlay {
+    position: fixed !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif !important;
+    font-size: 140px !important;
+    font-weight: 700 !important;
+    color: rgba(80, 160, 255, 0.18) !important;
+    text-align: center !important;
+    user-select: none !important;
+    pointer-events: none !important;
+    letter-spacing: 4px !important;
+    text-shadow: 0 0 40px rgba(80, 160, 255, 0.12) !important;
+    z-index: 9999 !important;
+    white-space: nowrap !important;
+    animation: mypluginTimePulse 2s ease-in-out infinite !important;
+}
+.myplugin-time-date {
+    font-size: 32px !important;
+    color: rgba(120, 180, 255, 0.22) !important;
+    margin-top: 12px !important;
+    letter-spacing: 6px !important;
+}
+@keyframes mypluginTimePulse {
+    0%, 100% { opacity: 0.18; }
+    50% { opacity: 0.30; }
+}
+/* MY_PLUGIN_TIME_BG_END */
+`;
+}
+
+/**
+ * 生成时间背景的 JS 内容（注入到 workbench.desktop.main.js）
+ * 创建一个 div 每秒显示当前时间
+ * @returns {string} JS 文本
+ */
+function getTimeBackgroundJs() {
+    return `/* ===== my-vscode-plugin 时间背景 JS ===== */
+// MY_PLUGIN_TIME_BG_JS_START
+(function(){
+    if(window.__mypluginTimeBg) return; // 防止重复注入
+    window.__mypluginTimeBg = true;
+    var o=document.createElement('div');
+    o.className='myplugin-time-overlay';
+    o.style.position='fixed';o.style.top='50%';o.style.left='50%';
+    o.style.transform='translate(-50%,-50%)';
+    o.style.fontFamily="'Segoe UI','Microsoft YaHei',sans-serif";
+    o.style.fontSize='140px';o.style.fontWeight='700';
+    o.style.color='rgba(80,160,255,0.18)';o.style.textAlign='center';
+    o.style.userSelect='none';o.style.pointerEvents='none';
+    o.style.letterSpacing='4px';o.style.zIndex='99999';
+    o.style.whiteSpace='nowrap';
+    var d2=document.createElement('div');
+    d2.className='myplugin-time-date';
+    d2.style.fontSize='32px';d2.style.color='rgba(120,180,255,0.22)';
+    d2.style.marginTop='12px';d2.style.letterSpacing='6px';
+    function pad(n){return n<10?'0'+n:''+n;}
+    function upd(){
+        var d=new Date();
+        o.textContent=pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
+        var w=['日','一','二','三','四','五','六'][d.getDay()];
+        d2.textContent=d.getFullYear()+'年'+pad(d.getMonth()+1)+'月'+pad(d.getDate())+'日 星期'+w;
     }
-    update();
-    setInterval(update, 1000);
-  </script>
-</body>
-</html>`;
+    function mount(){
+        if(!document.body){setTimeout(mount,500);return;}
+        document.body.appendChild(o);
+        document.body.appendChild(d2);
+        upd();setInterval(upd,1000);
+    }
+    mount();
+})();
+// MY_PLUGIN_TIME_BG_JS_END
+`;
+}
+
+/**
+ * 方案B：注入/移除 CSS+JS 到 VSCode 的 workbench.desktop.main.{css,js}
+ * 方案A：同时生成独立 css 文件供 Custom CSS and JS Loader 使用
+ * @param {vscode.ExtensionContext} context
+ * @param {string} standaloneCssPath - 独立 CSS 文件路径
+ * @returns {Promise<boolean>} true=已开启，false=已关闭
+ */
+async function toggleWorkbenchTimeBackground(context, standaloneCssPath) {
+    // 1. 生成/更新独立 CSS 文件（方案A用）
+    const cssContent = getTimeBackgroundCss();
+    try {
+        fs.writeFileSync(standaloneCssPath, cssContent, 'utf-8');
+        console.log('时间背景独立 CSS 已生成:', standaloneCssPath);
+    } catch (e) {
+        console.error('生成独立 CSS 失败:', e.message);
+    }
+
+    // 2. 查找 workbench 文件
+    let workbenchCss = null;
+    let workbenchJs = null;
+    const candidates = [];
+    // 从 vscode 可执行文件查找
+    try {
+        const vscodeExePath = process.env.VSCODE_CLI || process.execPath;
+        const appRoot = path.dirname(path.dirname(vscodeExePath));
+        const base = path.join(appRoot, 'resources', 'app', 'out', 'vs', 'workbench');
+        candidates.push(
+            path.join(base, 'workbench.desktop.main.css'),
+            path.join(base, 'workbench.desktop.main.js')
+        );
+    } catch (e) {}
+    // 从 require.main 查找
+    try {
+        const vscodeDir = path.dirname(require.main.filename);
+        candidates.push(
+            path.join(vscodeDir, '..', '..', 'workbench', 'workbench.desktop.main.css'),
+            path.join(vscodeDir, 'workbench', 'workbench.desktop.main.css'),
+            path.join(vscodeDir, '..', '..', 'workbench', 'workbench.desktop.main.js'),
+            path.join(vscodeDir, 'workbench', 'workbench.desktop.main.js')
+        );
+    } catch (e) {}
+
+    // 兜底：glob 搜索
+    try {
+        const { execSync } = require('child_process');
+        const searchRoot = process.env.LOCALAPPDATA || 'C:\\Program Files';
+        if (process.platform === 'win32') {
+            const out = execSync(`where /r "${searchRoot}" workbench.desktop.main.css 2>nul`, { encoding: 'utf-8', timeout: 5000 }).trim().split(/\r?\n/);
+            for (const f of out) { if (f && fs.existsSync(f)) { workbenchCss = workbenchCss || f; } }
+            const out2 = execSync(`where /r "${searchRoot}" workbench.desktop.main.js 2>nul`, { encoding: 'utf-8', timeout: 5000 }).trim().split(/\r?\n/);
+            for (const f of out2) { if (f && fs.existsSync(f)) { workbenchJs = workbenchJs || f; } }
+        }
+    } catch (e) {}
+
+    for (const p of candidates) {
+        if (!workbenchCss && p.endsWith('.css') && fs.existsSync(p)) workbenchCss = p;
+        if (!workbenchJs && p.endsWith('.js') && fs.existsSync(p)) workbenchJs = p;
+    }
+
+    if (!workbenchCss || !workbenchJs) {
+        vscode.window.showWarningMessage(
+            '未找到 workbench.desktop.main.css/js，无法直接注入。\n' +
+            '可使用方案A：安装 "Custom CSS and JS Loader" 插件，在 settings.json 中配置：\n' +
+            '  "vscode_custom_css.imports": ["file:///' + standaloneCssPath.replace(/\\/g, '/') + '"]\n' +
+            '独立 CSS 文件路径已生成: ' + standaloneCssPath,
+            '复制路径', '查看方案A教程'
+        ).then(sel => {
+            if (sel === '复制路径') {
+                vscode.env.clipboard.writeText(standaloneCssPath);
+                vscode.window.showInformationMessage('已复制: ' + standaloneCssPath);
+            } else if (sel === '查看方案A教程') {
+                vscode.commands.executeCommand('vscode.open', vscode.Uri.parse('https://blog.iks-ran.com/2026/04/03/vsc_bg/'));
+            }
+        });
+        return true;
+    }
+
+    // 3. 读取并注入/移除 CSS
+    let cssInjected = false;
+    if (workbenchCss) {
+        let cssOriginal = '';
+        try { cssOriginal = fs.readFileSync(workbenchCss, 'utf-8'); }
+        catch (e) { vscode.window.showErrorMessage('读取 workbench CSS 失败: ' + e.message); return false; }
+
+        const CSS_START = '/* MY_PLUGIN_TIME_BG_START */';
+        const CSS_END = '/* MY_PLUGIN_TIME_BG_END */';
+        if (cssOriginal.includes(CSS_START)) {
+            // 移除
+            const regex = new RegExp(CSS_START + '[\\s\\S]*?' + CSS_END + '\\n*', 'g');
+            try {
+                fs.writeFileSync(workbenchCss, cssOriginal.replace(regex, ''), 'utf-8');
+                cssInjected = false;
+            } catch (e) {
+                vscode.window.showErrorMessage('移除 CSS 失败（可能需要管理员权限运行 VSCode）: ' + e.message);
+                return true;
+            }
+        } else {
+            // 追加
+            try {
+                fs.writeFileSync(workbenchCss + '.myplugin.bak', cssOriginal, 'utf-8');
+                fs.writeFileSync(workbenchCss, cssOriginal + '\n\n' + cssContent, 'utf-8');
+                cssInjected = true;
+            } catch (e) {
+                vscode.window.showErrorMessage('注入 CSS 失败（可能需要管理员权限）: ' + e.message + '\n建议改用方案A');
+                return false;
+            }
+        }
+    }
+
+    // 4. 读取并注入/移除 JS
+    let jsInjected = false;
+    if (workbenchJs) {
+        let jsOriginal = '';
+        try { jsOriginal = fs.readFileSync(workbenchJs, 'utf-8'); }
+        catch (e) { vscode.window.showErrorMessage('读取 workbench JS 失败: ' + e.message); return cssInjected; }
+
+        const JS_START = '// MY_PLUGIN_TIME_BG_JS_START';
+        const JS_END = '// MY_PLUGIN_TIME_BG_JS_END';
+        if (jsOriginal.includes(JS_START)) {
+            // 移除
+            const regex = new RegExp(JS_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s\\S]*?' + JS_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\n*', 'g');
+            try {
+                fs.writeFileSync(workbenchJs, jsOriginal.replace(regex, ''), 'utf-8');
+                jsInjected = false;
+            } catch (e) {
+                vscode.window.showErrorMessage('移除 JS 失败: ' + e.message);
+                return true;
+            }
+        } else {
+            // 追加
+            try {
+                fs.writeFileSync(workbenchJs + '.myplugin.bak', jsOriginal, 'utf-8');
+                fs.writeFileSync(workbenchJs, jsOriginal + '\n' + getTimeBackgroundJs(), 'utf-8');
+                jsInjected = true;
+            } catch (e) {
+                vscode.window.showErrorMessage('注入 JS 失败（可能需要管理员权限）: ' + e.message);
+                return false;
+            }
+        }
+    }
+
+    const result = cssInjected || jsInjected; // 任一注入成功即为开启
+    console.log('时间背景', result ? '已注入' : '已移除', '| CSS:', workbenchCss, '| JS:', workbenchJs);
+    return result;
 }
 
 /**
