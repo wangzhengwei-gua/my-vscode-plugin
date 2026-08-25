@@ -1527,20 +1527,17 @@ function activate(context) {
     // 状态栏 item（始终创建，通过 visibility 控制显示）
     const timeStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     timeStatusItem.command = 'myPlugin.refreshTimeStatus';
-    // 加载彩色 SVG 时钟图标
+    // 设置彩色图标（优先用 PNG，PNG 在状态栏的渲染最稳定）
     try {
-        const iconPath = path.join(context.extensionPath, 'images', 'time-clock.svg');
-        console.log('[时间状态栏] 图标路径:', iconPath, '| 存在:', fs.existsSync(iconPath));
+        const iconPath = path.join(context.extensionPath, 'images', 'time-clock.png');
         if (fs.existsSync(iconPath)) {
-            // 用 { light, dark } 形式提供，兼容性最好
             const iconUri = vscode.Uri.file(iconPath);
             timeStatusItem.iconPath = { light: iconUri, dark: iconUri };
-            console.log('[时间状态栏] 图标已设置');
         } else {
-            console.warn('[时间状态栏] 图标文件不存在:', iconPath);
+            timeStatusItem.iconPath = new vscode.ThemeIcon('clock');
         }
     } catch (e) {
-        console.error('[时间状态栏] 图标加载失败:', e.message);
+        timeStatusItem.iconPath = new vscode.ThemeIcon('clock');
     }
     timeStatusItem.text = '--:--:--';
     context.subscriptions.push(timeStatusItem);

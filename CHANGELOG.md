@@ -2,6 +2,18 @@
 
 All notable changes to the "my-vscode-plugin" extension will be documented in this file.
 
+## [0.9.7] - 2026-08-25
+
+✨ Features:
+  - 更新主扩展代码（功能菜单/Webview/命令注册）
+🔧 Chore:
+  - 更新打包文件: .gitignore
+  - 改动: images/time-clock.png
+  - 改动: images/time-clock.svg
+  - 更新打包文件: my-vscode-plugin-0.9.6.vsix -> my-vscode-plugin-0.9.7.vsix
+  - 更新 package.json（版本/依赖）
+
+
 ## [0.9.6] - 2026-08-25
 
 ✨ Features:
