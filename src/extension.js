@@ -1868,31 +1868,41 @@ function getTimeBackgroundJs() {
         return quotes[dayOfYear % quotes.length];
     }
     function pad(n){return n<10?'0'+n:''+n;}
+    // 外层容器：固定在窗口中央
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);'
+        + 'text-align:center;user-select:none;pointer-events:none;z-index:99999;'
+        + "font-family:'Segoe UI','Microsoft YaHei',sans-serif;";
+    // 大字时间（最上方）
+    var tEl = document.createElement('div');
+    tEl.style.cssText = 'font-size:140px;font-weight:700;'
+        + 'color:rgba(80,160,255,0.18);letter-spacing:4px;'
+        + 'text-shadow:0 0 40px rgba(80,160,255,0.12);'
+        + 'white-space:nowrap;line-height:1;';
+    // 日期（中间）
     var dEl = document.createElement('div');
-    dEl.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);'
-        + "font-family:'Segoe UI','Microsoft YaHei',sans-serif;"
-        + 'font-size:22px;color:rgba(120,180,255,0.30);'
-        + 'letter-spacing:4px;text-align:center;'
-        + 'user-select:none;pointer-events:none;z-index:99999;white-space:nowrap;';
+    dEl.style.cssText = 'font-size:32px;color:rgba(120,180,255,0.22);'
+        + 'letter-spacing:6px;margin-top:20px;white-space:nowrap;';
+    // 温馨话语（最下方）
     var qEl = document.createElement('div');
-    qEl.style.cssText = 'position:fixed;bottom:40px;left:50%;transform:translateX(-50%);'
-        + "font-family:'Segoe UI','Microsoft YaHei',sans-serif;"
-        + 'font-size:18px;color:rgba(255,200,120,0.35);'
-        + 'letter-spacing:2px;text-align:center;'
-        + 'user-select:none;pointer-events:none;z-index:99999;'
-        + 'max-width:80%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    qEl.style.cssText = 'font-size:20px;color:rgba(255,200,120,0.35);'
+        + 'letter-spacing:2px;margin-top:16px;'
+        + 'max-width:80vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    wrap.appendChild(tEl);
+    wrap.appendChild(dEl);
+    wrap.appendChild(qEl);
     function upd(){
         var d = new Date();
+        tEl.textContent = pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
         var w = ['日','一','二','三','四','五','六'][d.getDay()];
         dEl.textContent = d.getFullYear()+'年'+pad(d.getMonth()+1)+'月'+pad(d.getDate())+'日 星期'+w;
         qEl.textContent = '✨ ' + getQuote();
     }
     function mount(){
         if(!document.body){setTimeout(mount,500);return;}
-        document.body.appendChild(dEl);
-        document.body.appendChild(qEl);
+        document.body.appendChild(wrap);
         upd();
-        setInterval(upd, 60000);
+        setInterval(upd, 1000); // 时间需要每秒更新
     }
     mount();
 })();
