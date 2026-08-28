@@ -807,8 +807,14 @@ function activate(context) {
     let kl8MissDisposable = vscode.commands.registerCommand('myPlugin.kl8Miss', async () => {
         const limitPick = await vscode.window.showQuickPick(
             [
+                { label: '10 期', value: 10 },
+                { label: '20 期', value: 20 },
+                { label: '30 期', value: 30 },
                 { label: '50 期', value: 50 },
-                { label: '100 期', value: 100 }
+                { label: '80 期', value: 80 },
+                { label: '100 期', value: 100 },
+                { label: '200 期', value: 200 },
+                { label: '全部', value: 0 }
             ],
             { placeHolder: '选择统计的历史期数' }
         );
@@ -838,18 +844,71 @@ function activate(context) {
         }
 
         // 注意：loadLotteryData 内部已 reverse（旧→新），这里切片后要还原为最新在前
-        const sliced = history.slice(-limit);
-        const rows = sliced.reverse();
+        const sliced = (limit > 0 ? history.slice(-limit) : history);
+        const rows = sliced.slice().reverse();
 
         const panel = vscode.window.createWebviewPanel(
             'kl8Miss',
-            '快乐8 遗漏分层',
+            '快乐8 遗漏/走势分析',
             vscode.ViewColumn.One,
             { enableScripts: true, retainContextWhenHidden: true }
         );
         panel.webview.html = getKl8MissHtml(rows);
     });
     context.subscriptions.push(kl8MissDisposable);
+
+    // 大乐透遗漏分层命令（照搬快乐8模式）
+    let dltMissDisposable = vscode.commands.registerCommand('myPlugin.dltMiss', async () => {
+        const limitPick = await vscode.window.showQuickPick(
+            [
+                { label: '10 期', value: 10 },
+                { label: '20 期', value: 20 },
+                { label: '30 期', value: 30 },
+                { label: '50 期', value: 50 },
+                { label: '80 期', value: 80 },
+                { label: '100 期', value: 100 },
+                { label: '200 期', value: 200 },
+                { label: '全部', value: 0 }
+            ],
+            { placeHolder: '选择统计的历史期数' }
+        );
+        if (!limitPick) return;
+        const limit = limitPick.value;
+
+        let history;
+        try {
+            const cfg = LOTTERY_TYPES.find(c => c.key === 'dlt');
+            if (!cfg) return;
+            history = loadLotteryData(cfg);
+            if (history.length === 0) {
+                vscode.window.showWarningMessage('大乐透数据为空，请先刷新数据');
+                return;
+            }
+        } catch (e) {
+            const choice = vscode.window.showInformationMessage(
+                '🎯 还没有大乐透数据，需要先爬取数据。是否立即爬取？',
+                '立即爬取', '稍后再说'
+            );
+            choice.then(btn => {
+                if (btn === '立即爬取') {
+                    vscode.commands.executeCommand('myPlugin.refreshData');
+                }
+            });
+            return;
+        }
+
+        const sliced = (limit > 0 ? history.slice(-limit) : history);
+        const rows = sliced.slice().reverse();
+
+        const panel = vscode.window.createWebviewPanel(
+            'dltMiss',
+            '大乐透 遗漏/走势分析',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getDltMissHtml(rows);
+    });
+    context.subscriptions.push(dltMissDisposable);
 
     // 智能推荐命令（基于转移统计 TOP3 概率）
     let smartPickDisposable = vscode.commands.registerCommand('myPlugin.smartPick', async () => {
@@ -1875,6 +1934,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🤖 智能推荐', 'myPlugin.smartPick', '🤖'),
                 this.createItem('🧬 概率推荐', 'myPlugin.probabilityPick', '🧬'),
                 this.createItem('🎱 快乐8遗漏分层', 'myPlugin.kl8Miss', '🎱'),
+                this.createItem('🎯 大乐透遗漏分层', 'myPlugin.dltMiss', '🎯'),
                 this.createItem('🛤️ 012路趋势', 'myPlugin.roadAnalysis', '🛤️'),
                 this.createItem('📜 排三口诀', 'myPlugin.pl3Formula', '📜'),
                 this.createItem('🎲 排五口诀', 'myPlugin.pl5Formula', '🎲'),
@@ -4531,10 +4591,13 @@ document.addEventListener('DOMContentLoaded', function() {
 }
 
 /**
- * 快乐8遗漏分层 Webview HTML
+ * 快乐8遗漏分层 + 走势图 Webview HTML
  * 对 1-80 号球的遗漏值进行分层统计展示：
  *  - 分层概览：按当前遗漏值分层（0 / 1-2 / 3-5 / 6-10 / 11-20 / 20+）
  *  - 明细表：每个号码的当前遗漏、各周期出现次数、平均遗漏、最大遗漏
+ *  - 走势图（tab 切换）：
+ *     · 号码分布走势：每期 20 个开出号码在 1-80 区间的散点分布
+ *     · 遗漏曲线：当前遗漏 TOP10 号码的遗漏值随期数变化
  * @param {Array} history - 快乐8历史数据（最新在前），元素 {period, num:[20个号码]}
  */
 function getKl8MissHtml(history) {
@@ -4545,7 +4608,7 @@ function getKl8MissHtml(history) {
     const updateTime = latest ? (latest.date || '') : '';
 
     // 计算每个号码的遗漏统计
-    // missStats[n] = { miss, count10, count30, count50, avgMiss, maxMiss, lastPeriod }
+    // missStats[n] = { miss, count10, count30, count50, count100, count150, count200, avgMiss, maxMiss, lastPeriod }
     const missStats = {};
     for (let n = 1; n <= 80; n++) {
         // 当前遗漏：从最新往前找第一次出现的位置
@@ -4565,6 +4628,9 @@ function getKl8MissHtml(history) {
         const count10 = positions.filter(p => p < 10).length;
         const count30 = positions.filter(p => p < 30).length;
         const count50 = positions.filter(p => p < 50).length;
+        const count100 = positions.filter(p => p < 100).length;
+        const count150 = positions.filter(p => p < 150).length;
+        const count200 = positions.filter(p => p < 200).length;
         // 平均遗漏：两次出现间隔的平均（含到第一期的距离）
         let avgMiss = 0;
         let maxMiss = 0;
@@ -4581,7 +4647,7 @@ function getKl8MissHtml(history) {
             maxMiss = positions[0];
         }
         missStats[n] = {
-            miss, count10, count30, count50,
+            miss, count10, count30, count50, count100, count150, count200,
             avgMiss: Math.round(avgMiss * 10) / 10,
             maxMiss,
             lastPeriod
@@ -4607,7 +4673,7 @@ function getKl8MissHtml(history) {
             if (m >= layer.range[0] && m <= layer.range[1]) nums.push(n);
         }
         const ballHtml = nums.map(n => {
-            const cls = n === 1 ? 'kball-r1' : n <= 10 ? 'kball-a' : n <= 20 ? 'kball-b' : n <= 30 ? 'kball-c' : n <= 40 ? 'kball-d' : n <= 50 ? 'kball-e' : n <= 60 ? 'kball-f' : n <= 70 ? 'kball-g' : 'kball-h';
+            const cls = n <= 10 ? 'kball-a' : n <= 20 ? 'kball-b' : n <= 30 ? 'kball-c' : n <= 40 ? 'kball-d' : n <= 50 ? 'kball-e' : n <= 60 ? 'kball-f' : n <= 70 ? 'kball-g' : 'kball-h';
             return '<span class="kball ' + cls + '" title="遗漏 ' + missStats[n].miss + ' 期">' + n + '</span>';
         }).join('');
         const avg = nums.length > 0
@@ -4631,6 +4697,9 @@ function getKl8MissHtml(history) {
             count10: s.count10,
             count30: s.count30,
             count50: s.count50,
+            count100: s.count100,
+            count150: s.count150,
+            count200: s.count200,
             avgMiss: s.avgMiss,
             maxMiss: s.maxMiss,
             lastPeriod: s.lastPeriod,
@@ -4639,18 +4708,17 @@ function getKl8MissHtml(history) {
     }
     detailRows.sort((a, b) => b.miss - a.miss);
 
-    const detailHtml = detailRows.map(r => {
-        const cls = r.n === 1 ? 'kball-r1' : r.n <= 10 ? 'kball-a' : r.n <= 20 ? 'kball-b' : r.n <= 30 ? 'kball-c' : r.n <= 40 ? 'kball-d' : r.n <= 50 ? 'kball-e' : r.n <= 60 ? 'kball-f' : r.n <= 70 ? 'kball-g' : 'kball-h';
-        const hot = r.count30 >= 9 ? '🔥' : r.count30 >= 7 ? '😀' : r.count30 >= 5 ? '😐' : r.count30 >= 3 ? '😟' : '🥶';
-        return '<tr><td><span class="kball ' + cls + '">' + r.n + '</span></td>' +
-            '<td class="' + r.layerCls + '" style="font-weight:bold;">' + r.miss + '</td>' +
-            '<td>' + r.count10 + '</td>' +
-            '<td>' + r.count30 + ' ' + hot + '</td>' +
-            '<td>' + r.count50 + '</td>' +
-            '<td>' + r.avgMiss + '</td>' +
-            '<td>' + r.maxMiss + '</td>' +
-            '<td style="color:#888;">' + r.lastPeriod + '</td></tr>';
-    }).join('');
+    // 明细数据（转为 JSON 传给前端，由前端按所选期数动态渲染表格）
+    const detailData = detailRows.map(r => ({
+        n: r.n,
+        miss: r.miss,
+        c10: r.count10, c30: r.count30, c50: r.count50,
+        c100: r.count100, c150: r.count150, c200: r.count200,
+        avg: r.avgMiss,
+        max: r.maxMiss,
+        last: r.lastPeriod,
+        cls: r.layerCls
+    }));
 
     return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -4661,6 +4729,20 @@ function getKl8MissHtml(history) {
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
 h2 { color: #e8a87c; margin-bottom: 8px; font-size: 20px; }
+/* 遗漏明细期数选择与图例 */
+.detail-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-bottom: 8px; font-size: 12px; }
+.detail-label { color: #aaa; }
+.span-chk-label { display: inline-flex; align-items: center; gap: 3px; color: #e8a87c; cursor: pointer; user-select: none; }
+.span-chk-label input { accent-color: #e8a87c; cursor: pointer; }
+.detail-legend { color: #999; font-size: 11px; margin-left: auto; }
+.span-custom-box { display: inline-flex; align-items: center; gap: 4px; }
+.span-custom-box input { width: 96px; background: #2d2d30; border: 1px solid #3c3c3f; color: #ddd; border-radius: 3px; padding: 3px 6px; font-size: 12px; }
+.span-custom-box input:focus { outline: none; border-color: #e8a87c; }
+.span-custom-box button { background: #0e639c; color: #fff; border: none; border-radius: 3px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+.span-custom-box button:hover { background: #1177bb; }
+.span-del { margin-left: 3px; color: #e74c3c; cursor: pointer; font-size: 10px; font-weight: 700; }
+.span-del:hover { color: #ff6b5e; }
+.detail-msg { color: #2ecc71; font-size: 11px; }
 .sub { color: #888; margin-bottom: 16px; font-size: 12px; }
 .latest-box { padding: 12px 16px; background: rgba(232,168,124,0.1); border: 1px solid rgba(232,168,124,0.3); border-radius: 8px; margin-bottom: 20px; }
 .latest-box b { color: #e8a87c; }
@@ -4689,6 +4771,93 @@ th { background: #2d2d30; color: #e8a87c; font-size: 13px; position: sticky; top
 .layer-ice { color: #9b59b6; font-weight: 600; }
 .section-title { color: #e8a87c; font-size: 15px; font-weight: 600; margin: 18px 0 8px; }
 .scroll-wrap { max-height: 70vh; overflow-y: auto; border: 1px solid #3a3a3d; border-radius: 6px; }
+/* Tab 切换样式 */
+.tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 2px solid #3a3a3d; }
+.tab-btn { padding: 8px 22px; background: transparent; color: #aaa; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all .2s; }
+.tab-btn:hover { color: #fff; background: rgba(255,255,255,0.04); }
+.tab-btn.active { color: #e8a87c; border-bottom-color: #e8a87c; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+.sub-tabs { display: flex; gap: 6px; margin: 6px 0 12px; }
+.sub-tab-btn { padding: 5px 14px; background: #2d2d30; color: #aaa; border: 1px solid #444; border-radius: 4px; cursor: pointer; font-size: 12px; transition: all .2s; }
+.sub-tab-btn:hover { background: #3a3a3a; color: #fff; }
+.sub-tab-btn.active { background: #0e639c; color: #fff; border-color: #0e639c; font-weight: 600; }
+.canvas-wrap { overflow-x: auto; background: #151517; border: 1px solid #3a3a3d; border-radius: 6px; }
+canvas { display: block; }
+.hint { color: #777; font-size: 12px; margin: 4px 0 10px; line-height: 1.5; }
+.legend { margin-top: 8px; font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.legend-item { display: inline-flex; align-items: center; gap: 5px; color: #ccc; }
+.legend-item b { color: #fff; }
+.legend-swatch { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+/* 走势图表格 */
+.trend-wrap { overflow-x: auto; border: 1px solid #3a3a3d; border-radius: 6px; background: #151517; }
+.trend-table { width: max-content; border-collapse: collapse; font-size: 11px; }
+.trend-table thead { position: sticky; top: 0; z-index: 4; }
+.trend-table th, .trend-table td { border: 1px solid #2a2a2d; padding: 2px 4px; text-align: center; min-width: 22px; height: 22px; }
+.trend-table th { background: #2d2d30; color: #e8a87c; font-size: 10px; }
+.trend-table .th-period { min-width: 48px; position: sticky; left: 0; z-index: 5; background: #2d2d30; }
+.trend-table .td-period { background: #1e1e1e; color: #aaa; font-size: 10px; position: sticky; left: 0; z-index: 3; }
+.trend-table .td-hit { background: #e74c3c !important; color: #fff; font-weight: 700; border-radius: 2px; box-shadow: inset 0 0 0 1px #ff8a80; }
+.trend-table .td-miss { color: #777; font-size: 10px; }
+.trend-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+.trend-table tbody tr:hover { background: rgba(255,255,255,0.06); }
+/* 分区背景（8 个区间不同色调，加强版） */
+.trend-table td.g0 { background: rgba(231,76,60,0.18); color: #ff9d93; }
+.trend-table td.g1 { background: rgba(230,126,34,0.18); color: #ffb066; }
+.trend-table td.g2 { background: rgba(241,196,15,0.18); color: #f5d76e; }
+.trend-table td.g3 { background: rgba(46,204,113,0.18); color: #7ee8a4; }
+.trend-table td.g4 { background: rgba(26,188,156,0.18); color: #6ee8d2; }
+.trend-table td.g5 { background: rgba(52,152,219,0.18); color: #7ab8ff; }
+.trend-table td.g6 { background: rgba(155,89,182,0.18); color: #d0a8f0; }
+.trend-table td.g7 { background: rgba(93,109,126,0.22); color: #c0c9d4; }
+/* 表头号码按区间配色 */
+.trend-table .th-num.g0 { color: #ff8a80; }
+.trend-table .th-num.g1 { color: #ffab66; }
+.trend-table .th-num.g2 { color: #f5d76e; }
+.trend-table .th-num.g3 { color: #7ef0a8; }
+.trend-table .th-num.g4 { color: #66e6cf; }
+.trend-table .th-num.g5 { color: #82b1ff; }
+.trend-table .th-num.g6 { color: #d1a3f0; }
+.trend-table .th-num.g7 { color: #c0c9d4; }
+.trend-table td.grp-end { border-right: 2px solid #777 !important; }
+.trend-table th.grp-end { border-right: 2px solid #777 !important; }
+/* 分组表头 */
+.trend-table .grp { font-size: 11px; font-weight: 700; padding: 4px 2px; }
+.trend-table .grp-0 { background: rgba(231,76,60,0.35); color: #ffb3a7; }
+.trend-table .grp-1 { background: rgba(230,126,34,0.35); color: #ffd0a3; }
+.trend-table .grp-2 { background: rgba(241,196,15,0.35); color: #fff0a3; }
+.trend-table .grp-3 { background: rgba(46,204,113,0.35); color: #b3f5cd; }
+.trend-table .grp-4 { background: rgba(26,188,156,0.35); color: #b0f3e6; }
+.trend-table .grp-5 { background: rgba(52,152,219,0.35); color: #b5d9ff; }
+.trend-table .grp-6 { background: rgba(155,89,182,0.35); color: #dfb8f5; }
+.trend-table .grp-7 { background: rgba(93,109,126,0.4); color: #cfd6de; }
+/* 表格内预测行（与表格一体，跟随横向滚动，可点击选号） */
+.trend-table .trend-predict-row td { border-top: 2px solid #e8a87c; }
+.trend-table .td-pick { cursor: pointer; font-weight: 700; font-size: 11px; user-select: none; }
+.trend-table .td-pick:hover { box-shadow: inset 0 0 0 1px #e8a87c; }
+.trend-table .trend-predict-row.active td:not(.td-period) { background: rgba(232,168,124,0.25) !important; }
+.trend-table .trend-predict-row.active .td-period { color: #e8a87c; font-weight: 700; }
+.trend-table .td-pick.picked { background: #e74c3c !important; color: #fff !important; box-shadow: inset 0 0 0 1px #ff8a80; }
+/* 预测选号区 */
+.predict-box { margin-top: 16px; border: 1px solid rgba(232,168,124,0.4); border-radius: 8px; background: rgba(232,168,124,0.06); padding: 14px; }
+.predict-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.predict-title { color: #e8a87c; font-weight: 700; font-size: 15px; margin-right: auto; }
+.predict-box button { padding: 6px 14px; background: #0e639c; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; transition: background .2s; }
+.predict-box button:hover { background: #1177bb; }
+.predict-box button.btn-danger { background: #7a2f2f; }
+.predict-box button.btn-danger:hover { background: #a04040; }
+.predict-picker { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+.pick-ball { width: 28px; height: 28px; line-height: 26px; text-align: center; border-radius: 50%; font-size: 12px; font-weight: 600; color: #fff; cursor: pointer; border: 2px solid transparent; user-select: none; transition: all .15s; }
+.pick-ball:hover { border-color: #fff; transform: scale(1.08); }
+.pick-ball.picked { border-color: #fff; box-shadow: 0 0 0 2px #e8a87c; transform: scale(1.1); }
+.predict-rows { display: flex; flex-direction: column; gap: 8px; }
+.predict-row { display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.25); border: 1px solid #3a3a3d; border-radius: 6px; padding: 8px 10px; cursor: pointer; }
+.predict-row.active { border-color: #e8a87c; box-shadow: 0 0 0 1px #e8a87c; }
+.predict-row-label { min-width: 56px; color: #e8a87c; font-weight: 600; font-size: 12px; }
+.predict-row-nums { display: flex; flex-wrap: wrap; gap: 3px; flex: 1; }
+.predict-row-actions { display: flex; gap: 4px; }
+.predict-row-actions button { padding: 3px 8px; font-size: 11px; }
+.predict-status { margin-top: 8px; color: #2ecc71; font-size: 12px; min-height: 16px; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
 </style>
@@ -4699,22 +4868,1374 @@ th { background: #2d2d30; color: #e8a87c; font-size: 13px; position: sticky; top
 <div class="latest-box">
     <b>最新开奖 ${latestPeriod} 期：</b>
     <div class="latest-nums">${latestNums.map(n => {
-        const cls = n === 1 ? 'kball-r1' : n <= 10 ? 'kball-a' : n <= 20 ? 'kball-b' : n <= 30 ? 'kball-c' : n <= 40 ? 'kball-d' : n <= 50 ? 'kball-e' : n <= 60 ? 'kball-f' : n <= 70 ? 'kball-g' : 'kball-h';
+        const cls = n <= 10 ? 'kball-a' : n <= 20 ? 'kball-b' : n <= 30 ? 'kball-c' : n <= 40 ? 'kball-d' : n <= 50 ? 'kball-e' : n <= 60 ? 'kball-f' : n <= 70 ? 'kball-g' : 'kball-h';
         return '<span class="kball ' + cls + '">' + n + '</span>';
     }).join('')}</div>
 </div>
+
+<div class="tabs">
+    <button class="tab-btn active" data-tab="miss">📋 遗漏分层</button>
+    <button class="tab-btn" data-tab="trend">📈 走势图</button>
+</div>
+
+<div id="panel-miss" class="tab-panel active">
 <div class="section-title">📋 遗漏分层概览（按当前遗漏值分层）</div>
 <table>
 <thead><tr><th>分层</th><th>说明</th><th>号码数</th><th>平均遗漏</th><th>号码列表</th></tr></thead>
 <tbody>${layerRows}</tbody>
 </table>
 <div class="section-title">🔍 号码遗漏明细（按当前遗漏从大到小排序）</div>
+<div class="detail-toolbar">
+    <span class="detail-label">期数列：</span>
+    <span id="spanChkBox"></span>
+    <span class="span-custom-box">
+        <input type="number" id="customSpanInput" min="1" max="5000" placeholder="自定义期数，如 2000">
+        <button id="btnAddSpan">＋ 添加</button>
+    </span>
+    <span class="detail-msg" id="detailMsg"></span>
+    <span class="detail-legend">🔥≥30% 热 · 😀≥23% 较热 · 😐≥17% 一般 · 😟≥10% 较冷 · 🥶&lt;10% 冷</span>
+</div>
 <div class="scroll-wrap">
 <table>
-<thead><tr><th>号码</th><th>当前遗漏</th><th>近10期</th><th>近30期</th><th>近50期</th><th>平均遗漏</th><th>最大遗漏</th><th>最近出现期</th></tr></thead>
-<tbody>${detailHtml}</tbody>
+<thead id="detailHead"></thead>
+<tbody id="detailBody"></tbody>
 </table>
 </div>
+</div>
+
+<div id="panel-trend" class="tab-panel">
+<div class="sub-tabs">
+    <button class="sub-tab-btn active" data-subtab="zoushi">🎯 号码走势图</button>
+    <button class="sub-tab-btn" data-subtab="missline">📉 遗漏曲线</button>
+</div>
+<div id="sub-zoushi">
+    <div class="hint">横轴为开奖期数（旧 → 新，最新在右），纵轴为号码 1-80。开出号码红底白字显示，未开出号码显示当前遗漏值。表格最下方「🎯 预测」行可直接点击选号，与下方预测区联动。</div>
+    <div class="trend-wrap" id="trendTableWrap"></div>
+    <div class="predict-box" id="predictBox">
+        <div class="predict-toolbar">
+            <span class="predict-title">🎯 我的预测</span>
+            <button id="btnAddRow">＋ 增加预测行</button>
+            <button id="btnCopy">📋 一键复制</button>
+            <button id="btnClear">🗑 清空</button>
+        </div>
+        <div class="predict-picker" id="predictPicker"></div>
+        <div id="predictRows"></div>
+        <div class="predict-status" id="predictStatus"></div>
+    </div>
+</div>
+<div id="sub-missline" style="display:none;">
+    <div class="hint">当前遗漏最大的 TOP10 号码的遗漏值随期数变化曲线（开出的当期遗漏为 0）。</div>
+    <div class="canvas-wrap"><canvas id="missCanvas"></canvas></div>
+    <div class="legend" id="missLegend"></div>
+</div>
+</div>
+
+<script>
+// ===== 快乐8 走势图绘制 =====
+const HISTORY = ${JSON.stringify(history)};
+const dataOldNew = HISTORY.slice().reverse(); // 旧 → 新
+
+// ===== 遗漏明细动态渲染（可勾选期数列 + 自定义期数） =====
+const DETAIL_DATA = ${JSON.stringify(detailData)};
+// 预设期数 → 数据字段 key（自定义期数在前端实时统计）
+const spanDefs = {
+    10: 'c10', 30: 'c30', 50: 'c50', 100: 'c100', 150: 'c150', 200: 'c200'
+};
+const presetSpans = [10, 30, 50, 100, 150, 200];
+let detailSpans = [10, 30, 50, 100, 150, 200]; // 当前显示的期数列（升序）
+let customSpans = []; // 用户自定义的期数
+// 号码出现位置缓存（用于任意期数实时统计）
+const posCache = {};
+DETAIL_DATA.forEach(function(r) {
+    const ps = [];
+    for (let i = 0; i < HISTORY.length; i++) {
+        if (HISTORY[i].num.indexOf(r.n) >= 0) ps.push(i);
+    }
+    posCache[r.n] = ps;
+});
+function countInSpan(num, span) {
+    const ps = posCache[num] || [];
+    const n = Math.min(span, HISTORY.length);
+    let c = 0;
+    for (let i = 0; i < ps.length && ps[i] < n; i++) c++;
+    return c;
+}
+function hotEmoji(c, span) {
+    const r = c / span;
+    return r >= 0.30 ? '🔥' : r >= 0.233 ? '😀' : r >= 0.167 ? '😐' : r >= 0.10 ? '😟' : '🥶';
+}
+function showDetailMsg(msg, isError) {
+    const el = document.getElementById('detailMsg');
+    el.textContent = msg;
+    el.style.color = isError ? '#e74c3c' : '#2ecc71';
+    setTimeout(function() { if (el.textContent === msg) el.textContent = ''; }, 2500);
+}
+function renderSpanChks() {
+    const box = document.getElementById('spanChkBox');
+    let h = '';
+    presetSpans.forEach(function(s) {
+        h += '<label class="span-chk-label"><input type="checkbox" class="span-chk" value="' + s + '"' + (detailSpans.indexOf(s) >= 0 ? ' checked' : '') + '> 近' + s + '期</label>';
+    });
+    customSpans.forEach(function(s) {
+        h += '<label class="span-chk-label"><input type="checkbox" class="span-chk" value="' + s + '" checked> 近' + s + '期 <span class="span-del" data-del="' + s + '" title="移除该列">✕</span></label>';
+    });
+    box.innerHTML = h;
+}
+function renderMissDetail() {
+    const headEl = document.getElementById('detailHead');
+    const bodyEl = document.getElementById('detailBody');
+    if (!headEl || !bodyEl) return;
+    let h = '<tr><th>号码</th><th>当前遗漏</th>';
+    detailSpans.forEach(function(s) { h += '<th>近' + s + '期</th>'; });
+    h += '<th>平均遗漏</th><th>最大遗漏</th><th>最近出现期</th></tr>';
+    headEl.innerHTML = h;
+    let b = '';
+    DETAIL_DATA.forEach(function(r) {
+        const cls = r.n <= 10 ? 'kball-a' : r.n <= 20 ? 'kball-b' : r.n <= 30 ? 'kball-c' : r.n <= 40 ? 'kball-d' : r.n <= 50 ? 'kball-e' : r.n <= 60 ? 'kball-f' : r.n <= 70 ? 'kball-g' : 'kball-h';
+        b += '<tr><td><span class="kball ' + cls + '">' + r.n + '</span></td>';
+        b += '<td class="' + r.cls + '" style="font-weight:bold;">' + r.miss + '</td>';
+        detailSpans.forEach(function(s) {
+            const v = (s <= 200 && spanDefs[s]) ? r[spanDefs[s]] : countInSpan(r.n, s);
+            b += '<td>' + v + ' ' + hotEmoji(v, s) + '</td>';
+        });
+        b += '<td>' + r.avg + '</td><td>' + r.max + '</td><td style="color:#888;">' + r.last + '</td></tr>';
+    });
+    bodyEl.innerHTML = b;
+}
+// 勾选/取消期数列（事件委托，兼容动态生成的自定义勾选框）
+document.getElementById('spanChkBox').addEventListener('change', function(e) {
+    if (!e.target.classList.contains('span-chk')) return;
+    const s = parseInt(e.target.value);
+    const idx = detailSpans.indexOf(s);
+    if (e.target.checked) { if (idx < 0) detailSpans.push(s); }
+    else if (idx >= 0) detailSpans.splice(idx, 1);
+    detailSpans.sort(function(a, b) { return a - b; });
+    renderMissDetail();
+});
+// 移除自定义期数列
+document.getElementById('spanChkBox').addEventListener('click', function(e) {
+    if (!e.target.classList.contains('span-del')) return;
+    const s = parseInt(e.target.getAttribute('data-del'));
+    customSpans = customSpans.filter(function(x) { return x !== s; });
+    const idx = detailSpans.indexOf(s);
+    if (idx >= 0) detailSpans.splice(idx, 1);
+    renderSpanChks();
+    renderMissDetail();
+});
+// 添加自定义期数
+document.getElementById('btnAddSpan').addEventListener('click', function() {
+    const inp = document.getElementById('customSpanInput');
+    const v = parseInt(inp.value);
+    if (!v || v < 1) { showDetailMsg('请输入有效期数（≥1）', true); return; }
+    if (v > 5000) { showDetailMsg('最多支持 5000 期', true); return; }
+    if (detailSpans.indexOf(v) >= 0) { showDetailMsg('近' + v + '期已存在', true); return; }
+    customSpans.push(v);
+    detailSpans.push(v);
+    detailSpans.sort(function(a, b) { return a - b; });
+    inp.value = '';
+    renderSpanChks();
+    renderMissDetail();
+    showDetailMsg('已添加 近' + v + '期');
+});
+renderSpanChks();
+renderMissDetail();
+
+function shortPeriod(p) {
+    const s = String(p || '');
+    return s.length > 6 ? s.slice(-5) : s;
+}
+
+// 计算每期的遗漏矩阵：missMatrix[j][num] = 该号码在该期的遗漏值（0 表示开出）
+function buildMissMatrix() {
+    const n = dataOldNew.length;
+    const matrix = [];
+    const lastSeen = {};
+    for (let j = 0; j < n; j++) {
+        const row = {};
+        const nums = dataOldNew[j].num || [];
+        for (let k = 0; k < nums.length; k++) lastSeen[nums[k]] = j;
+        for (let num = 1; num <= 80; num++) {
+            if (lastSeen[num] === undefined) row[num] = j;       // 从未出现
+            else if (lastSeen[num] === j) row[num] = 0;          // 本期开出
+            else row[num] = j - lastSeen[num];                    // 未开出
+        }
+        matrix.push(row);
+    }
+    return matrix;
+}
+
+// 号码走势图表格（标准彩票走势图样式，按 1-10 / 11-20 … 71-80 分区）
+function drawTrendTable() {
+    const wrap = document.getElementById('trendTableWrap');
+    const n = dataOldNew.length;
+    if (n === 0) return;
+    const scrollLeft = wrap.scrollLeft;
+    const matrix = buildMissMatrix();
+
+    let html = '<table class="trend-table"><thead>';
+    // 分组表头
+    html += '<tr><th class="th-period"></th>';
+    for (let g = 0; g < 8; g++) {
+        const start = g * 10 + 1, end = start + 9;
+        const label = String(start).padStart(2, '0') + '-' + String(end).padStart(2, '0');
+        html += '<th colspan="10" class="grp grp-' + g + (g === 7 ? ' grp-end' : '') + '">' + label + '</th>';
+    }
+    html += '</tr>';
+    // 号码表头
+    html += '<tr><th class="th-period">期号</th>';
+    for (let num = 1; num <= 80; num++) {
+        const g = Math.floor((num - 1) / 10);
+        html += '<th class="th-num g' + g + (num % 10 === 0 ? ' grp-end' : '') + '">' + num + '</th>';
+    }
+    html += '</tr></thead><tbody>';
+
+    for (let j = 0; j < n; j++) {
+        const period = shortPeriod(dataOldNew[j].period);
+        html += '<tr><td class="td-period">' + period + '</td>';
+        const nums = dataOldNew[j].num || [];
+        const numSet = {};
+        for (let k = 0; k < nums.length; k++) numSet[nums[k]] = true;
+        for (let num = 1; num <= 80; num++) {
+            const g = Math.floor((num - 1) / 10);
+            const endCls = (num % 10 === 0) ? ' grp-end' : '';
+            if (numSet[num]) {
+                html += '<td class="td-hit g' + g + endCls + '">' + num + '</td>';
+            } else {
+                html += '<td class="td-miss g' + g + endCls + '">' + matrix[j][num] + '</td>';
+            }
+        }
+        html += '</tr>';
+    }
+    // 预测行：作为表格的一部分，紧贴数据行，跟随横向滚动，可点击选号（每行对应一个预测行）
+    for (let r = 0; r < predictRows.length; r++) {
+        const row = predictRows[r];
+        const pickedSet = {};
+        for (let k = 0; k < row.nums.length; k++) pickedSet[row.nums[k]] = true;
+        html += '<tr class="trend-predict-row' + (r === activeRow ? ' active' : '') + '" data-prow="' + r + '">';
+        html += '<td class="td-period">' + (r === activeRow ? '▶' : ' ') + ' 第' + (r + 1) + '行</td>';
+        for (let num = 1; num <= 80; num++) {
+            const g = Math.floor((num - 1) / 10);
+            const endCls = (num % 10 === 0) ? ' grp-end' : '';
+            html += '<td class="td-pick g' + g + endCls + (pickedSet[num] ? ' picked' : '') + '" data-num="' + num + '" title="点击选/取消 ' + num + '">' + num + '</td>';
+        }
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+    wrap.scrollLeft = scrollLeft;
+}
+
+// 当前遗漏 TOP10 号码
+function topMissNums() {
+    const latestSet = {};
+    const l0 = HISTORY[0];
+    if (l0 && l0.num) for (let k = 0; k < l0.num.length; k++) latestSet[l0.num[k]] = true;
+    const list = [];
+    for (let num = 1; num <= 80; num++) {
+        if (latestSet[num]) continue;
+        let miss = 0;
+        for (let i = 0; i < HISTORY.length; i++) {
+            if (HISTORY[i].num.indexOf(num) >= 0) break;
+            miss++;
+        }
+        list.push({ num: num, miss: miss });
+    }
+    list.sort(function(a, b) { return b.miss - a.miss; });
+    return list.slice(0, 10);
+}
+
+// 遗漏曲线图
+function drawMissLines() {
+    const wrap = document.getElementById('sub-missline');
+    const canvas = document.getElementById('missCanvas');
+    const n = dataOldNew.length;
+    if (n === 0) return;
+    const matrix = buildMissMatrix();
+    const topNums = topMissNums();
+    const colors = ['#e74c3c','#e67e22','#f1c40f','#2ecc71','#1abc9c','#3498db','#9b59b6','#e84393','#fd79a8','#00b894'];
+    const axisW = 40, topH = 34, bottomH = 24;
+    const w = Math.max(360, wrap.clientWidth - 8);
+    const h = 280;
+    const plotW = w - axisW - 14, plotH = h - topH - bottomH;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.fillStyle = '#151517';
+    ctx.fillRect(0, 0, w, h);
+
+    let maxMiss = 10;
+    for (let t = 0; t < topNums.length; t++) {
+        for (let j = 0; j < n; j++) {
+            const v = matrix[j][topNums[t].num];
+            if (v > maxMiss) maxMiss = v;
+        }
+    }
+    maxMiss = Math.min(maxMiss, n);
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    for (let g = 0; g <= 5; g++) {
+        const y = topH + (plotH * g) / 5;
+        ctx.beginPath(); ctx.moveTo(axisW, y); ctx.lineTo(axisW + plotW, y); ctx.stroke();
+        ctx.fillStyle = '#9a9a9a';
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(Math.round(maxMiss * (5 - g) / 5)), axisW - 4, y);
+    }
+
+    ctx.fillStyle = '#e8a87c';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('遗漏值（期）', axisW, topH / 2);
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    const step = Math.max(1, Math.ceil(n / 8));
+    for (let j = 0; j < n; j += step) {
+        const x = axisW + (j / (n - 1)) * plotW;
+        ctx.fillStyle = '#9a9a9a';
+        ctx.fillText(shortPeriod(dataOldNew[j].period), x, h - 7);
+    }
+
+    ctx.lineWidth = 1.8;
+    for (let t = 0; t < topNums.length; t++) {
+        ctx.strokeStyle = colors[t % colors.length];
+        ctx.beginPath();
+        for (let j = 0; j < n; j++) {
+            const x = axisW + (j / (n - 1)) * plotW;
+            const y = topH + plotH - (Math.min(matrix[j][topNums[t].num], maxMiss) / maxMiss) * plotH;
+            if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+    }
+
+    let lg = '';
+    for (let t = 0; t < topNums.length; t++) {
+        lg += '<span class="legend-item"><span class="legend-swatch" style="background:' + colors[t % colors.length] + '"></span><b>' + topNums[t].num + '</b> 号（当前遗漏 ' + topNums[t].miss + '）</span>';
+    }
+    document.getElementById('missLegend').innerHTML = lg;
+}
+
+// Tab 切换
+document.querySelectorAll('.tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+        this.classList.add('active');
+        document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
+        document.getElementById('panel-' + this.dataset.tab).classList.add('active');
+        if (this.dataset.tab === 'trend') {
+            const activeSub = document.querySelector('.sub-tab-btn.active');
+            if (activeSub && activeSub.dataset.subtab === 'missline') drawMissLines();
+            else drawTrendTable();
+        }
+    });
+});
+
+document.querySelectorAll('.sub-tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('.sub-tab-btn').forEach(function(b) { b.classList.remove('active'); });
+        this.classList.add('active');
+        const zoushi = document.getElementById('sub-zoushi');
+        const miss = document.getElementById('sub-missline');
+        if (this.dataset.subtab === 'zoushi') {
+            zoushi.style.display = '';
+            miss.style.display = 'none';
+            drawTrendTable();
+        } else {
+            zoushi.style.display = 'none';
+            miss.style.display = '';
+            drawMissLines();
+        }
+    });
+});
+
+// ===== 预测选号 =====
+const MAX_PICK = 20;
+const MAX_ROWS = 10;
+let predictRows = [{ nums: [] }];
+let activeRow = 0;
+
+function pickBallClass(num) {
+    if (num <= 10) return 'kball-a';
+    if (num <= 20) return 'kball-b';
+    if (num <= 30) return 'kball-c';
+    if (num <= 40) return 'kball-d';
+    if (num <= 50) return 'kball-e';
+    if (num <= 60) return 'kball-f';
+    if (num <= 70) return 'kball-g';
+    return 'kball-h';
+}
+function setStatus(msg, isError) {
+    const el = document.getElementById('predictStatus');
+    el.textContent = msg;
+    el.style.color = isError ? '#e74c3c' : '#2ecc71';
+    setTimeout(function() { if (el.textContent === msg) el.textContent = ''; }, 3000);
+}
+function renderPicker() {
+    const picker = document.getElementById('predictPicker');
+    let html = '';
+    for (let num = 1; num <= 80; num++) {
+        const picked = predictRows[activeRow].nums.indexOf(num) >= 0;
+        html += '<span class="pick-ball ' + pickBallClass(num) + (picked ? ' picked' : '') + '" data-num="' + num + '">' + num + '</span>';
+    }
+    picker.innerHTML = html;
+    picker.querySelectorAll('.pick-ball').forEach(function(b) {
+        b.addEventListener('click', function() { togglePick(parseInt(b.dataset.num)); });
+    });
+    renderTrendRow();
+}
+// 同步表格内预测行格子的选中态与活动行标记（与选号球联动）
+function renderTrendRow() {
+    const rowEls = document.querySelectorAll('.trend-predict-row');
+    if (!rowEls.length) return;
+    rowEls.forEach(function(rowEl) {
+        const r = parseInt(rowEl.getAttribute('data-prow')) || 0;
+        const row = predictRows[r];
+        const pickedSet = {};
+        if (row) for (let k = 0; k < row.nums.length; k++) pickedSet[row.nums[k]] = true;
+        rowEl.classList.toggle('active', r === activeRow);
+        const labelTd = rowEl.querySelector('.td-period');
+        if (labelTd) labelTd.textContent = (r === activeRow ? '▶' : ' ') + ' 第' + (r + 1) + '行';
+        rowEl.querySelectorAll('.td-pick').forEach(function(td) {
+            td.classList.toggle('picked', !!pickedSet[parseInt(td.getAttribute('data-num'))]);
+        });
+    });
+}
+function togglePick(num) {
+    const row = predictRows[activeRow];
+    const idx = row.nums.indexOf(num);
+    if (idx >= 0) {
+        row.nums.splice(idx, 1);
+    } else {
+        if (row.nums.length >= MAX_PICK) { setStatus('每行最多选 ' + MAX_PICK + ' 个号码', true); return; }
+        row.nums.push(num);
+        row.nums.sort(function(a, b) { return a - b; });
+    }
+    renderPredictRows();
+    renderPicker();
+}
+function renderPredictRows() {
+    const wrap = document.getElementById('predictRows');
+    let html = '';
+    for (let r = 0; r < predictRows.length; r++) {
+        const row = predictRows[r];
+        html += '<div class="predict-row' + (r === activeRow ? ' active' : '') + '" data-row="' + r + '">';
+        html += '<span class="predict-row-label">第 ' + (r + 1) + ' 行</span>';
+        html += '<span class="predict-row-nums">';
+        if (row.nums.length === 0) {
+            html += '<span style="color:#888;font-size:11px;">点击上方号码球添加（0/' + MAX_PICK + '）</span>';
+        } else {
+            for (let k = 0; k < row.nums.length; k++) {
+                const num = row.nums[k];
+                html += '<span class="kball ' + pickBallClass(num) + '" style="min-width:22px;height:22px;line-height:22px;font-size:11px;cursor:pointer;" data-rm="' + num + '">' + num + '</span>';
+            }
+        }
+        html += '</span><span class="predict-row-actions">';
+        html += '<button data-copy="' + r + '">复制</button>';
+        if (predictRows.length > 1) html += '<button class="btn-danger" data-del="' + r + '">删除</button>';
+        html += '</span></div>';
+    }
+    wrap.innerHTML = html;
+
+    // 点击行 → 设为活动行
+    wrap.querySelectorAll('.predict-row').forEach(function(rowEl) {
+        rowEl.addEventListener('click', function(e) {
+            if (e.target.tagName === 'BUTTON') return;
+            activeRow = parseInt(rowEl.dataset.row);
+            renderPredictRows();
+            renderPicker();
+        });
+    });
+    // 点击行内号码 → 移除
+    wrap.querySelectorAll('[data-rm]').forEach(function(b) {
+        b.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const r = parseInt(b.closest('.predict-row').dataset.row);
+            const row = predictRows[r];
+            const idx = row.nums.indexOf(parseInt(b.dataset.rm));
+            if (idx >= 0) row.nums.splice(idx, 1);
+            renderPredictRows();
+            renderPicker();
+        });
+    });
+    // 复制单行
+    wrap.querySelectorAll('[data-copy]').forEach(function(b) {
+        b.addEventListener('click', function(e) {
+            e.stopPropagation();
+            copyRow(parseInt(b.dataset.copy));
+        });
+    });
+    // 删除行
+    wrap.querySelectorAll('[data-del]').forEach(function(b) {
+        b.addEventListener('click', function(e) {
+            e.stopPropagation();
+            predictRows.splice(parseInt(b.dataset.del), 1);
+            if (activeRow >= predictRows.length) activeRow = predictRows.length - 1;
+            renderPredictRows();
+            renderPicker();
+            drawTrendTable();
+        });
+    });
+}
+function copyText(text, okMsg) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    if (ok) { setStatus(okMsg); return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function() { setStatus(okMsg); }, function() { setStatus('复制失败，请手动选择', true); });
+    } else {
+        setStatus('复制失败，请手动选择', true);
+    }
+}
+function formatRow(r) {
+    const row = predictRows[r];
+    return '快乐8 预测第' + (r + 1) + '行（' + row.nums.length + '个）: ' + row.nums.join(',');
+}
+function copyRow(r) {
+    if (predictRows[r].nums.length === 0) { setStatus('第 ' + (r + 1) + ' 行还没有号码', true); return; }
+    copyText(formatRow(r), '第 ' + (r + 1) + ' 行已复制 ✓');
+}
+function copyAll() {
+    const lines = [];
+    let total = 0, cnt = 0;
+    predictRows.forEach(function(row, i) {
+        if (row.nums.length > 0) { lines.push(formatRow(i)); total += row.nums.length; cnt++; }
+    });
+    if (cnt === 0) { setStatus('还没有预测号码，请先选号', true); return; }
+    copyText(lines.join('\\n'), '已复制 ' + cnt + ' 行 / ' + total + ' 个号码 ✓');
+}
+
+// 预测区按钮
+document.getElementById('btnAddRow').addEventListener('click', function() {
+    if (predictRows.length >= MAX_ROWS) { setStatus('最多 ' + MAX_ROWS + ' 行', true); return; }
+    predictRows.push({ nums: [] });
+    activeRow = predictRows.length - 1;
+    renderPredictRows();
+    renderPicker();
+    drawTrendTable();
+});
+document.getElementById('btnCopy').addEventListener('click', copyAll);
+document.getElementById('btnClear').addEventListener('click', function() {
+    predictRows = [{ nums: [] }];
+    activeRow = 0;
+    renderPredictRows();
+    renderPicker();
+    drawTrendTable();
+    setStatus('已清空');
+});
+
+// 表格内预测行点击（事件委托，绑定一次，避免重复监听）
+document.getElementById('sub-zoushi').addEventListener('click', function(e) {
+    const td = e.target;
+    if (td.classList && td.classList.contains('td-pick')) {
+        const tr = td.closest('tr');
+        if (tr && tr.hasAttribute('data-prow')) activeRow = parseInt(tr.getAttribute('data-prow'));
+        togglePick(parseInt(td.dataset.num));
+    }
+});
+
+// 初始化
+renderPicker();
+renderPredictRows();
+if (document.getElementById('panel-trend').classList.contains('active')) {
+    drawTrendTable();
+}
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 大乐透 遗漏分层 + 走势图 Webview HTML（照搬快乐8模式，适配前区 1-35 / 后区 1-12）
+ */
+function getDltMissHtml(history) {
+    const total = history.length;
+    const latest = history[0];
+    const latestPeriod = latest ? latest.period : '—';
+    const latestFront = latest ? (latest.front || []) : [];
+    const latestBack = latest ? (latest.back || []) : [];
+
+    // ===== 通用统计 =====
+    function calcStats(list, nMax) {
+        const stats = {};
+        for (let n = 1; n <= nMax; n++) {
+            let miss = -1;
+            let lastPeriod = '—';
+            const positions = [];
+            for (let i = 0; i < total; i++) {
+                if ((list[i] || []).indexOf(n) >= 0) {
+                    if (miss < 0) {
+                        miss = i;
+                        lastPeriod = history[i].period;
+                    }
+                    positions.push(i);
+                }
+            }
+            if (miss < 0) miss = total;
+            const c10 = positions.filter(p => p < 10).length;
+            const c30 = positions.filter(p => p < 30).length;
+            const c50 = positions.filter(p => p < 50).length;
+            const c100 = positions.filter(p => p < 100).length;
+            const c150 = positions.filter(p => p < 150).length;
+            const c200 = positions.filter(p => p < 200).length;
+            let avgMiss = 0;
+            let maxMiss = 0;
+            if (positions.length > 1) {
+                const gaps = [];
+                for (let i = 0; i < positions.length - 1; i++) gaps.push(positions[i + 1] - positions[i] - 1);
+                gaps.push(positions[positions.length - 1]);
+                avgMiss = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+                maxMiss = Math.max(...gaps);
+            } else if (positions.length === 1) {
+                avgMiss = positions[0];
+                maxMiss = positions[0];
+            }
+            stats[n] = {
+                miss, c10, c30, c50, c100, c150, c200,
+                avgMiss: Math.round(avgMiss * 10) / 10,
+                maxMiss,
+                lastPeriod
+            };
+        }
+        return stats;
+    }
+    const frontStats = calcStats(history.map(h => h.front || []), 35);
+    const backStats = calcStats(history.map(h => h.back || []), 12);
+
+    function layerClsOf(miss) {
+        return miss === 0 ? 'layer-hot' : miss <= 2 ? 'layer-warm' : miss <= 5 ? 'layer-cool' : miss <= 10 ? 'layer-cold' : miss <= 20 ? 'layer-freeze' : 'layer-ice';
+    }
+    function buildDetailData(stats, nMax) {
+        const arr = [];
+        for (let n = 1; n <= nMax; n++) {
+            const s = stats[n];
+            arr.push({
+                n,
+                miss: s.miss,
+                c10: s.c10, c30: s.c30, c50: s.c50,
+                c100: s.c100, c150: s.c150, c200: s.c200,
+                avg: s.avgMiss,
+                max: s.maxMiss,
+                last: s.lastPeriod,
+                cls: layerClsOf(s.miss)
+            });
+        }
+        arr.sort((a, b) => b.miss - a.miss);
+        return arr;
+    }
+    const detailF = buildDetailData(frontStats, 35);
+    const detailB = buildDetailData(backStats, 12);
+
+    // ===== 分层概览 =====
+    const layers = [
+        { name: '热号', range: [0, 0], cls: 'layer-hot', desc: '上期开出' },
+        { name: '温热', range: [1, 2], cls: 'layer-warm', desc: '遗漏 1-2 期' },
+        { name: '温冷', range: [3, 5], cls: 'layer-cool', desc: '遗漏 3-5 期' },
+        { name: '冷号', range: [6, 10], cls: 'layer-cold', desc: '遗漏 6-10 期' },
+        { name: '极冷', range: [11, 20], cls: 'layer-freeze', desc: '遗漏 11-20 期' },
+        { name: '冰封', range: [21, 999], cls: 'layer-ice', desc: '遗漏 20+ 期' }
+    ];
+    function buildLayerRows(stats, nMax, ballFn) {
+        let rows = '';
+        for (const layer of layers) {
+            const nums = [];
+            let sumMiss = 0;
+            for (let n = 1; n <= nMax; n++) {
+                const m = stats[n].miss;
+                if (m >= layer.range[0] && m <= layer.range[1]) {
+                    nums.push(n);
+                    sumMiss += m;
+                }
+            }
+            if (nums.length === 0) continue;
+            const avg = Math.round(sumMiss / nums.length * 10) / 10;
+            const balls = nums.map(n => '<span class="kball ' + ballFn(n) + '">' + n + '</span>').join('');
+            rows += '<tr><td class="' + layer.cls + '" style="font-weight:bold;">' + layer.name + '</td>' +
+                '<td style="color:#aaa;">' + layer.desc + '</td>' +
+                '<td>' + nums.length + '</td>' +
+                '<td>' + avg + '</td>' +
+                '<td>' + balls + '</td></tr>';
+        }
+        return rows;
+    }
+    const frontBallCls = n => 'kball-' + 'abcdefg'[Math.floor((n - 1) / 5)];
+    const backBallCls = n => n <= 6 ? 'kball-h' : 'kball-i';
+    const layerRowsF = buildLayerRows(frontStats, 35, frontBallCls);
+    const layerRowsB = buildLayerRows(backStats, 12, backBallCls);
+    const latestFrontBalls = latestFront.map(n => '<span class="kball ' + frontBallCls(n) + '">' + n + '</span>').join('');
+    const latestBackBalls = latestBack.map(n => '<span class="kball ' + backBallCls(n) + '">' + n + '</span>').join('');
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>大乐透遗漏分层 - ${latestPeriod}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
+h2 { color: #e8a87c; margin-bottom: 8px; font-size: 20px; }
+.sub { color: #aaa; margin-bottom: 12px; font-size: 12px; }
+.latest-box { background: rgba(232,168,124,0.08); border: 1px solid rgba(232,168,124,0.3); border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }
+.latest-nums { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; align-items: center; }
+.zone-label { color: #8ec5ff; font-weight: 600; margin: 0 6px; font-size: 12px; }
+.kball { display: inline-block; width: 28px; height: 28px; line-height: 26px; text-align: center; border-radius: 50%; font-size: 12px; font-weight: 600; color: #fff; }
+.kball-a { background: linear-gradient(135deg,#e67e22,#f39c12); }
+.kball-b { background: linear-gradient(135deg,#f1c40f,#f5d76e); color: #3a2c00; }
+.kball-c { background: linear-gradient(135deg,#2ecc71,#27ae60); }
+.kball-d { background: linear-gradient(135deg,#1abc9c,#16a085); }
+.kball-e { background: linear-gradient(135deg,#3498db,#2980b9); }
+.kball-f { background: linear-gradient(135deg,#9b59b6,#8e44ad); }
+.kball-g { background: linear-gradient(135deg,#7f8c8d,#95a5a6); }
+.kball-h { background: linear-gradient(135deg,#6c5ce7,#a29bfe); }
+.kball-i { background: linear-gradient(135deg,#e84393,#fd79a8); }
+table { border-collapse: collapse; width: 100%; }
+th, td { border: 1px solid #3a3a3d; padding: 4px 6px; text-align: center; font-size: 12px; }
+th { background: #2d2d30; color: #aaa; position: sticky; top: 0; z-index: 2; }
+.layer-hot { color: #e74c3c; font-weight: 600; }
+.layer-warm { color: #e67e22; font-weight: 600; }
+.layer-cool { color: #f1c40f; font-weight: 600; }
+.layer-cold { color: #2ecc71; font-weight: 600; }
+.layer-freeze { color: #3498db; font-weight: 600; }
+.layer-ice { color: #9b59b6; font-weight: 600; }
+.section-title { color: #e8a87c; font-size: 15px; font-weight: 600; margin: 18px 0 8px; }
+.table-caption { display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.03); border: 1px solid #3a3a3d; border-left: 4px solid #e8a87c; border-radius: 6px; padding: 6px 12px; margin: 16px 0 6px; font-size: 13px; color: #e8a87c; font-weight: 600; }
+.zone-badge-f { background: #e8a87c; color: #1e1e1e; border-radius: 10px; padding: 1px 12px; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+.zone-badge-b { background: #8ec5ff; color: #10253b; border-radius: 10px; padding: 1px 12px; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+.caption-desc { color: #999; font-size: 11px; font-weight: 400; margin-left: auto; }
+.scroll-wrap { max-height: 70vh; overflow-y: auto; border: 1px solid #3a3a3d; border-radius: 6px; }
+.tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 2px solid #3a3a3d; }
+.tab-btn { padding: 8px 22px; background: transparent; color: #aaa; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all .2s; }
+.tab-btn:hover { color: #fff; background: rgba(255,255,255,0.04); }
+.tab-btn.active { color: #e8a87c; border-bottom-color: #e8a87c; }
+.sub-tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid #3a3a3d; }
+.sub-tab-btn { padding: 6px 14px; background: transparent; color: #aaa; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; font-size: 13px; transition: all .2s; }
+.sub-tab-btn:hover { color: #fff; }
+.sub-tab-btn.active { color: #8ec5ff; border-bottom-color: #8ec5ff; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+.sub-panel { display: none; }
+.sub-panel.active { display: block; }
+.detail-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-bottom: 8px; font-size: 12px; }
+.detail-label { color: #aaa; }
+.span-chk-label { display: inline-flex; align-items: center; gap: 3px; color: #e8a87c; cursor: pointer; user-select: none; }
+.span-chk-label input { accent-color: #e8a87c; cursor: pointer; }
+.detail-legend { color: #999; font-size: 11px; margin-left: auto; }
+.span-custom-box { display: inline-flex; align-items: center; gap: 4px; }
+.span-custom-box input { width: 96px; background: #2d2d30; border: 1px solid #3c3c3f; color: #ddd; border-radius: 3px; padding: 3px 6px; font-size: 12px; }
+.span-custom-box input:focus { outline: none; border-color: #e8a87c; }
+.span-custom-box button { background: #0e639c; color: #fff; border: none; border-radius: 3px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+.span-custom-box button:hover { background: #1177bb; }
+.span-del { margin-left: 3px; color: #e74c3c; cursor: pointer; font-size: 10px; font-weight: 700; }
+.span-del:hover { color: #ff6b5e; }
+.detail-msg { color: #2ecc71; font-size: 11px; }
+.trend-wrap { overflow-x: auto; overflow-y: auto; max-height: 70vh; border: 1px solid #3a3a3d; border-radius: 6px; }
+.trend-table { border-collapse: collapse; }
+.trend-table th, .trend-table td { border: 1px solid #3a3a3d; min-width: 24px; padding: 2px 1px; text-align: center; font-size: 10px; }
+.trend-table .th-period, .trend-table .td-period { min-width: 54px; background: #1e1e1e; position: sticky; left: 0; z-index: 3; color: #bbb; font-weight: 600; }
+.trend-table th { position: sticky; top: 0; z-index: 2; background: #2d2d30; }
+.trend-table th.th-period { z-index: 4; }
+.trend-table .td-hit { background: #e74c3c !important; color: #fff; box-shadow: inset 0 0 0 1px #ff8a80; font-weight: 700; }
+.trend-table .td-miss { color: #888; }
+.trend-table td.g0 { background: rgba(231,76,60,0.18); color: #ff9d93; }
+.trend-table td.g1 { background: rgba(230,126,34,0.18); color: #ffb374; }
+.trend-table td.g2 { background: rgba(241,196,15,0.18); color: #ffd97a; }
+.trend-table td.g3 { background: rgba(46,204,113,0.18); color: #7be0a8; }
+.trend-table td.g4 { background: rgba(26,188,156,0.18); color: #7ed9c8; }
+.trend-table td.g5 { background: rgba(52,152,219,0.18); color: #7cc4ec; }
+.trend-table td.g6 { background: rgba(155,89,182,0.18); color: #c39bdd; }
+.trend-table td.g7 { background: rgba(108,122,137,0.18); color: #a9b6c2; }
+.trend-table td.g8 { background: rgba(214,69,120,0.18); color: #f5a8c5; }
+.trend-table th.grp-end, .trend-table td.grp-end { border-right: 2px solid #777 !important; }
+.trend-table .trend-predict-row td { border-top: 2px solid #e8a87c; }
+.trend-table .td-pick { cursor: pointer; font-weight: 700; font-size: 11px; user-select: none; }
+.trend-table .td-pick:hover { box-shadow: inset 0 0 0 1px #e8a87c; }
+.trend-table .trend-predict-row.active td:not(.td-period) { background: rgba(232,168,124,0.25) !important; }
+.trend-table .trend-predict-row.active .td-period { color: #e8a87c; font-weight: 700; }
+.trend-table .td-pick.picked { background: #e74c3c !important; color: #fff !important; box-shadow: inset 0 0 0 1px #ff8a80; }
+.hint { color: #999; font-size: 11px; margin-bottom: 8px; line-height: 1.6; }
+.canvas-wrap { background: #141414; border: 1px solid #3a3a3d; border-radius: 6px; padding: 8px; margin-bottom: 12px; }
+canvas { width: 100%; display: block; }
+.predict-box { margin-top: 16px; border: 1px solid rgba(232,168,124,0.4); border-radius: 8px; background: rgba(232,168,124,0.06); padding: 14px; }
+.predict-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.predict-title { color: #e8a87c; font-weight: 700; font-size: 15px; margin-right: auto; }
+.predict-box button { padding: 6px 14px; background: #0e639c; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; transition: background .2s; }
+.predict-box button:hover { background: #1177bb; }
+.predict-box button.btn-danger { background: #7a2f2f; }
+.predict-box button.btn-danger:hover { background: #a04040; }
+.predict-picker { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; align-items: center; }
+.pick-zone-label { color: #8ec5ff; font-weight: 600; font-size: 12px; margin-right: 6px; min-width: 64px; }
+.pick-ball { width: 28px; height: 28px; line-height: 26px; text-align: center; border-radius: 50%; font-size: 12px; font-weight: 600; color: #fff; cursor: pointer; border: 2px solid transparent; user-select: none; transition: all .15s; }
+.pick-ball:hover { border-color: #fff; transform: scale(1.08); }
+.pick-ball.picked { border-color: #fff; box-shadow: 0 0 0 2px #e8a87c; transform: scale(1.1); }
+.predict-rows { display: flex; flex-direction: column; gap: 8px; }
+.predict-row { display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.25); border: 1px solid #3a3a3d; border-radius: 6px; padding: 8px 10px; cursor: pointer; }
+.predict-row.active { border-color: #e8a87c; box-shadow: 0 0 0 1px #e8a87c; }
+.predict-row-label { min-width: 56px; color: #e8a87c; font-weight: 600; font-size: 12px; }
+.predict-row-nums { display: flex; flex-wrap: wrap; gap: 3px; flex: 1; align-items: center; font-size: 12px; }
+.predict-row-nums .zone-tag { color: #8ec5ff; margin: 0 2px; }
+.predict-row-actions { display: flex; gap: 4px; }
+.predict-row-actions button { padding: 3px 8px; font-size: 11px; }
+.predict-status { margin-top: 8px; color: #2ecc71; font-size: 12px; min-height: 16px; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h2>🎯 大乐透 遗漏分层分析</h2>
+<div class="sub">数据源：500.com · 共 ${total} 期（最新 ${latestPeriod} 期）</div>
+<div class="latest-box">
+    <b>最新开奖 ${latestPeriod} 期：</b>
+    <div class="latest-nums"><span class="zone-label">前区</span>${latestFrontBalls}<span class="zone-label">后区</span>${latestBackBalls}</div>
+</div>
+
+<div class="tabs">
+    <button class="tab-btn active" data-tab="miss">📋 遗漏分层</button>
+    <button class="tab-btn" data-tab="trend">📈 走势图</button>
+</div>
+
+<div id="panel-miss" class="tab-panel active">
+<div class="table-caption"><span class="zone-badge-f">前区</span>遗漏分层概览（按当前遗漏值分层）<span class="caption-desc">号码范围 1-35，每期开出 5 个</span></div>
+<table>
+<thead><tr><th>分层</th><th>说明</th><th>号码数</th><th>平均遗漏</th><th>号码列表</th></tr></thead>
+<tbody>${layerRowsF}</tbody>
+</table>
+<div class="table-caption"><span class="zone-badge-b">后区</span>遗漏分层概览（按当前遗漏值分层）<span class="caption-desc">号码范围 1-12，每期开出 2 个</span></div>
+<table>
+<thead><tr><th>分层</th><th>说明</th><th>号码数</th><th>平均遗漏</th><th>号码列表</th></tr></thead>
+<tbody>${layerRowsB}</tbody>
+</table>
+<div class="section-title">🔍 号码遗漏明细（按当前遗漏从大到小排序，可勾选 / 自定义期数列）</div>
+<div class="detail-toolbar">
+    <span class="detail-label">期数列：</span>
+    <span id="spanChkBox"></span>
+    <span class="span-custom-box">
+        <input type="number" id="customSpanInput" min="1" max="5000" placeholder="自定义期数，如 2000">
+        <button id="btnAddSpan">＋ 添加</button>
+    </span>
+    <span class="detail-msg" id="detailMsg"></span>
+    <span class="detail-legend">🔥≥30% 热 · 😀≥23% 较热 · 😐≥17% 一般 · 😟≥10% 较冷 · 🥶&lt;10% 冷</span>
+</div>
+<div class="table-caption"><span class="zone-badge-f">前区</span>号码遗漏明细<span class="caption-desc">号码 1-35，按当前遗漏从大到小排序</span></div>
+<div class="scroll-wrap" style="margin-bottom:12px;">
+<table>
+<thead id="detailHeadF"></thead>
+<tbody id="detailBodyF"></tbody>
+</table>
+</div>
+<div class="table-caption"><span class="zone-badge-b">后区</span>号码遗漏明细<span class="caption-desc">号码 1-12，按当前遗漏从大到小排序</span></div>
+<div class="scroll-wrap">
+<table>
+<thead id="detailHeadB"></thead>
+<tbody id="detailBodyB"></tbody>
+</table>
+</div>
+</div>
+
+<div id="panel-trend" class="tab-panel">
+<div class="sub-tabs">
+    <button class="sub-tab-btn active" data-subtab="front">🎯 前区走势图</button>
+    <button class="sub-tab-btn" data-subtab="back">🎯 后区走势图</button>
+    <button class="sub-tab-btn" data-subtab="missline">📉 遗漏曲线</button>
+</div>
+<div id="sub-front" class="sub-panel active">
+    <div class="hint">横轴为开奖期数（旧 → 新，最新在右），纵轴为号码 1-35。开出号码红底白字，未开出号码显示当前遗漏值。表格最下方「🎯 预测」行可直接点击选号（前区最多 5 个），与下方预测区联动。</div>
+    <div class="trend-wrap" id="trendWrapF"></div>
+</div>
+<div id="sub-back" class="sub-panel">
+    <div class="hint">横轴为开奖期数（旧 → 新，最新在右），纵轴为号码 1-12。开出号码红底白字，未开出号码显示当前遗漏值。表格最下方「🎯 预测」行可直接点击选号（后区最多 2 个），与下方预测区联动。</div>
+    <div class="trend-wrap" id="trendWrapB"></div>
+</div>
+<div id="sub-missline" class="sub-panel">
+    <div class="hint">最近 ${Math.min(60, total)} 期各号码遗漏值曲线（上方为前区，下方为后区）。</div>
+    <div class="canvas-wrap"><canvas id="missCanvasF"></canvas></div>
+    <div class="canvas-wrap"><canvas id="missCanvasB"></canvas></div>
+</div>
+<div class="predict-box">
+    <div class="predict-toolbar">
+        <span class="predict-title">🎯 预测选号</span>
+        <button id="btnAddRow">＋ 增加预测行</button>
+        <button id="btnCopyAll">📋 一键复制全部</button>
+        <button id="btnClear" class="btn-danger">🗑 清空</button>
+    </div>
+    <div class="predict-picker" id="pickBoxF"></div>
+    <div class="predict-picker" id="pickBoxB"></div>
+    <div class="predict-rows" id="predictRowsWrap"></div>
+    <div class="predict-status" id="predictStatus"></div>
+</div>
+</div>
+
+<script>
+// ===== 大乐透 遗漏分层 + 走势图 =====
+const HISTORY = ${JSON.stringify(history)};
+const dataOldNew = HISTORY.slice().reverse(); // 旧 → 新
+const DETAIL_F = ${JSON.stringify(detailF)};
+const DETAIL_B = ${JSON.stringify(detailB)};
+const spanDefs = { 10: 'c10', 30: 'c30', 50: 'c50', 100: 'c100', 150: 'c150', 200: 'c200' };
+const presetSpans = [10, 30, 50, 100, 150, 200];
+let detailSpans = [10, 30, 50, 100, 150, 200];
+let customSpans = [];
+const posCache = {};
+DETAIL_F.concat(DETAIL_B).forEach(function(r) {
+    const ps = [];
+    for (let i = 0; i < HISTORY.length; i++) {
+        const hit = (r.n <= 35) ? ((HISTORY[i].front || []).indexOf(r.n) >= 0) : ((HISTORY[i].back || []).indexOf(r.n) >= 0);
+        if (hit) ps.push(i);
+    }
+    posCache[r.n] = ps;
+});
+function countInSpan(num, span) {
+    const ps = posCache[num] || [];
+    const n = Math.min(span, HISTORY.length);
+    let c = 0;
+    for (let i = 0; i < ps.length && ps[i] < n; i++) c++;
+    return c;
+}
+function hotEmoji(c, span) {
+    const r = c / span;
+    return r >= 0.30 ? '🔥' : r >= 0.233 ? '😀' : r >= 0.167 ? '😐' : r >= 0.10 ? '😟' : '🥶';
+}
+function showDetailMsg(msg, isError) {
+    const el = document.getElementById('detailMsg');
+    el.textContent = msg;
+    el.style.color = isError ? '#e74c3c' : '#2ecc71';
+    setTimeout(function() { if (el.textContent === msg) el.textContent = ''; }, 2500);
+}
+function renderSpanChks() {
+    const box = document.getElementById('spanChkBox');
+    let h = '';
+    presetSpans.forEach(function(s) {
+        h += '<label class="span-chk-label"><input type="checkbox" class="span-chk" value="' + s + '"' + (detailSpans.indexOf(s) >= 0 ? ' checked' : '') + '> 近' + s + '期</label>';
+    });
+    customSpans.forEach(function(s) {
+        h += '<label class="span-chk-label"><input type="checkbox" class="span-chk" value="' + s + '" checked> 近' + s + '期 <span class="span-del" data-del="' + s + '" title="移除该列">✕</span></label>';
+    });
+    box.innerHTML = h;
+}
+function ballClsOf(num) {
+    if (num <= 35) return 'kball-' + 'abcdefg'[Math.floor((num - 1) / 5)];
+    return num <= 6 ? 'kball-h' : 'kball-i';
+}
+function renderMissDetail() {
+    const headF = document.getElementById('detailHeadF');
+    const bodyF = document.getElementById('detailBodyF');
+    const headB = document.getElementById('detailHeadB');
+    const bodyB = document.getElementById('detailBodyB');
+    let h = '<tr><th>号码</th><th>当前遗漏</th>';
+    detailSpans.forEach(function(s) { h += '<th>近' + s + '期</th>'; });
+    h += '<th>平均遗漏</th><th>最大遗漏</th><th>最近出现期</th></tr>';
+    headF.innerHTML = h;
+    headB.innerHTML = h;
+    function rowsHtml(data) {
+        let b = '';
+        data.forEach(function(r) {
+            b += '<tr><td><span class="kball ' + ballClsOf(r.n) + '">' + r.n + '</span></td>';
+            b += '<td class="' + r.cls + '" style="font-weight:bold;">' + r.miss + '</td>';
+            detailSpans.forEach(function(s) {
+                const v = (s <= 200 && spanDefs[s]) ? r[spanDefs[s]] : countInSpan(r.n, s);
+                b += '<td>' + v + ' ' + hotEmoji(v, s) + '</td>';
+            });
+            b += '<td>' + r.avg + '</td><td>' + r.max + '</td><td style="color:#888;">' + r.last + '</td></tr>';
+        });
+        return b;
+    }
+    bodyF.innerHTML = rowsHtml(DETAIL_F);
+    bodyB.innerHTML = rowsHtml(DETAIL_B);
+}
+document.getElementById('spanChkBox').addEventListener('change', function(e) {
+    if (!e.target.classList.contains('span-chk')) return;
+    const s = parseInt(e.target.value);
+    const idx = detailSpans.indexOf(s);
+    if (e.target.checked) { if (idx < 0) detailSpans.push(s); }
+    else if (idx >= 0) detailSpans.splice(idx, 1);
+    detailSpans.sort(function(a, b) { return a - b; });
+    renderMissDetail();
+});
+document.getElementById('spanChkBox').addEventListener('click', function(e) {
+    if (!e.target.classList.contains('span-del')) return;
+    const s = parseInt(e.target.getAttribute('data-del'));
+    customSpans = customSpans.filter(function(x) { return x !== s; });
+    const idx = detailSpans.indexOf(s);
+    if (idx >= 0) detailSpans.splice(idx, 1);
+    renderSpanChks();
+    renderMissDetail();
+});
+document.getElementById('btnAddSpan').addEventListener('click', function() {
+    const inp = document.getElementById('customSpanInput');
+    const v = parseInt(inp.value);
+    if (!v || v < 1) { showDetailMsg('请输入有效期数（≥1）', true); return; }
+    if (v > 5000) { showDetailMsg('最多支持 5000 期', true); return; }
+    if (detailSpans.indexOf(v) >= 0) { showDetailMsg('近' + v + '期已存在', true); return; }
+    customSpans.push(v);
+    detailSpans.push(v);
+    detailSpans.sort(function(a, b) { return a - b; });
+    inp.value = '';
+    renderSpanChks();
+    renderMissDetail();
+    showDetailMsg('已添加 近' + v + '期');
+});
+
+// ===== 走势图表格 =====
+function shortPeriod(p) { return p ? String(p).slice(-4) : ''; }
+function nMaxOf(zone) { return zone === 'f' ? 35 : 12; }
+function gSizeOf(zone) { return zone === 'f' ? 5 : 6; }
+function gCls(zone, num) { return zone === 'f' ? Math.floor((num - 1) / 5) : Math.floor((num - 1) / 6); }
+function gCount(zone) { return zone === 'f' ? 7 : 2; }
+function numsOf(zone, h) { return zone === 'f' ? (h.front || []) : (h.back || []); }
+function trendTableHtml(zone) {
+    const nMax = nMaxOf(zone);
+    const gSize = gSizeOf(zone);
+    const gN = gCount(zone);
+    let html = '<table class="trend-table">';
+    html += '<tr><th class="th-period">期数</th>';
+    for (let g = 0; g < gN; g++) {
+        const start = g * gSize + 1;
+        const end = Math.min(start + gSize - 1, nMax);
+        html += '<th colspan="' + gSize + '" class="grp grp-' + g + (g === gN - 1 ? ' grp-end' : '') + '">' + String(start).padStart(2, '0') + '-' + String(end).padStart(2, '0') + '</th>';
+    }
+    html += '</tr><tr><th class="th-period"></th>';
+    for (let num = 1; num <= nMax; num++) {
+        const g = gCls(zone, num);
+        html += '<th class="th-num g' + g + (num % gSize === 0 ? ' grp-end' : '') + '">' + num + '</th>';
+    }
+    html += '</tr>';
+    const last = {};
+    for (let num = 1; num <= nMax; num++) last[num] = -1;
+    for (let j = 0; j < dataOldNew.length; j++) {
+        const period = shortPeriod(dataOldNew[j].period);
+        const nums = numsOf(zone, dataOldNew[j]);
+        const numSet = {};
+        for (let k = 0; k < nums.length; k++) numSet[nums[k]] = true;
+        html += '<tr><td class="td-period">' + period + '</td>';
+        for (let num = 1; num <= nMax; num++) {
+            const g = gCls(zone, num);
+            const endCls = (num % gSize === 0) ? ' grp-end' : '';
+            if (numSet[num]) {
+                last[num] = 0;
+                html += '<td class="td-hit g' + g + endCls + '">' + num + '</td>';
+            } else {
+                if (last[num] >= 0) last[num]++;
+                html += '<td class="td-miss g' + g + endCls + '">' + (last[num] >= 0 ? last[num] : '') + '</td>';
+            }
+        }
+        html += '</tr>';
+    }
+    for (let r = 0; r < predictRows.length; r++) {
+        const row = predictRows[r];
+        const arr = zone === 'f' ? row.front : row.back;
+        const pickedSet = {};
+        for (let k = 0; k < arr.length; k++) pickedSet[arr[k]] = true;
+        html += '<tr class="trend-predict-row' + (r === activeRow ? ' active' : '') + '" data-prow="' + r + '" data-zone="' + zone + '">';
+        html += '<td class="td-period">' + (r === activeRow ? '▶' : ' ') + ' 第' + (r + 1) + '行</td>';
+        for (let num = 1; num <= nMax; num++) {
+            const g = gCls(zone, num);
+            const endCls = (num % gSize === 0) ? ' grp-end' : '';
+            html += '<td class="td-pick g' + g + endCls + (pickedSet[num] ? ' picked' : '') + '" data-num="' + num + '" title="点击选/取消 ' + num + '">' + num + '</td>';
+        }
+        html += '</tr>';
+    }
+    html += '</table>';
+    return html;
+}
+function drawTrendTable(zone) {
+    const wrap = document.getElementById(zone === 'f' ? 'trendWrapF' : 'trendWrapB');
+    const scrollLeft = wrap.scrollLeft;
+    wrap.innerHTML = trendTableHtml(zone);
+    wrap.scrollLeft = scrollLeft;
+}
+
+// ===== 遗漏曲线 =====
+function drawMissLines(zone) {
+    const canvas = document.getElementById(zone === 'f' ? 'missCanvasF' : 'missCanvasB');
+    const nMax = nMaxOf(zone);
+    const n = dataOldNew.length;
+    if (n === 0) return;
+    const show = Math.min(60, n);
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.clientWidth || 800;
+    const H = 260;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.fillStyle = '#141414';
+    ctx.fillRect(0, 0, W, H);
+    const recent = dataOldNew.slice(-show);
+    const series = {};
+    const last = {};
+    for (let num = 1; num <= nMax; num++) { series[num] = []; last[num] = -1; }
+    for (let i = 0; i < recent.length; i++) {
+        const nums = numsOf(zone, recent[i]);
+        const numSet = {};
+        for (let k = 0; k < nums.length; k++) numSet[nums[k]] = true;
+        for (let num = 1; num <= nMax; num++) {
+            if (numSet[num]) last[num] = 0; else if (last[num] >= 0) last[num]++;
+            series[num].push(last[num]);
+        }
+    }
+    const YMAX = 30;
+    const X = function(i) { return 10 + (show > 1 ? i * (W - 20) / (show - 1) : 0); };
+    const Y = function(v) { return H - 10 - Math.min(v, YMAX) / YMAX * (H - 30); };
+    const colors = ['#e74c3c','#e67e22','#f1c40f','#2ecc71','#1abc9c','#3498db','#9b59b6','#e84393','#6c5ce7','#fd79a8','#00cec9','#fdcb6e'];
+    for (let num = 1; num <= nMax; num++) {
+        const arr = series[num];
+        ctx.strokeStyle = colors[num % colors.length];
+        ctx.globalAlpha = 0.4;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let i = 0; i < arr.length; i++) {
+            const px = X(i);
+            const py = Y(arr[i]);
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+    }
+    ctx.globalAlpha = 0.15;
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let v = 0; v <= YMAX; v += 5) {
+        ctx.moveTo(10, Y(v));
+        ctx.lineTo(W - 10, Y(v));
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#888';
+    ctx.font = '10px sans-serif';
+    ctx.fillText(zone === 'f' ? '前区 1-35 遗漏曲线（最近 ' + show + ' 期）' : '后区 1-12 遗漏曲线（最近 ' + show + ' 期）', 12, 14);
+}
+
+// ===== 预测选号 =====
+const MAX_F = 5;
+const MAX_B = 2;
+const MAX_ROWS = 10;
+let predictRows = [{ front: [], back: [] }];
+let activeRow = 0;
+function setStatus(msg, isError) {
+    const el = document.getElementById('predictStatus');
+    el.textContent = msg;
+    el.style.color = isError ? '#e74c3c' : '#2ecc71';
+}
+function pickBallClsF(num) { return 'kball-' + 'abcdefg'[Math.floor((num - 1) / 5)]; }
+function pickBallClsB(num) { return num <= 6 ? 'kball-h' : 'kball-i'; }
+function togglePick(zone, num) {
+    const row = predictRows[activeRow];
+    const arr = zone === 'f' ? row.front : row.back;
+    const max = zone === 'f' ? MAX_F : MAX_B;
+    const idx = arr.indexOf(num);
+    if (idx >= 0) {
+        arr.splice(idx, 1);
+    } else {
+        if (arr.length >= max) {
+            setStatus((zone === 'f' ? '前区' : '后区') + '最多选 ' + max + ' 个（当前已选 ' + arr.length + ' 个）', true);
+            return;
+        }
+        arr.push(num);
+        arr.sort(function(a, b) { return a - b; });
+    }
+    renderPicker();
+    renderPredictRows();
+    setStatus((zone === 'f' ? '前区' : '后区') + '已选：' + (zone === 'f' ? row.front.join(',') : row.back.join(',')));
+}
+function renderPicker() {
+    const boxF = document.getElementById('pickBoxF');
+    const boxB = document.getElementById('pickBoxB');
+    let h = '<span class="pick-zone-label">前区(选5)</span>';
+    for (let num = 1; num <= 35; num++) {
+        const picked = predictRows[activeRow].front.indexOf(num) >= 0;
+        h += '<span class="pick-ball ' + pickBallClsF(num) + (picked ? ' picked' : '') + '" data-zone="f" data-num="' + num + '">' + num + '</span>';
+    }
+    boxF.innerHTML = h;
+    h = '<span class="pick-zone-label">后区(选2)</span>';
+    for (let num = 1; num <= 12; num++) {
+        const picked = predictRows[activeRow].back.indexOf(num) >= 0;
+        h += '<span class="pick-ball ' + pickBallClsB(num) + (picked ? ' picked' : '') + '" data-zone="b" data-num="' + num + '">' + num + '</span>';
+    }
+    boxB.innerHTML = h;
+    renderTrendRow();
+}
+function renderTrendRow() {
+    const rowEls = document.querySelectorAll('.trend-predict-row');
+    if (!rowEls.length) return;
+    rowEls.forEach(function(rowEl) {
+        const r = parseInt(rowEl.getAttribute('data-prow')) || 0;
+        const zone = rowEl.getAttribute('data-zone');
+        const row = predictRows[r];
+        const pickedSet = {};
+        if (row) {
+            const arr = zone === 'f' ? row.front : row.back;
+            for (let k = 0; k < arr.length; k++) pickedSet[arr[k]] = true;
+        }
+        rowEl.classList.toggle('active', r === activeRow);
+        const labelTd = rowEl.querySelector('.td-period');
+        if (labelTd) labelTd.textContent = (r === activeRow ? '▶' : ' ') + ' 第' + (r + 1) + '行';
+        rowEl.querySelectorAll('.td-pick').forEach(function(td) {
+            td.classList.toggle('picked', !!pickedSet[parseInt(td.getAttribute('data-num'))]);
+        });
+    });
+}
+function renderPredictRows() {
+    const wrap = document.getElementById('predictRowsWrap');
+    let h = '';
+    predictRows.forEach(function(row, i) {
+        const fBalls = row.front.map(function(n) {
+            return '<span class="pick-ball ' + pickBallClsF(n) + '" style="width:22px;height:22px;line-height:20px;font-size:10px;cursor:default;">' + n + '</span>';
+        }).join('');
+        const bBalls = row.back.map(function(n) {
+            return '<span class="pick-ball ' + pickBallClsB(n) + '" style="width:22px;height:22px;line-height:20px;font-size:10px;cursor:default;">' + n + '</span>';
+        }).join('');
+        h += '<div class="predict-row' + (i === activeRow ? ' active' : '') + '" data-prow="' + i + '">';
+        h += '<span class="predict-row-label">第' + (i + 1) + '行</span>';
+        h += '<div class="predict-row-nums"><span class="zone-tag">前区</span>' + (fBalls || '<span style="color:#666;">未选</span>') + '<span class="zone-tag">后区</span>' + (bBalls || '<span style="color:#666;">未选</span>') + '</div>';
+        h += '<div class="predict-row-actions">';
+        h += '<button data-copy="' + i + '" title="复制本行">📋</button>';
+        h += '<button data-del="' + i + '" class="btn-danger" title="删除本行">✕</button>';
+        h += '</div></div>';
+    });
+    wrap.innerHTML = h;
+    wrap.querySelectorAll('[data-copy]').forEach(function(b) {
+        b.addEventListener('click', function(e) {
+            e.stopPropagation();
+            copyRow(parseInt(b.dataset.copy));
+        });
+    });
+    wrap.querySelectorAll('[data-del]').forEach(function(b) {
+        b.addEventListener('click', function(e) {
+            e.stopPropagation();
+            predictRows.splice(parseInt(b.dataset.del), 1);
+            if (predictRows.length === 0) predictRows = [{ front: [], back: [] }];
+            if (activeRow >= predictRows.length) activeRow = predictRows.length - 1;
+            renderPredictRows();
+            renderPicker();
+            drawTrendTable('f');
+            drawTrendTable('b');
+        });
+    });
+    wrap.querySelectorAll('.predict-row').forEach(function(rowEl) {
+        rowEl.addEventListener('click', function() {
+            activeRow = parseInt(rowEl.getAttribute('data-prow'));
+            renderPredictRows();
+            renderPicker();
+        });
+    });
+}
+function rowText(i) {
+    const row = predictRows[i];
+    return '大乐透 预测第' + (i + 1) + '行 前区(' + row.front.length + '个): ' + row.front.join(',') + ' 后区(' + row.back.length + '个): ' + row.back.join(',');
+}
+function copyRow(i) { copyText(rowText(i)); }
+function copyAll() {
+    const lines = [];
+    predictRows.forEach(function(row, i) { lines.push(rowText(i)); });
+    copyText(lines.join('\\n'));
+}
+function copyText(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    if (!ok && navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(function() { setStatus('已复制：' + text); });
+        return;
+    }
+    setStatus(ok ? '已复制：' + text : '复制失败');
+}
+document.getElementById('btnAddRow').addEventListener('click', function() {
+    if (predictRows.length >= MAX_ROWS) { setStatus('最多 ' + MAX_ROWS + ' 行', true); return; }
+    predictRows.push({ front: [], back: [] });
+    activeRow = predictRows.length - 1;
+    renderPredictRows();
+    renderPicker();
+    drawTrendTable('f');
+    drawTrendTable('b');
+});
+document.getElementById('btnCopyAll').addEventListener('click', copyAll);
+document.getElementById('btnClear').addEventListener('click', function() {
+    predictRows = [{ front: [], back: [] }];
+    activeRow = 0;
+    renderPredictRows();
+    renderPicker();
+    drawTrendTable('f');
+    drawTrendTable('b');
+    setStatus('已清空');
+});
+document.getElementById('pickBoxF').addEventListener('click', function(e) {
+    const b = e.target;
+    if (b.classList && b.classList.contains('pick-ball')) togglePick('f', parseInt(b.dataset.num));
+});
+document.getElementById('pickBoxB').addEventListener('click', function(e) {
+    const b = e.target;
+    if (b.classList && b.classList.contains('pick-ball')) togglePick('b', parseInt(b.dataset.num));
+});
+document.getElementById('panel-trend').addEventListener('click', function(e) {
+    const td = e.target;
+    if (td.classList && td.classList.contains('td-pick')) {
+        const tr = td.closest('tr');
+        if (tr && tr.hasAttribute('data-prow')) activeRow = parseInt(tr.getAttribute('data-prow'));
+        togglePick(tr.getAttribute('data-zone'), parseInt(td.dataset.num));
+    }
+});
+document.querySelectorAll('.tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
+        const target = document.getElementById('panel-' + btn.dataset.tab);
+        target.classList.add('active');
+        if (btn.dataset.tab === 'trend') {
+            const activeSub = document.querySelector('.sub-tab-btn.active');
+            if (activeSub && activeSub.dataset.subtab === 'missline') {
+                drawMissLines('f');
+                drawMissLines('b');
+            } else {
+                drawTrendTable('f');
+                drawTrendTable('b');
+            }
+        }
+    });
+});
+document.querySelectorAll('.sub-tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('.sub-tab-btn').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        document.querySelectorAll('.sub-panel').forEach(function(p) { p.classList.remove('active'); });
+        const target = document.getElementById('sub-' + btn.dataset.subtab);
+        target.classList.add('active');
+        if (btn.dataset.subtab === 'missline') {
+            drawMissLines('f');
+            drawMissLines('b');
+        } else {
+            drawTrendTable(btn.dataset.subtab);
+        }
+    });
+});
+// 初始化
+renderSpanChks();
+renderMissDetail();
+renderPicker();
+renderPredictRows();
+if (document.getElementById('panel-trend').classList.contains('active')) {
+    drawTrendTable('f');
+    drawTrendTable('b');
+}
+</script>
 </body>
 </html>`;
 }
