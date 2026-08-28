@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.2.0",
+    "version": "0.8.17",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -34,6 +34,14 @@
         "onCommand:myPlugin.fc3dFormula",
         "onCommand:myPlugin.smartFilter",
         "onCommand:myPlugin.ssqFilter",
+        "onCommand:myPlugin.mlCompare",
+        "onCommand:myPlugin.boidsLife",
+        "onCommand:myPlugin.boidsNumber",
+        "onCommand:myPlugin.zhiHeAnalysis",
+        "onCommand:myPlugin.toggleTimeBackground",
+        "onCommand:myPlugin.drawMachine",
+        "onCommand:myPlugin.kl8Miss",
+        "onCommand:myPlugin.dltMiss",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -101,6 +109,38 @@
             {
                 "command": "myPlugin.ssqFilter",
                 "title": "双色球智能精选"
+            },
+            {
+                "command": "myPlugin.mlCompare",
+                "title": "ML Model Compare"
+            },
+            {
+                "command": "myPlugin.boidsLife",
+                "title": "Boids Life Game"
+            },
+            {
+                "command": "myPlugin.boidsNumber",
+                "title": "Boids Number Sim"
+            },
+            {
+                "command": "myPlugin.zhiHeAnalysis",
+                "title": "Zhi-He Analysis"
+            },
+            {
+                "command": "myPlugin.toggleTimeBackground",
+                "title": "Toggle Time Background"
+            },
+            {
+                "command": "myPlugin.drawMachine",
+                "title": "3D Draw Machine"
+            },
+            {
+                "command": "myPlugin.kl8Miss",
+                "title": "快乐8遗漏分层"
+            },
+            {
+                "command": "myPlugin.dltMiss",
+                "title": "大乐透遗漏分层"
             }
         ],
         "viewsContainers": {

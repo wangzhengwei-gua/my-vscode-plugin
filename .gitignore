@@ -1,35 +1,13 @@
 node_modules/
 out/
 data/*
+!data/predictions.json
 .vscode/
 .vscode-test/
 # 忽略所有 vsix，但保留最新的一个（用 ! 规则例外）
 *.vsix
 # 最新版本安装包（由 publish.js 自动维护）
-!my-vscode-plugin-0.2.0.vsix
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（由 publish.js 自动维护）
-# 最新版本安装包（更新版本时改这里 + 删旧的）
+!my-vscode-plugin-0.8.7.vsix
 _vsix_tmp*
 .DS_Store
 Thumbs.db

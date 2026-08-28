@@ -248,6 +248,16 @@ const LOTTERY_TYPES = [
         allNums: (h) => h.num,
         bigFn: (n) => n >= 5,
         roadFn: (n) => n % 3
+    },
+    {
+        key: 'kl8',
+        name: '快乐8',
+        emoji: '🎱',
+        file: 'kl8.json',
+        positions: [],
+        allNums: (h) => h.num,
+        bigFn: (n) => n >= 41,
+        roadFn: (n) => n % 3
     }
 ];
 
@@ -792,6 +802,113 @@ function activate(context) {
         panel.webview.html = getTransHtml(data);
     });
     context.subscriptions.push(transDisposable);
+
+    // 快乐8遗漏分层命令
+    let kl8MissDisposable = vscode.commands.registerCommand('myPlugin.kl8Miss', async () => {
+        const limitPick = await vscode.window.showQuickPick(
+            [
+                { label: '10 期', value: 10 },
+                { label: '20 期', value: 20 },
+                { label: '30 期', value: 30 },
+                { label: '50 期', value: 50 },
+                { label: '80 期', value: 80 },
+                { label: '100 期', value: 100 },
+                { label: '200 期', value: 200 },
+                { label: '全部', value: 0 }
+            ],
+            { placeHolder: '选择统计的历史期数' }
+        );
+        if (!limitPick) return;
+        const limit = limitPick.value;
+
+        let history;
+        try {
+            const cfg = LOTTERY_TYPES.find(c => c.key === 'kl8');
+            if (!cfg) return;
+            history = loadLotteryData(cfg);
+            if (history.length === 0) {
+                vscode.window.showWarningMessage('快乐8数据为空，请先刷新数据');
+                return;
+            }
+        } catch (e) {
+            const choice = vscode.window.showInformationMessage(
+                '🎱 还没有快乐8数据，需要先爬取数据。是否立即爬取？',
+                '立即爬取', '稍后再说'
+            );
+            choice.then(btn => {
+                if (btn === '立即爬取') {
+                    vscode.commands.executeCommand('myPlugin.refreshData');
+                }
+            });
+            return;
+        }
+
+        // 注意：loadLotteryData 内部已 reverse（旧→新），这里切片后要还原为最新在前
+        const sliced = (limit > 0 ? history.slice(-limit) : history);
+        const rows = sliced.slice().reverse();
+
+        const panel = vscode.window.createWebviewPanel(
+            'kl8Miss',
+            '快乐8 遗漏/走势分析',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getKl8MissHtml(rows);
+    });
+    context.subscriptions.push(kl8MissDisposable);
+
+    // 大乐透遗漏分层命令（照搬快乐8模式）
+    let dltMissDisposable = vscode.commands.registerCommand('myPlugin.dltMiss', async () => {
+        const limitPick = await vscode.window.showQuickPick(
+            [
+                { label: '10 期', value: 10 },
+                { label: '20 期', value: 20 },
+                { label: '30 期', value: 30 },
+                { label: '50 期', value: 50 },
+                { label: '80 期', value: 80 },
+                { label: '100 期', value: 100 },
+                { label: '200 期', value: 200 },
+                { label: '全部', value: 0 }
+            ],
+            { placeHolder: '选择统计的历史期数' }
+        );
+        if (!limitPick) return;
+        const limit = limitPick.value;
+
+        let history;
+        try {
+            const cfg = LOTTERY_TYPES.find(c => c.key === 'dlt');
+            if (!cfg) return;
+            history = loadLotteryData(cfg);
+            if (history.length === 0) {
+                vscode.window.showWarningMessage('大乐透数据为空，请先刷新数据');
+                return;
+            }
+        } catch (e) {
+            const choice = vscode.window.showInformationMessage(
+                '🎯 还没有大乐透数据，需要先爬取数据。是否立即爬取？',
+                '立即爬取', '稍后再说'
+            );
+            choice.then(btn => {
+                if (btn === '立即爬取') {
+                    vscode.commands.executeCommand('myPlugin.refreshData');
+                }
+            });
+            return;
+        }
+
+        const sliced = (limit > 0 ? history.slice(-limit) : history);
+        const rows = sliced.slice().reverse();
+
+        const panel = vscode.window.createWebviewPanel(
+            'dltMiss',
+            '大乐透 遗漏/走势分析',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getDltMissHtml(rows);
+    });
+    context.subscriptions.push(dltMissDisposable);
 
     // 智能推荐命令（基于转移统计 TOP3 概率）
     let smartPickDisposable = vscode.commands.registerCommand('myPlugin.smartPick', async () => {
@@ -1369,6 +1486,271 @@ function activate(context) {
     });
     context.subscriptions.push(maPatternsDisposable);
 
+    // ========== ML 多模型对比预测 ==========
+    let mlCompareDisposable = vscode.commands.registerCommand('myPlugin.mlCompare', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎯 排列三', value: 'pl3', description: '3位号码 多模型对比' },
+                { label: '🎰 排列五', value: 'pl5', description: '5位号码 多模型对比' },
+                { label: '🎁 福彩3D', value: 'fc3d', description: '3位号码 多模型对比' }
+            ],
+            { placeHolder: '选择彩种' }
+        );
+        if (!pick) return;
+
+        const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+        if (!cfg) return;
+
+        let history;
+        try {
+            history = loadLotteryData(cfg);
+            if (history.length < 100) {
+                // 数据不足，先尝试自动爬取
+                const crawlAction = await vscode.window.showInformationMessage(
+                    `数据不足（仅 ${history.length} 期，需 ≥100 期）。\n是否自动爬取最新数据？`,
+                    { modal: true },
+                    '自动爬取',
+                    '取消'
+                );
+                if (crawlAction !== '自动爬取') return;
+                await vscode.window.withProgress({
+                    location: vscode.ProgressLocation.Notification,
+                    title: `正在爬取 ${cfg.name} 数据...`,
+                    cancellable: false
+                }, async () => {
+                    await autoRefresh(500, true);
+                });
+                history = loadLotteryData(cfg);
+                if (history.length < 100) {
+                    vscode.window.showWarningMessage('爬取后数据仍不足，请检查网络后重试「🔄 刷新彩票数据」');
+                    return;
+                }
+            }
+        } catch (e) {
+            // 数据文件不存在，自动爬取
+            const crawlAction = await vscode.window.showInformationMessage(
+                `数据文件不存在（${cfg.name}）。是否自动爬取？`,
+                { modal: true },
+                '自动爬取',
+                '取消'
+            );
+            if (crawlAction !== '自动爬取') return;
+            try {
+                await vscode.window.withProgress({
+                    location: vscode.ProgressLocation.Notification,
+                    title: `正在爬取 ${cfg.name} 数据...`,
+                    cancellable: false
+                }, async () => {
+                    await autoRefresh(500, true);
+                });
+                history = loadLotteryData(cfg);
+                if (history.length < 100) {
+                    vscode.window.showWarningMessage('爬取后数据仍不足，请检查网络后重试');
+                    return;
+                }
+            } catch (e2) {
+                vscode.window.showErrorMessage('爬取失败: ' + e2.message + '\n请尝试点击侧边栏的「🔄 刷新彩票数据」');
+                return;
+            }
+        }
+
+        const testPick = await vscode.window.showQuickPick(
+            [
+                { label: '30 期回测', value: 30, description: '快速（30次预测/位）' },
+                { label: '50 期回测', value: 50, description: '标准（50次预测/位）' },
+                { label: '100 期回测', value: 100, description: '较长（耗时）' }
+            ],
+            { placeHolder: '选择回测期数（越大越慢）' }
+        );
+        if (!testPick) return;
+
+        // 创建并显示进度
+        const panel = vscode.window.createWebviewPanel(
+            'mlCompare',
+            '🧠 模型对比 - ' + cfg.name,
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+
+        panel.webview.html = getMLCompareLoadingHtml(cfg.name);
+
+        try {
+            const result = await runMLCompare(history, testPick.value);
+            panel.webview.html = getMLCompareHtml(result, cfg, history.length, testPick.value);
+        } catch (e) {
+            panel.webview.html = `<h2 style="color:red;font-family:sans-serif;padding:20px">错误：${e.message}</h2>
+                <pre style="padding:20px;font-family:monospace;background:#f5f5f5">${e.stack || ''}</pre>`;
+        }
+    });
+    context.subscriptions.push(mlCompareDisposable);
+
+    // ========== 群鸟生命游戏 ==========
+    let boidsLifeDisposable = vscode.commands.registerCommand('myPlugin.boidsLife', () => {
+        const panel = vscode.window.createWebviewPanel(
+            'boidsLife',
+            '🐦 群鸟生命游戏',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getBoidsLifeHtml();
+    });
+    context.subscriptions.push(boidsLifeDisposable);
+
+    // ========== 群鸟号码模拟（真实历史数据驱动）==========
+    let boidsNumberDisposable = vscode.commands.registerCommand('myPlugin.boidsNumber', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎯 排列三', value: 'pl3', description: '3位号码 一起分析' },
+                { label: '🎰 排列五', value: 'pl5', description: '5位号码 一起分析' }
+            ],
+            { placeHolder: '选择彩种' }
+        );
+        if (!pick) return;
+
+        const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+        if (!cfg) return;
+
+        let history;
+        try {
+            history = loadLotteryData(cfg);
+            if (history.length < 50) {
+                vscode.window.showWarningMessage('数据不足（需 ≥50 期），请先刷新数据');
+                return;
+            }
+        } catch (e) {
+            vscode.window.showErrorMessage('读取数据失败: ' + e.message);
+            return;
+        }
+
+        // 取所有位数的数据（不再分位选择）
+        const posLabels = cfg.positions.map(p => p.label + '位');
+        const allNumbers = cfg.positions.map(p => history.map(h => p.pick(h)));
+        const periods = history.map(h => h.period);
+
+        const panel = vscode.window.createWebviewPanel(
+            'boidsNumber',
+            '🎲 号码分析 - ' + cfg.name,
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getBoidsNumberHtml(cfg.name, posLabels, allNumbers, periods);
+    });
+    context.subscriptions.push(boidsNumberDisposable);
+
+    // ========== 质合形态分析 ==========
+    let zhiHeDisposable = vscode.commands.registerCommand('myPlugin.zhiHeAnalysis', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎯 排列三', value: 'pl3', description: '3位 质合形态分析' },
+                { label: '🎁 福彩3D', value: 'fc3d', description: '3位 质合形态分析' },
+                { label: '🎰 排列五', value: 'pl5', description: '5位 质合形态分析' }
+            ],
+            { placeHolder: '选择彩种' }
+        );
+        if (!pick) return;
+
+        const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+        if (!cfg) return;
+
+        let history;
+        try {
+            history = loadLotteryData(cfg);
+            if (history.length < 50) {
+                vscode.window.showWarningMessage('数据不足（需 ≥50 期），请先刷新数据');
+                return;
+            }
+        } catch (e) {
+            vscode.window.showErrorMessage('读取数据失败: ' + e.message);
+            return;
+        }
+
+        const posLabels = cfg.positions.map(p => p.label + '位');
+        const allNumbers = cfg.positions.map(p => history.map(h => p.pick(h)));
+        const periods = history.map(h => h.period);
+
+        const panel = vscode.window.createWebviewPanel(
+            'zhiHeAnalysis',
+            '📐 质合形态分析 - ' + cfg.name,
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getZhiHeHtml(cfg.name, posLabels, allNumbers, periods);
+    });
+    context.subscriptions.push(zhiHeDisposable);
+
+    // ===== 状态栏时间 + 每日温馨话语（hover tooltip） =====
+    // 在状态栏显示 🕐 HH:MM:SS 图标，鼠标悬停显示日期 + 温馨话语
+    // 不影响代码阅读区域，完全在状态栏里
+
+    // 状态栏 item（始终创建，通过 visibility 控制显示）
+    const timeStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    timeStatusItem.command = 'myPlugin.refreshTimeStatus';
+    // 用 codicon + 颜色 - VSCode 内置图标，用 color 属性让它变成彩色
+    timeStatusItem.text = '$(clock) --:--:--';
+    // 关键：color 让图标 + 文字一起变彩色（橘黄色）
+    timeStatusItem.color = '#FFB45B';
+    context.subscriptions.push(timeStatusItem);
+
+    // 启动时根据之前的设置决定是否显示
+    if (context.globalState.get('timeStatusMode', 'shown') === 'shown') {
+        timeStatusItem.show();
+    }
+    updateTimeStatusItem(timeStatusItem);
+
+    // 每秒更新（每分钟在用户视觉上更省心，但每秒更准）
+    const timeStatusTimer = setInterval(() => updateTimeStatusItem(timeStatusItem), 1000);
+    context.subscriptions.push({ dispose: () => clearInterval(timeStatusTimer) });
+
+    // 切换显示/隐藏（每次点击重新读取 globalState，避免 const 缓存旧值）
+    let toggleTimeBgDisposable = vscode.commands.registerCommand('myPlugin.toggleTimeBackground', async () => {
+        const currentMode = context.globalState.get('timeStatusMode', 'shown');
+        const newMode = currentMode === 'shown' ? 'hidden' : 'shown';
+        await context.globalState.update('timeStatusMode', newMode);
+        if (newMode === 'shown') {
+            timeStatusItem.show();
+            updateTimeStatusItem(timeStatusItem);
+            vscode.window.showInformationMessage('时间状态栏已显示 - 鼠标悬停查看日期和温馨话语');
+        } else {
+            timeStatusItem.hide();
+            vscode.window.showInformationMessage('时间状态栏已隐藏');
+        }
+    });
+    context.subscriptions.push(toggleTimeBgDisposable);
+
+    // 手动刷新（点击图标触发）
+    let refreshTimeStatusDisposable = vscode.commands.registerCommand('myPlugin.refreshTimeStatus', () => {
+        updateTimeStatusItem(timeStatusItem);
+        // 短暂显示 tooltip
+        vscode.window.showInformationMessage(timeStatusItem.tooltip || '时间', { modal: false });
+    });
+    context.subscriptions.push(refreshTimeStatusDisposable);
+
+    // ===== 3D 摇奖机动画 =====
+    let drawMachineDisposable = vscode.commands.registerCommand('myPlugin.drawMachine', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎯 排列三', value: 'pl3', description: '3 位号码 0-9' },
+                { label: '🎰 排列五', value: 'pl5', description: '5 位号码 0-9' },
+                { label: '🎁 福彩3D', value: 'fc3d', description: '3 位号码 0-9' }
+            ],
+            { placeHolder: '选择要模拟摇奖的彩种' }
+        );
+        if (!pick) return;
+
+        const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+        if (!cfg) return;
+
+        const panel = vscode.window.createWebviewPanel(
+            'drawMachine',
+            '3D 摇奖机 - ' + cfg.name,
+            vscode.ViewColumn.Active,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getDrawMachineHtml(cfg);
+    });
+    context.subscriptions.push(drawMachineDisposable);
+
+
     // ===== 自动爬取数据 =====
     // 1. 插件启动时自动爬取（静默，不弹通知，除非失败）
     autoRefresh(500, true);
@@ -1551,6 +1933,8 @@ class LotteryTreeDataProvider {
                 this.createItem('🔁 转移统计', 'myPlugin.showTrans', '🔁'),
                 this.createItem('🤖 智能推荐', 'myPlugin.smartPick', '🤖'),
                 this.createItem('🧬 概率推荐', 'myPlugin.probabilityPick', '🧬'),
+                this.createItem('🎱 快乐8遗漏分层', 'myPlugin.kl8Miss', '🎱'),
+                this.createItem('🎯 大乐透遗漏分层', 'myPlugin.dltMiss', '🎯'),
                 this.createItem('🛤️ 012路趋势', 'myPlugin.roadAnalysis', '🛤️'),
                 this.createItem('📜 排三口诀', 'myPlugin.pl3Formula', '📜'),
                 this.createItem('🎲 排五口诀', 'myPlugin.pl5Formula', '🎲'),
@@ -1559,8 +1943,14 @@ class LotteryTreeDataProvider {
                 this.createItem('🔴 双色球精选', 'myPlugin.ssqFilter', '🔴'),
                 this.createItem('🧪 概率回测', 'myPlugin.probabilityBacktest', '🧪'),
                 this.createItem('📈 均线形态', 'myPlugin.maPatterns', '📈'),
+                this.createItem('🧠 模型对比预测', 'myPlugin.mlCompare', '🧠'),
+                this.createItem('🐦 群鸟生命游戏', 'myPlugin.boidsLife', '🐦'),
+                this.createItem('🎲 群鸟号码模拟', 'myPlugin.boidsNumber', '🎲'),
+                this.createItem('📐 质合形态分析', 'myPlugin.zhiHeAnalysis', '📐'),
                 this.createItem('🔮 预测记录', 'myPlugin.showPredictions', '🔮'),
                 this.createItem('🕐 显示当前时间', 'myPlugin.showTime', '🕐'),
+                this.createItem('🕙 时间背景水印', 'myPlugin.toggleTimeBackground', '🕙'),
+                this.createItem('🎰 3D摇奖机', 'myPlugin.drawMachine', '🎰'),
                 this.createItem('👋 Hello World', 'myPlugin.helloWorld', '👋')
             ];
         }
@@ -1588,6 +1978,862 @@ class LotteryTreeDataProvider {
 function deactivate() {}
 
 /**
+ * 3D 摇奖机动画 HTML
+ * 使用 Three.js（CDN）模拟真实摇奖机：透明球体 + 内部翻滚的号码球
+ * @param {Object} cfg - LOTTERY_TYPES 中的彩种配置
+ */
+function getDrawMachineHtml(cfg) {
+    const posCount = cfg.positions.length;
+    const posLabels = cfg.positions.map(p => p.label).join(' / ');
+    // 多位独立摇奖机：每位一台机器，并排排列
+    // 每台机器独立有自己的玻璃球、号码球、出球口、展示槽
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>3D 摇奖机 - ${cfg.name}</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; color: #fff; font-family: "Segoe UI","Microsoft YaHei",sans-serif; }
+#app { position: relative; width: 100vw; height: 100vh; background: radial-gradient(ellipse at 50% 35%, #1a1f3a 0%, #0a0c1a 60%, #050610 100%); }
+#canvas3d { display: block; width: 100%; height: 100%; }
+
+.top-bar { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); z-index: 10; text-align: center; pointer-events: none; }
+.top-bar h1 { font-size: 22px; font-weight: 700; color: #ffd700; text-shadow: 0 0 12px rgba(255,215,0,.6), 0 2px 4px rgba(0,0,0,.8); letter-spacing: 1px; }
+.top-bar .sub { font-size: 12px; color: #8a93b8; margin-top: 4px; text-shadow: 0 1px 2px rgba(0,0,0,.8); }
+
+.controls { position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 14px; }
+.btn { padding: 11px 28px; font-size: 15px; font-weight: 600; border: none; border-radius: 28px; cursor: pointer; color: #fff; background: linear-gradient(135deg,#11998e,#38ef7d); box-shadow: 0 6px 18px rgba(56,239,125,.45), inset 0 1px 0 rgba(255,255,255,.3); transition: transform .15s, box-shadow .15s; }
+.btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(56,239,125,.6), inset 0 1px 0 rgba(255,255,255,.3); }
+.btn:disabled { opacity: .35; cursor: not-allowed; }
+.btn.secondary { background: linear-gradient(135deg,#4b6cb7,#182848); box-shadow: 0 6px 18px rgba(75,108,183,.45), inset 0 1px 0 rgba(255,255,255,.2); }
+
+.result-panel { position: absolute; top: 18px; right: 18px; z-index: 10; background: linear-gradient(135deg, rgba(30,32,55,.92), rgba(20,22,40,.92)); border: 1px solid rgba(255,215,0,.35); border-radius: 12px; padding: 14px 18px; min-width: ${Math.max(200, posCount * 46 + 30)}px; box-shadow: 0 8px 24px rgba(0,0,0,.5); backdrop-filter: blur(6px); }
+.result-panel .label { font-size: 12px; color: #ffd700; margin-bottom: 8px; letter-spacing: 1px; }
+.result-panel .nums { display: flex; flex-wrap: nowrap; gap: 8px; justify-content: center; }
+.result-panel .pos-label { display: flex; gap: 8px; justify-content: center; margin-bottom: 6px; }
+.result-panel .pos-label span { width: 38px; text-align: center; font-size: 11px; color: #6ea0ff; }
+.result-panel .ball { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 800; color: #fff; background: radial-gradient(circle at 32% 28%, #ff8a8a, #c0392b 60%, #7a1a14 100%); box-shadow: 0 0 12px rgba(231,76,60,.7), inset -2px -3px 6px rgba(0,0,0,.4), inset 2px 2px 4px rgba(255,255,255,.3); }
+.result-panel .ball.empty { background: radial-gradient(circle at 32% 28%, #2a2a3a, #15151f); box-shadow: inset 0 0 6px rgba(0,0,0,.6); color: #445; }
+
+.history-panel { position: absolute; top: 18px; left: 18px; z-index: 10; background: linear-gradient(135deg, rgba(30,32,55,.92), rgba(20,22,40,.92)); border: 1px solid rgba(80,120,255,.35); border-radius: 12px; padding: 12px 16px; max-height: 55vh; overflow-y: auto; min-width: 170px; box-shadow: 0 8px 24px rgba(0,0,0,.5); backdrop-filter: blur(6px); }
+.history-panel .label { font-size: 12px; color: #6ea0ff; margin-bottom: 8px; letter-spacing: 1px; }
+.history-panel .item { font-size: 13px; color: #cde; margin: 5px 0; font-family: "Consolas",monospace; }
+.history-panel .item .badge { display: inline-block; min-width: 20px; height: 20px; line-height: 20px; text-align: center; border-radius: 5px; background: linear-gradient(135deg,#2d4a8a,#1a3a6a); margin-right: 6px; font-size: 11px; color: #fff; }
+.history-panel::-webkit-scrollbar { width: 6px; }
+.history-panel::-webkit-scrollbar-thumb { background: rgba(120,160,255,.4); border-radius: 3px; }
+
+.status-text { position: absolute; bottom: 88px; left: 50%; transform: translateX(-50%); z-index: 10; font-size: 14px; color: #ffcc00; text-shadow: 0 1px 4px rgba(0,0,0,.8); pointer-events: none; }
+
+.hint { position: absolute; bottom: 12px; right: 18px; z-index: 10; font-size: 11px; color: #555a72; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="canvas3d"></canvas>
+  <div class="top-bar">
+    <h1>🎰 ${cfg.name} · 3D 摇奖机</h1>
+    <div class="sub">位号：${posLabels} ｜ 每位 0-9</div>
+  </div>
+  <div class="history-panel">
+    <div class="label">📜 历史摇奖</div>
+    <div id="historyList"></div>
+  </div>
+  <div class="result-panel">
+    <div class="label">🎯 本期结果（每位独立摇奖机）</div>
+    <div class="pos-label">${cfg.positions.map(p => `<span>${p.label}位</span>`).join('')}</div>
+    <div class="nums" id="resultNums"></div>
+  </div>
+  <div class="status-text" id="statusText">点击"开始摇奖"启动</div>
+  <div class="controls">
+    <button class="btn" id="btnStart">🎰 开始摇奖</button>
+    <button class="btn secondary" id="btnReset" disabled>🔄 重置</button>
+  </div>
+  <div class="hint">🖱️ 拖拽旋转 · 滚轮缩放</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+(function(){
+  const POS_COUNT = ${posCount};
+  const NUM_RANGE = 10;
+  // 位号标签
+  const POS_LABELS = ${JSON.stringify(cfg.positions.map(p => p.label))};
+
+  // ====== Renderer + Scene ======
+  const canvas = document.getElementById('canvas3d');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.1;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x070810);
+  scene.fog = new THREE.Fog(0x070810, 14, 32);
+
+  // ====== 程序化环境贴图 ======
+  const envCanvas = document.createElement('canvas');
+  envCanvas.width = 512; envCanvas.height = 256;
+  const ectx = envCanvas.getContext('2d');
+  const eg = ectx.createLinearGradient(0, 0, 0, 256);
+  eg.addColorStop(0, '#3a2a1a');
+  eg.addColorStop(0.35, '#1a1f3a');
+  eg.addColorStop(0.55, '#0a0c1a');
+  eg.addColorStop(1, '#050610');
+  ectx.fillStyle = eg; ectx.fillRect(0, 0, 512, 256);
+  const lights = [{x:100,y:40,r:50,c:'rgba(255,220,150,0.9)'},{x:380,y:30,r:40,c:'rgba(150,180,255,0.85)'},{x:256,y:20,r:35,c:'rgba(255,255,200,0.7)'}];
+  lights.forEach(l => {
+    const rg = ectx.createRadialGradient(l.x, l.y, 0, l.x, l.y, l.r);
+    rg.addColorStop(0, l.c); rg.addColorStop(1, 'rgba(0,0,0,0)');
+    ectx.fillStyle = rg; ectx.fillRect(0, 0, 512, 256);
+  });
+  const envTex = new THREE.CanvasTexture(envCanvas);
+  envTex.mapping = THREE.EquirectangularReflectionMapping;
+  envTex.colorSpace = THREE.SRGBColorSpace;
+  scene.environment = envTex;
+
+  // ====== 相机 ======
+  let camera = new THREE.PerspectiveCamera(42, window.innerWidth/window.innerHeight, 0.1, 100);
+  // 自动机位：根据位数横向拉远，保证所有机器都在画面里
+  const MACHINE_SPACING = 3.4;          // 每台机器横向间距（加大间隔，避免拥挤）
+  const MACHINE_RADIUS = 1.55;          // 单台玻璃球半径（缩小一些以并排显示）
+  const TOTAL_WIDTH = (POS_COUNT - 1) * MACHINE_SPACING;
+  let camDist = Math.max(9, TOTAL_WIDTH * 1.4 + 4);
+  camera.position.set(0, 2.5, camDist);
+
+  // ====== 灯光 ======
+  scene.add(new THREE.AmbientLight(0x404868, 0.4));
+
+  const keyLight = new THREE.DirectionalLight(0xfff0d0, 1.3);
+  keyLight.position.set(4, 10, 5);
+  keyLight.castShadow = true;
+  keyLight.shadow.mapSize.set(2048, 2048);
+  keyLight.shadow.camera.left = -TOTAL_WIDTH/2 - 3;
+  keyLight.shadow.camera.right = TOTAL_WIDTH/2 + 3;
+  keyLight.shadow.camera.top = 5;
+  keyLight.shadow.camera.bottom = -3;
+  keyLight.shadow.bias = -0.0005;
+  scene.add(keyLight);
+
+  const fillLight = new THREE.DirectionalLight(0x6088ff, 0.5);
+  fillLight.position.set(-5, 3, 3);
+  scene.add(fillLight);
+
+  const rimLight = new THREE.DirectionalLight(0xff88cc, 0.4);
+  rimLight.position.set(0, -2, -6);
+  scene.add(rimLight);
+
+  // ====== 舞台地板 ======
+  const floorGeo = new THREE.CircleGeometry(Math.max(6, TOTAL_WIDTH/2 + 3), 64);
+  const floorMat = new THREE.MeshStandardMaterial({
+    color: 0x12152a, metalness: 0.85, roughness: 0.35, envMapIntensity: 1.2
+  });
+  const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.rotation.x = -Math.PI/2;
+  floor.position.y = -2.2;
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // 地板呼吸光环（每位下方一个）
+  const floorRings = [];
+  for (let i = 0; i < POS_COUNT; i++) {
+    const x = (i - (POS_COUNT-1)/2) * MACHINE_SPACING;
+    const rg = new THREE.RingGeometry(MACHINE_RADIUS + 0.3, MACHINE_RADIUS + 0.45, 64);
+    const rm = new THREE.MeshBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.5, side: THREE.DoubleSide });
+    const r = new THREE.Mesh(rg, rm);
+    r.rotation.x = -Math.PI/2;
+    r.position.set(x, -2.19, 0);
+    scene.add(r);
+    floorRings.push(r);
+  }
+
+  // 长条底座（所有机器共用一个长台基）
+  const baseGeo = new THREE.BoxGeometry(TOTAL_WIDTH + 3, 0.45, 1.6);
+  const baseMat = new THREE.MeshStandardMaterial({
+    color: 0x2a2d4a, metalness: 0.9, roughness: 0.25, envMapIntensity: 1.5
+  });
+  const base = new THREE.Mesh(baseGeo, baseMat);
+  base.position.y = -2.0;
+  base.castShadow = true; base.receiveShadow = true;
+  scene.add(base);
+
+  // 长条底座金色顶边
+  const baseTopGeo = new THREE.BoxGeometry(TOTAL_WIDTH + 3.1, 0.04, 1.7);
+  const baseTopMat = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 1.0, roughness: 0.2, envMapIntensity: 2.0 });
+  const baseTop = new THREE.Mesh(baseTopGeo, baseTopMat);
+  baseTop.position.y = -1.77;
+  baseTop.receiveShadow = true;
+  scene.add(baseTop);
+
+  // ====== 号码球纹理生成（共享函数）======
+  const BALL_COLORS = [
+    { base: '#e74c3c', dark: '#922b21', light: '#ff8a80' },
+    { base: '#f39c12', dark: '#9c6c0a', light: '#ffd180' },
+    { base: '#f1c40f', dark: '#9c7c0a', light: '#fff44f' },
+    { base: '#1abc9c', dark: '#0e7c66', light: '#5fffd0' },
+    { base: '#3498db', dark: '#1c6090', light: '#7ec6ff' },
+    { base: '#9b59b6', dark: '#5e3370', light: '#d09bdb' },
+    { base: '#e84393', dark: '#8a2858', light: '#ff7dba' },
+    { base: '#00b894', dark: '#00705a', light: '#3fffd0' },
+    { base: '#fd79a8', dark: '#8a4060', light: '#ffb0c8' },
+    { base: '#6c5ce7', dark: '#3a3090', light: '#a89bff' },
+  ];
+
+  function makeBallTexture(num, color) {
+    const S = 512;
+    const c = document.createElement('canvas');
+    c.width = S; c.height = S;
+    const ctx = c.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 0, S);
+    grad.addColorStop(0, color.light);
+    grad.addColorStop(0.45, color.base);
+    grad.addColorStop(0.55, color.base);
+    grad.addColorStop(1, color.dark);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, S, S);
+    ctx.save();
+    ctx.translate(S*0.5, S*0.4);
+    ctx.rotate(-0.4);
+    const hg = ctx.createRadialGradient(0, 0, 0, 0, 0, S*0.35);
+    hg.addColorStop(0, 'rgba(255,255,255,0.55)');
+    hg.addColorStop(0.6, 'rgba(255,255,255,0.1)');
+    hg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = hg;
+    ctx.beginPath(); ctx.ellipse(0, 0, S*0.35, S*0.18, 0, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+    const cx = S/2, cy = S/2;
+    const diskR = S * 0.28;
+    const dg = ctx.createRadialGradient(cx - diskR*0.3, cy - diskR*0.3, diskR*0.1, cx, cy, diskR);
+    dg.addColorStop(0, 'rgba(255,255,255,0.15)');
+    dg.addColorStop(0.8, 'rgba(0,0,0,0.25)');
+    dg.addColorStop(1, 'rgba(0,0,0,0.5)');
+    ctx.fillStyle = dg;
+    ctx.beginPath(); ctx.arc(cx, cy, diskR, 0, Math.PI*2); ctx.fill();
+    ctx.font = 'bold 180px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(0,0,0,0.7)';
+    ctx.shadowBlur = 12;
+    ctx.shadowOffsetY = 4;
+    ctx.fillStyle = '#fff';
+    ctx.fillText(String(num), cx, cy + 8);
+    ctx.shadowColor = 'transparent';
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+    ctx.strokeText(String(num), cx, cy + 8);
+    const vg = ctx.createRadialGradient(cx, cy, S*0.3, cx, cy, S*0.5);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, 'rgba(0,0,0,0.4)');
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, S, S);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  // 预生成 10 个号码球的纹理和材质（每位机器共享同一套材质，节省内存）
+  const sharedBallTextures = [];
+  const sharedBallMaterials = [];
+  for (let i = 0; i < NUM_RANGE; i++) {
+    const tex = makeBallTexture(i, BALL_COLORS[i]);
+    sharedBallTextures.push(tex);
+    sharedBallMaterials.push(new THREE.MeshStandardMaterial({
+      map: tex,
+      metalness: 0.15,
+      roughness: 0.35,
+      envMapIntensity: 1.4,
+      emissive: new THREE.Color(BALL_COLORS[i].base),
+      emissiveIntensity: 0.06
+    }));
+  }
+
+  const ballRadius = 0.32;
+  const ballGeo = new THREE.SphereGeometry(ballRadius, 36, 28);
+
+  // ====== 创建 POS_COUNT 个独立的摇奖机 ======
+  // 每位一台：自己的玻璃球、10 个号码球、出球口、展示槽
+  // 每位用 Group 组织，便于整体管理
+  const machines = [];
+  for (let i = 0; i < POS_COUNT; i++) {
+    const x = (i - (POS_COUNT-1)/2) * MACHINE_SPACING;
+    const group = new THREE.Group();
+    group.position.set(x, 0, 0);
+
+    // 玻璃球壳（外层）
+    const outerGeo = new THREE.SphereGeometry(MACHINE_RADIUS, 48, 36);
+    const outerMat = new THREE.MeshPhysicalMaterial({
+      color: 0xaaccff, metalness: 0, roughness: 0.02,
+      transmission: 0.95, transparent: true, opacity: 0.35,
+      thickness: 0.4, ior: 1.45, envMapIntensity: 2.5,
+      clearcoat: 1.0, clearcoatRoughness: 0.02,
+      side: THREE.DoubleSide
+    });
+    const outerSphere = new THREE.Mesh(outerGeo, outerMat);
+    group.add(outerSphere);
+
+    // 内层薄壳
+    const innerGeo = new THREE.SphereGeometry(MACHINE_RADIUS - 0.04, 36, 28);
+    const innerMat = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff, metalness: 0, roughness: 0.05,
+      transmission: 0.9, transparent: true, opacity: 0.15,
+      thickness: 0.2, ior: 1.4, side: THREE.BackSide
+    });
+    const innerSphere = new THREE.Mesh(innerGeo, innerMat);
+    group.add(innerSphere);
+
+    // 赤道金属环
+    const equatorGeo = new THREE.TorusGeometry(MACHINE_RADIUS, 0.04, 10, 64);
+    const equatorMat = new THREE.MeshStandardMaterial({ color: 0xc8a050, metalness: 1.0, roughness: 0.3, envMapIntensity: 2.0 });
+    const equator = new THREE.Mesh(equatorGeo, equatorMat);
+    group.add(equator);
+
+    // 出球口金属环（顶部）
+    const exitRingGeo = new THREE.TorusGeometry(0.18, 0.04, 10, 24);
+    const exitRing = new THREE.Mesh(exitRingGeo, equatorMat);
+    exitRing.position.set(0, MACHINE_RADIUS + 0.02, 0);
+    exitRing.rotation.x = Math.PI/2;
+    group.add(exitRing);
+
+    // 机器下方展示凹槽（球出球后落点）：在底座顶部
+    // 局部坐标 y = -底座顶面到机器中心 = -(2.0 + 0.45/2 + 0.04) ≈ -1.78（机器中心 0，底座顶面在 -1.77）
+    // 用一个金色环 + 凹陷圆盘表示
+    const slotLocalY = -1.77 + 0.04; // 凹槽中心略高于底座顶面
+    const slotRingGeo = new THREE.TorusGeometry(0.42, 0.05, 12, 32);
+    const slotRing = new THREE.Mesh(slotRingGeo, equatorMat);
+    slotRing.position.set(0, slotLocalY + 0.02, 0);
+    slotRing.rotation.x = Math.PI/2;
+    slotRing.receiveShadow = true;
+    group.add(slotRing);
+    // 凹槽内深色圆盘
+    const slotDiskGeo = new THREE.CircleGeometry(0.42, 32);
+    const slotDiskMat = new THREE.MeshStandardMaterial({ color: 0x0a0c1a, metalness: 0.4, roughness: 0.5 });
+    const slotDisk = new THREE.Mesh(slotDiskGeo, slotDiskMat);
+    slotDisk.rotation.x = -Math.PI/2;
+    slotDisk.position.set(0, slotLocalY + 0.005, 0);
+    slotDisk.receiveShadow = true;
+    group.add(slotDisk);
+
+    // 位号标签（机器上方 3D 文字）
+    const labelTex = (function(){
+      const c = document.createElement('canvas');
+      c.width = 128; c.height = 128;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#ffd700';
+      ctx.font = 'bold 80px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.shadowColor = 'rgba(0,0,0,0.8)';
+      ctx.shadowBlur = 8;
+      ctx.fillText(POS_LABELS[i], 64, 70);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    })();
+    const labelMat = new THREE.MeshBasicMaterial({ map: labelTex, transparent: true });
+    const labelGeo = new THREE.PlaneGeometry(0.6, 0.6);
+    const labelMesh = new THREE.Mesh(labelGeo, labelMat);
+    labelMesh.position.set(0, MACHINE_RADIUS + 0.7, 0);
+    group.add(labelMesh);
+
+    // 创建本机位的 10 个号码球
+    const balls = [];
+    for (let n = 0; n < NUM_RANGE; n++) {
+      const mesh = new THREE.Mesh(ballGeo, sharedBallMaterials[n]);
+      mesh.castShadow = true;
+      mesh.userData.number = n;
+      mesh.userData.color = BALL_COLORS[n];
+      resetBall(mesh, MACHINE_RADIUS);
+      group.add(mesh);
+      balls.push(mesh);
+    }
+
+    // 本机位的小型接触阴影
+    const shadowMeshes = [];
+    balls.forEach(() => {
+      const sg = new THREE.CircleGeometry(ballRadius * 0.9, 20);
+      const sm = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3 });
+      const s = new THREE.Mesh(sg, sm);
+      s.rotation.x = -Math.PI/2;
+      s.visible = false;
+      group.add(s);
+      shadowMeshes.push(s);
+    });
+
+    scene.add(group);
+    machines.push({
+      group, x,
+      outerSphere, innerSphere, equator,
+      balls, shadowMeshes,
+      // 状态
+      status: 'idle',            // idle | running | done
+      pickedBall: null,          // 已出的号码球 mesh
+      pickedNumber: null,        // 已出的号码
+      spinTimer: 0,
+      spinningBoost: 0,
+      exitCooldown: 0,
+      startDelay: i * 50         // 错峰启动，避免所有机器同时出球
+    });
+  }
+
+  function resetBall(mesh, sphereRadius) {
+    mesh.userData.exited = false;
+    mesh.userData.ejecting = false;
+    mesh.userData.ejectTime = 0;
+    mesh.userData.velocity = new THREE.Vector3(
+      (Math.random() - 0.5) * 0.10,
+      Math.random() * 0.12,
+      (Math.random() - 0.5) * 0.10
+    );
+    mesh.userData.angularVel = new THREE.Vector3(
+      (Math.random() - 0.5) * 0.20,
+      (Math.random() - 0.5) * 0.20,
+      (Math.random() - 0.5) * 0.20
+    );
+    const r = sphereRadius - ballRadius - 0.08;
+    mesh.position.set(
+      (Math.random() - 0.5) * r * 1.3,
+      (Math.random() - 0.2) * r * 1.0,
+      (Math.random() - 0.5) * r * 1.3
+    );
+  }
+
+  // ====== 单台机器物理模拟 ======
+  const SPIN_DURATION = 200;
+
+  function stepMachinePhysics(m) {
+    const innerR = MACHINE_RADIUS - ballRadius - 0.05;
+    const forceStrength = 0.020 + m.spinningBoost;
+    m.spinTimer++;
+    const fx = Math.sin(m.spinTimer * 0.05 + m.x) * forceStrength * 0.5;
+    const fy = (Math.cos(m.spinTimer * 0.07 + m.x) * 0.5 + 0.5) * forceStrength * 0.8;
+    const fz = Math.cos(m.spinTimer * 0.04 + m.x) * forceStrength * 0.5;
+
+    m.balls.forEach(ball => {
+      if (ball.userData.exited) return;
+      ball.userData.velocity.x += fx + (Math.random() - 0.5) * forceStrength * 0.4;
+      ball.userData.velocity.y += fy + (Math.random() - 0.2) * forceStrength * 0.5;
+      ball.userData.velocity.z += fz + (Math.random() - 0.5) * forceStrength * 0.4;
+      ball.userData.velocity.y -= 0.003;
+      ball.userData.velocity.multiplyScalar(0.991);
+      ball.userData.angularVel.multiplyScalar(0.988);
+      const maxV = 0.22;
+      if (ball.userData.velocity.length() > maxV) ball.userData.velocity.setLength(maxV);
+      // 注意：球的位置在 group 局部坐标系
+      ball.position.add(ball.userData.velocity);
+      ball.rotation.x += ball.userData.angularVel.x;
+      ball.rotation.y += ball.userData.angularVel.y;
+      ball.rotation.z += ball.userData.angularVel.z;
+      const dist = ball.position.length();
+      if (dist > innerR) {
+        ball.position.normalize().multiplyScalar(innerR);
+        const n = ball.position.clone().normalize();
+        const dot = ball.userData.velocity.dot(n);
+        if (dot > 0) {
+          ball.userData.velocity.sub(n.multiplyScalar(dot * 1.7));
+          ball.userData.angularVel.x += (Math.random() - 0.5) * 0.1;
+          ball.userData.angularVel.z += (Math.random() - 0.5) * 0.1;
+        }
+      }
+      // 球-球碰撞（同机内）
+      for (let j = 0; j < m.balls.length; j++) {
+        const b2 = m.balls[j];
+        if (b2 === ball || b2.userData.exited) continue;
+        const diff = ball.position.clone().sub(b2.position);
+        const d = diff.length();
+        const minD = ballRadius * 2;
+        if (d < minD && d > 0.0001) {
+          const n = diff.normalize();
+          const overlap = minD - d;
+          ball.position.add(n.clone().multiplyScalar(overlap * 0.5));
+          b2.position.sub(n.clone().multiplyScalar(overlap * 0.5));
+          const va = ball.userData.velocity.dot(n);
+          const vb = b2.userData.velocity.dot(n);
+          if (va - vb < 0) {
+            const mm = 0.6;
+            ball.userData.velocity.add(n.clone().multiplyScalar((vb - va) * mm));
+            b2.userData.velocity.sub(n.clone().multiplyScalar((vb - va) * mm));
+            ball.userData.angularVel.y += (Math.random() - 0.5) * 0.05;
+            b2.userData.angularVel.y += (Math.random() - 0.5) * 0.05;
+          }
+        }
+      }
+    });
+  }
+
+  // 单台机器出球：球从顶部出口弹出（不再走长导轨，直接落到底座上方的展示位）
+  function ejectBallFromMachine(m) {
+    const candidates = m.balls.filter(b => !b.userData.exited);
+    if (candidates.length === 0) return false;
+    // 取离顶部出口最近的球
+    const topPos = new THREE.Vector3(0, MACHINE_RADIUS, 0);
+    candidates.sort((a, b) => a.position.distanceTo(topPos) - b.position.distanceTo(topPos));
+    const target = candidates[0];
+    target.userData.exited = true;
+    target.userData.ejecting = true;
+    target.userData.ejectTime = 0;
+    target.userData.fallTarget = new THREE.Vector3(0, -MACHINE_RADIUS - 0.55, 0); // 落到机器正下方底座展示槽
+    m.pickedBall = target;
+    m.pickedNumber = target.userData.number;
+    return true;
+  }
+
+  // ====== 鼠标交互 ======
+  let isDragging = false, lastX = 0, lastY = 0;
+  let camTheta = 0, camPhi = 0.18;
+  function updateCamera() {
+    camera.position.x = camDist * Math.cos(camPhi) * Math.sin(camTheta);
+    camera.position.z = camDist * Math.cos(camPhi) * Math.cos(camTheta);
+    camera.position.y = 1.8 + camDist * Math.sin(camPhi);
+    camera.lookAt(0, 0.3, 0);
+  }
+  updateCamera();
+  canvas.addEventListener('mousedown', e => { isDragging = true; lastX = e.clientX; lastY = e.clientY; });
+  window.addEventListener('mouseup', () => { isDragging = false; });
+  window.addEventListener('mousemove', e => {
+    if (!isDragging) return;
+    camTheta -= (e.clientX - lastX) * 0.005;
+    camPhi = Math.max(-0.4, Math.min(1.0, camPhi + (e.clientY - lastY) * 0.004));
+    lastX = e.clientX; lastY = e.clientY;
+    updateCamera();
+  });
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    camDist *= e.deltaY > 0 ? 1.08 : 0.93;
+    camDist = Math.max(Math.max(7, TOTAL_WIDTH * 1.2 + 3), Math.min(22, camDist));
+    updateCamera();
+  }, { passive: false });
+
+  // ====== 渲染循环 ======
+  let globalStatus = 'idle'; // idle | running | done
+  let globalTimer = 0;
+  const MACHINE_DONE_TARGET = 60; // 出球后 1s 落到展示位
+
+  function animate() {
+    requestAnimationFrame(animate);
+    globalTimer++;
+
+    if (globalStatus === 'running') {
+      // 更新每台机器
+      let allDone = true;
+      machines.forEach((m, idx) => {
+        if (m.status === 'idle') {
+          // 错峰启动
+          if (globalTimer > m.startDelay) {
+            m.status = 'running';
+            m.spinTimer = 0;
+            m.spinningBoost = 0.025;
+          }
+          allDone = false;
+        }
+        if (m.status === 'running') {
+          if (m.spinTimer < SPIN_DURATION) {
+            m.spinningBoost = Math.min(0.05, m.spinningBoost + 0.003);
+          } else {
+            m.spinningBoost = Math.max(0.015, m.spinningBoost - 0.001);
+          }
+          stepMachinePhysics(m);
+          // 玻璃球微转
+          m.outerSphere.rotation.y += 0.002;
+          m.innerSphere.rotation.y -= 0.001;
+          m.equator.rotation.y += 0.002;
+          // 出球
+          if (m.exitCooldown > 0) m.exitCooldown--;
+          if (m.spinTimer > SPIN_DURATION && m.exitCooldown === 0 && !m.pickedBall) {
+            if (ejectBallFromMachine(m)) {
+              m.exitCooldown = 99999; // 不再出球
+              updateResultUI();
+            }
+          }
+          allDone = false;
+        }
+        if (m.status === 'ejecting') {
+          allDone = false;
+        }
+      });
+      if (allDone && machines.every(m => m.pickedBall && !m.pickedBall.userData.ejecting)) {
+        globalStatus = 'done';
+        const nums = machines.map(m => m.pickedNumber);
+        setStatusText('🎉 摇奖结束！号码：' + nums.join(' '));
+        saveToHistory(nums);
+        document.getElementById('btnReset').disabled = false;
+      }
+    }
+
+    // 出球动画：球从机器顶部弹出 → 弧线落到机器前方底座上的展示位
+    machines.forEach((m, mi) => {
+      m.balls.forEach(ball => {
+        if (ball.userData.ejecting) {
+          ball.userData.ejectTime++;
+          const t = ball.userData.ejectTime;
+          if (t < 25) {
+            // 阶段1：冲向出口（局部坐标向上）
+            ball.userData.velocity.y = Math.max(0.12, ball.userData.velocity.y * 0.93);
+            ball.position.add(ball.userData.velocity);
+            ball.rotation.y += 0.15;
+          } else if (t < 60) {
+            // 阶段2：飞到机器前方底座顶部（世界坐标）
+            // 切换到世界坐标
+            if (!ball.userData.worldMode) {
+              // 把球从 group 中移除，加到 scene
+              m.group.remove(ball);
+              scene.add(ball);
+              // 计算当前位置的世界坐标
+              const worldPos = new THREE.Vector3();
+              ball.getWorldPosition(worldPos);
+              ball.position.copy(worldPos);
+              ball.userData.worldMode = true;
+              // 目标位置：机器正下方展示凹槽中心（世界坐标）
+              // 凹槽在底座顶面（局部 y=-1.77），球落点 = 底座顶面 + 球半径
+              ball.userData.targetWorld = new THREE.Vector3(
+                m.x,
+                -1.77 + 0.04 + ballRadius,
+                0
+              );
+              ball.userData.startWorld = ball.position.clone();
+              ball.userData.arcT = 0;
+            }
+            ball.userData.arcT += 1/35;
+            const p = ball.userData.arcT;
+            const s = ball.userData.startWorld;
+            const e = ball.userData.targetWorld;
+            // 抛物线（出球弹起后落下）
+            ball.position.x = s.x + (e.x - s.x) * p;
+            ball.position.z = s.z + (e.z - s.z) * p;
+            ball.position.y = s.y + (e.y - s.y) * p + Math.sin(p * Math.PI) * 0.5;
+            ball.rotation.x += 0.2;
+            ball.rotation.y += 0.15;
+            if (p >= 1) {
+              ball.position.copy(e);
+              ball.userData.velocity.set(0, 0, 0);
+              ball.userData.angularVel.set(0, 0, 0);
+              ball.userData.ejecting = false;
+              m.status = 'ejecting_done';
+            }
+          }
+        }
+      });
+    });
+
+    // 待机时球微动
+    if (globalStatus === 'idle' || globalStatus === 'done') {
+      machines.forEach(m => {
+        m.balls.forEach(b => {
+          if (!b.userData.exited) b.rotation.y += 0.004;
+        });
+        m.outerSphere.rotation.y += 0.0008;
+        m.innerSphere.rotation.y -= 0.0004;
+        m.equator.rotation.y += 0.0008;
+      });
+    }
+
+    // 接触阴影
+    machines.forEach(m => {
+      m.balls.forEach((ball, i) => {
+        const sm = m.shadowMeshes[i];
+        if (ball.userData.exited || ball.userData.ejecting) {
+          sm.visible = false;
+        } else {
+          sm.visible = true;
+          // 局部坐标
+          sm.position.set(ball.position.x, -MACHINE_RADIUS - 0.45, ball.position.z);
+          const h = ball.position.y + MACHINE_RADIUS + 0.45;
+          sm.scale.setScalar(Math.max(0.3, 1 - h * 0.15));
+          sm.material.opacity = Math.max(0.05, 0.35 - h * 0.06);
+        }
+      });
+    });
+
+    // 地板光环呼吸
+    floorRings.forEach((r, i) => {
+      r.material.opacity = 0.4 + Math.sin(Date.now() * 0.002 + i * 0.5) * 0.2;
+    });
+
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  // ====== UI ======
+  const btnStart = document.getElementById('btnStart');
+  const btnReset = document.getElementById('btnReset');
+  const statusText = document.getElementById('statusText');
+  const resultNums = document.getElementById('resultNums');
+  const historyList = document.getElementById('historyList');
+
+  function setStatusText(s) { statusText.textContent = s; }
+
+  function updateResultUI() {
+    let html = '';
+    for (let i = 0; i < POS_COUNT; i++) {
+      const m = machines[i];
+      if (m.pickedNumber !== null) {
+        const c = BALL_COLORS[m.pickedNumber];
+        html += '<div class="ball" style="background: radial-gradient(circle at 32% 28%, ' + c.light + ', ' + c.base + ' 60%, ' + c.dark + ' 100%);">' + m.pickedNumber + '</div>';
+      } else {
+        html += '<div class="ball empty">?</div>';
+      }
+    }
+    resultNums.innerHTML = html;
+  }
+
+  const history = [];
+  function saveToHistory(nums) {
+    const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    history.unshift({ time, nums: nums.slice() });
+    if (history.length > 20) history.pop();
+    renderHistory();
+  }
+  function renderHistory() {
+    let html = '';
+    history.forEach((h, i) => {
+      html += '<div class="item"><span class="badge">' + (i+1) + '</span>' +
+        h.nums.join(' ') + ' <span style="color:#666">(' + h.time + ')</span></div>';
+    });
+    historyList.innerHTML = html || '<div class="item" style="color:#555">暂无记录</div>';
+  }
+  renderHistory();
+  updateResultUI();
+
+  btnStart.addEventListener('click', () => {
+    if (globalStatus !== 'idle') return;
+    globalStatus = 'running';
+    globalTimer = 0;
+    // 重置每台机器状态（保留 3D 位置）
+    machines.forEach((m, i) => {
+      m.status = 'idle';
+      m.pickedBall = null;
+      m.pickedNumber = null;
+      m.spinTimer = 0;
+      m.spinningBoost = 0;
+      m.exitCooldown = 0;
+      m.startDelay = i * 50; // 错峰
+    });
+    btnStart.disabled = true;
+    btnReset.disabled = true;
+    setStatusText('🌀 正在摇奖...');
+    updateResultUI();
+  });
+
+  btnReset.addEventListener('click', () => {
+    machines.forEach(m => {
+      // 复位所有球（包括已出球的）
+      m.balls.forEach(b => {
+        // 如果之前从 group 移到 scene 了，要移回 group
+        if (b.userData.worldMode) {
+          scene.remove(b);
+          m.group.add(b);
+          b.userData.worldMode = false;
+        }
+        resetBall(b, MACHINE_RADIUS);
+      });
+      m.status = 'idle';
+      m.pickedBall = null;
+      m.pickedNumber = null;
+      m.spinTimer = 0;
+      m.spinningBoost = 0;
+      m.exitCooldown = 0;
+    });
+    globalStatus = 'idle';
+    btnStart.disabled = false;
+    btnReset.disabled = true;
+    setStatusText('已重置，点击"开始摇奖"启动');
+    updateResultUI();
+  });
+
+  window.addEventListener('resize', () => {
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+  });
+})();
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 每日温馨话语（按一年中的第几天取用，51 条足够一年循环）
+ */
+function getDailyQuote() {
+    var quotes = [
+        '每一天都是新的开始，加油！',
+        '今天的努力，是明天的底气。',
+        '心怀热爱，奔赴山海。',
+        '你只管努力，剩下的交给时间。',
+        '愿所有的美好，都如约而至。',
+        '生活明朗，万物可爱，人间值得，未来可期。',
+        '认真生活，就能找到被人生偷藏起来的糖果。',
+        '星光不问赶路人，时光不负有心人。',
+        '你现在的付出，都是一种沉淀。',
+        '愿你有前进一步的勇气，亦有退后一步的从容。',
+        '保持热爱，奔赴下一场山海。',
+        '愿你眼中有光，心中有爱，脚下有路。',
+        '微笑面对每一天，阳光会照亮每个角落。',
+        '愿你的努力，都不被辜负。',
+        '种一棵树最好的时间是十年前，其次是现在。',
+        '细节决定成败，态度决定一切。',
+        '行动是治愈恐惧的良药。',
+        '宁可辛苦一阵子，不要苦一辈子。',
+        '每一个不曾起舞的日子，都是对生命的辜负。',
+        '愿你成为自己的太阳，无需借谁的光。',
+        '时光知味，岁月沉香。',
+        '愿你出走半生，归来仍是少年。',
+        '心若向阳，无谓悲伤。',
+        '慢慢来，比较快。',
+        '想全是问题，做全是答案。',
+        '越努力，越幸运。',
+        '不乱于心，不困于情，不畏将来，不念过往。',
+        '你若盛开，清风自来。',
+        '愿所有的遗憾，都是惊喜的铺垫。',
+        '愿你被这世界温柔以待。',
+        '人生没有白走的路，每一步都算数。',
+        '愿时光能缓，愿故人不散。',
+        '愿你三冬暖，愿你春不寒。',
+        '愿你天黑有灯，下雨有伞。',
+        '愿你所求皆如愿，所行皆坦途。',
+        '愿你的生活，如诗如画。',
+        '愿你的日子，每天都是好天气。',
+        '一切都会过去，一切都会好起来。',
+        '愿你成为自己喜欢的样子。',
+        '不必太纠结于当下，也不必太忧虑未来。',
+        '愿你历尽千帆，归来仍是少年。',
+        '愿你眼中星辰大海，心中日月星光。',
+        '愿你余生有风也有酒，有诗也有茶。',
+        '愿你今后眼里是阳光，笑里是坦荡。',
+        '愿你遍历山河，觉得人间值得。',
+        '愿你前程似锦，不负韶华。',
+        '愿你不负光阴，不负自己。',
+        '生活不止眼前的苟且，还有诗和远方。',
+        '面朝大海，春暖花开。',
+        '笑口常开，好运自然来。',
+        '今天的你，也是限量版。'
+    ];
+    var now = new Date();
+    var start = new Date(now.getFullYear(), 0, 0);
+    var dayOfYear = Math.floor((now - start) / 86400000);
+    return quotes[dayOfYear % quotes.length];
+}
+
+/**
+ * 更新状态栏时间项
+ * 状态栏右侧显示 HH:MM:SS，鼠标悬停 tooltip 显示日期+温馨话语
+ */
+function updateTimeStatusItem(item) {
+    var d = new Date();
+    var pad = function (n) { return n < 10 ? '0' + n : '' + n; };
+    // codicon 时钟图标，color 已在外部设置成彩色
+    item.text = '$(clock) ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    var week = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+    var dateStr = d.getFullYear() + '年' + pad(d.getMonth() + 1) + '月' + pad(d.getDate()) + '日 星期' + week;
+    item.tooltip = '🕐 ' + dateStr + '\n\n✨ ' + getDailyQuote() + '\n\n(点击查看，菜单"时间背景水印"可隐藏)';
+}
+
+/**
  * 生成随机 nonce（用于 Webview CSP）
  */
 function getNonce() {
@@ -1607,6 +2853,1371 @@ function getNonce() {
 /**
  * 转移统计 Webview HTML（独立面板）
  */
+/**
+ * 调用 Python 后端跑多模型对比
+ * 通过临时文件传递输入输出，避开 stdout 编码问题
+ */
+async function runMLCompare(history, testCount) {
+    const { spawn, execSync } = require('child_process');
+    const os = require('os');
+    const path = require('path');
+    const fs = require('fs');
+
+    // ========== Python 环境自动检测 + 自动安装依赖 ==========
+    const REQUIRED_PKGS = ['numpy', 'sklearn', 'pandas'];
+    const PKG_TO_PIP = { 'numpy': 'numpy', 'sklearn': 'scikit-learn', 'pandas': 'pandas' };
+
+    // 检测结果缓存到 globalStorage，避免每次都跑检测
+    const ENV_CACHE_FILE = path.join(getPredDir(), 'python_env_cache.json');
+
+    function loadEnvCache() {
+        try {
+            const c = JSON.parse(fs.readFileSync(ENV_CACHE_FILE, 'utf-8'));
+            // 缓存7天内有效
+            if (Date.now() - c.ts < 7 * 24 * 3600 * 1000) return c;
+        } catch (e) {}
+        return null;
+    }
+
+    function saveEnvCache(pythonCmd, missing) {
+        try {
+            fs.writeFileSync(ENV_CACHE_FILE, JSON.stringify({
+                pythonCmd, missing, ts: Date.now()
+            }), 'utf-8');
+        } catch (e) {}
+    }
+
+    // 在多个候选里找一个可用的 Python 命令
+    function findPythonCmd() {
+        const candidates = ['python', 'py -3', 'python3'];
+        for (const cmd of candidates) {
+            try {
+                execSync(`${cmd} --version`, {
+                    encoding: 'utf-8',
+                    timeout: 5000,
+                    windowsHide: true,
+                    stdio: 'pipe'  // 不让 stderr 抛错
+                });
+                return cmd;
+            } catch (e) {
+                // 检查 stdout 是否有 "Python x.y" 即可（version 走 stdout 也走 stderr）
+                if (e.stdout && /Python\s+\d/i.test(e.stdout)) return cmd;
+            }
+        }
+        return null;
+    }
+
+    // 检测 Python 缺哪些库（用 spawnSync 分离 stdout/stderr）
+    function findMissingPkgs(pythonCmd) {
+        const { spawnSync } = require('child_process');
+        // 简洁检测代码：尝试 import，没缺就输出 OK
+        const checkScript =
+            "import sys\n" +
+            "ok=[]\n" +
+            "for p in ['numpy','sklearn','pandas']:\n" +
+            "    try:\n" +
+            "        __import__(p)\n" +
+            "        ok.append(p)\n" +
+            "    except ImportError:\n" +
+            "        pass\n" +
+            "print('OK:' + ','.join(ok))\n";
+
+        const pythonBin = pythonCmd.split(' ')[0];
+        const pythonArgs = pythonCmd.includes(' ') ? ['-3', '-c', checkScript] : ['-c', checkScript];
+
+        const r = spawnSync(pythonBin, pythonArgs, {
+            encoding: 'utf-8',
+            timeout: 15000,
+            windowsHide: true
+        });
+
+        const stdout = (r.stdout || '').trim();
+        // 提取 OK: 后面的列表
+        const m = stdout.match(/OK:([^\n]*)/);
+        if (m) {
+            const installed = m[1].split(',').filter(x => x);
+            return REQUIRED_PKGS.filter(p => installed.indexOf(p) === -1);
+        }
+        // 检测失败：当成全部缺失
+        return REQUIRED_PKGS.slice();
+    }
+
+    // 显示进度通道
+    let channel;
+    function ensureChannel() {
+        if (!channel) {
+            channel = vscode.window.createOutputChannel('Python 环境');
+            channel.show();
+        }
+        return channel;
+    }
+
+    // 自动 pip install
+    async function autoPipInstall(pythonCmd, pkgs) {
+        const ch = ensureChannel();
+        const pipNames = pkgs.map(p => PKG_TO_PIP[p] || p).join(' ');
+        ch.appendLine('────────────────────────────────────');
+        ch.appendLine(`正在自动安装依赖: ${pipNames}`);
+        ch.appendLine('可能需要 30-120 秒，请耐心等待...');
+        ch.appendLine('────────────────────────────────────');
+
+        const pythonBin = pythonCmd.split(' ')[0];
+        const pythonArgs = pythonCmd.includes(' ') ? ['-3', '-m', 'pip', 'install', ...pkgs.map(p => PKG_TO_PIP[p] || p)]
+                                                   : ['-m', 'pip', 'install', ...pkgs.map(p => PKG_TO_PIP[p] || p)];
+
+        await new Promise((resolve, reject) => {
+            const proc = spawn(pythonBin, pythonArgs, {
+                env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+                windowsHide: false
+            });
+            proc.stdout.on('data', d => ch.append(d.toString()));
+            proc.stderr.on('data', d => ch.append(d.toString()));
+            proc.on('error', reject);
+            proc.on('close', code => {
+                if (code === 0) resolve();
+                else reject(new Error(`pip install 退出码 ${code}`));
+            });
+        });
+        ch.appendLine('✅ 依赖安装完成');
+    }
+
+    // ============== 主流程：先看缓存，缓存不存在才检测 ==============
+    const cached = loadEnvCache();
+    let pythonCmd, missingPkgs;
+
+    if (cached && cached.missing.length === 0) {
+        // 缓存命中：依赖已就绪
+        pythonCmd = cached.pythonCmd;
+        missingPkgs = [];
+        ensureChannel().appendLine(`✅ 检测缓存命中，Python 依赖已就绪（${pythonCmd}）`);
+    } else {
+        // 缓存失效：实际检测
+        pythonCmd = findPythonCmd();
+        if (!pythonCmd) {
+            ensureChannel().appendLine('❌ 未找到 Python 解释器');
+            const action = await vscode.window.showErrorMessage(
+                '⚠️ 未检测到 Python。模型对比功能需要 Python 3.8+\n\n请安装后重启 VSCode。',
+                { modal: true },
+                '打开 Python 官网'
+            );
+            if (action === '打开 Python 官网') {
+                vscode.env.openExternal(vscode.Uri.parse('https://www.python.org/downloads/'));
+            }
+            throw new Error('未检测到 Python，请先安装 Python 3.8+');
+        }
+        ensureChannel().appendLine(`✅ 检测到 Python: ${pythonCmd}`);
+
+        missingPkgs = findMissingPkgs(pythonCmd);
+        if (missingPkgs.length > 0) {
+            ensureChannel().appendLine(`⚠️ 缺失依赖: ${missingPkgs.join(', ')}`);
+            try {
+                await autoPipInstall(pythonCmd, missingPkgs);
+                vscode.window.showInformationMessage('✅ Python 依赖已自动安装');
+                missingPkgs = []; // 安装后重置为空
+            } catch (e) {
+                ensureChannel().appendLine('❌ 自动安装失败: ' + e.message);
+                const action = await vscode.window.showErrorMessage(
+                    `依赖自动安装失败：${e.message}\n请手动执行: pip install ${missingPkgs.map(p => PKG_TO_PIP[p] || p).join(' ')}`,
+                    { modal: true },
+                    '复制命令'
+                );
+                if (action === '复制命令') {
+                    await vscode.env.clipboard.writeText(`pip install ${missingPkgs.map(p => PKG_TO_PIP[p] || p).join(' ')}`);
+                }
+                throw new Error('依赖自动安装失败');
+            }
+        } else {
+            ensureChannel().appendLine('✅ 所有 Python 依赖已就绪');
+        }
+
+        // 写缓存（仅在依赖已就绪时才缓存，避免缓存了"缺失"状态）
+        if (missingPkgs.length === 0) {
+            saveEnvCache(pythonCmd, []);
+        }
+    }
+
+    const pythonBin = pythonCmd.split(' ')[0]; // 'py -3' 取 'py'
+    const pythonArgs = pythonCmd.includes(' ') ? ['-3'] : [];
+    // ========== Python 环境检测+自动安装结束 ==========
+
+    // 构造输入数据
+    const inputData = {
+        history: history.map(h => ({ num: h.num, period: h.period, date: h.date })),
+        testCount: testCount
+    };
+
+    // 写输入文件 + 输出文件路径
+    const tmpIn = path.join(os.tmpdir(), 'pl3_ml_in.json');
+    const tmpOut = path.join(os.tmpdir(), 'pl3_ml_out.json');
+    fs.writeFileSync(tmpIn, JSON.stringify(inputData), 'utf-8');
+    try { fs.unlinkSync(tmpOut); } catch (e) {}
+
+    const scriptPath = path.join(__dirname, '..', 'scripts', 'ml_compare.py');
+
+    return new Promise((resolve, reject) => {
+        // PYTHONIOENCODING=utf-8 + unbuffered，确保输出是 UTF-8
+        const proc = spawn(pythonBin, [
+            ...pythonArgs,
+            '-u',
+            scriptPath,
+            tmpIn,
+            '--out', tmpOut
+        ], {
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+            windowsHide: true
+        });
+
+        let stderrBuf = '';
+        proc.stderr.on('data', d => stderrBuf += d.toString('utf-8'));
+
+        proc.on('error', err => {
+            try { fs.unlinkSync(tmpIn); } catch (e) {}
+            reject(new Error('Python 启动失败: ' + err.message));
+        });
+
+        proc.on('close', code => {
+            try { fs.unlinkSync(tmpIn); } catch (e) {}
+            if (code !== 0) {
+                reject(new Error('Python 退出码 ' + code + ': ' + (stderrBuf || '未知错误')));
+                return;
+            }
+            // 优先从输出文件读（更可靠）
+            if (fs.existsSync(tmpOut)) {
+                try {
+                    const content = fs.readFileSync(tmpOut, 'utf-8');
+                    fs.unlinkSync(tmpOut);
+                    resolve(JSON.parse(content));
+                } catch (e) {
+                    reject(new Error('读取输出文件失败: ' + e.message));
+                }
+            } else {
+                reject(new Error('Python 未生成输出文件: ' + stderrBuf.slice(0, 500)));
+            }
+        });
+    });
+}
+
+/**
+ * ML 对比 - 加载中页面
+ */
+function getMLCompareLoadingHtml(name) {
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>🧠 模型对比 - ${name}</title>
+<style>
+body { background:#1e1e1e;color:#ddd;font-family:"Segoe UI","Microsoft YaHei",sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;flex-direction:column; }
+.spinner { width:60px;height:60px;border:4px solid rgba(255,255,255,0.1);border-top:4px solid #8ec5ff;border-radius:50%;animation:spin 1s linear infinite;margin-bottom:24px; }
+@keyframes spin { 0%{transform:rotate(0)} 100%{transform:rotate(360deg)} }
+h2 { color:#8ec5ff;font-weight:500;margin-bottom:8px; }
+.desc { color:#888;font-size:13px; }
+</style>
+</head>
+<body>
+<div class="spinner"></div>
+<h2>正在运行多模型对比...</h2>
+<div class="desc">4 个模型 × 3 位 × ${0} 次滚动预测，可能需要 30-90 秒</div>
+</body>
+</html>`;
+}
+
+/**
+ * ML 对比 - 结果展示页面
+ */
+/**
+ * 群鸟生命游戏 - Boids + Game of Life 融合
+ * - Boids: 凝聚/对齐/分离三规则群飞
+ * - Game of Life: 网格细胞按邻居数量生死
+ * - 融合: 每个格子被 Boid 飞过的次数决定"激活"，激活后开始按生命游戏规则演化
+ */
+/**
+ * 质合形态分析
+ * 质数: 2,3,5,7  合数: 0,1,4,6,8,9（0和1归合数便于统计）
+ * 每位统计质合频率 + 形态分布 + 预测
+ */
+function getZhiHeHtml(name, posLabels, allNumbers, periods) {
+    const nPos = posLabels.length;
+    const N = Math.min(300, allNumbers[0].length);
+    const periodsSliced = periods.slice(-N);
+
+    // 质合分类
+    const ZHI = new Set([2, 3, 5, 7]);
+    const classify = n => ZHI.has(n) ? '质' : '合';
+
+    // 为每位统计
+    const posData = allNumbers.map((nums, p) => {
+        const data = nums.slice(-N);
+        let zhiCnt = 0, heCnt = 0;
+        for (const d of data) {
+            if (ZHI.has(d)) zhiCnt++; else heCnt++;
+        }
+        return { data, zhiCnt, heCnt, zhiPct: zhiCnt / N * 100, hePct: heCnt / N * 100 };
+    });
+
+    // 形态统计（如"质质合"、"合合质"）
+    const forms = {};
+    for (let i = 0; i < N; i++) {
+        const form = posData.map(pd => classify(pd.data[i])).join('');
+        forms[form] = (forms[form] || 0) + 1;
+    }
+    const sortedForms = Object.entries(forms).sort((a, b) => b[1] - a[1]);
+
+    // 转移矩阵（质→质, 质→合, 合→质, 合→合）每位
+    const transData = posData.map(pd => {
+        const t = { '质质': 0, '质合': 0, '合质': 0, '合合': 0 };
+        for (let i = 0; i < N - 1; i++) {
+            const k = classify(pd.data[i]) + classify(pd.data[i + 1]);
+            t[k]++;
+        }
+        return t;
+    });
+
+    // 最近10期形态
+    const recentForms = [];
+    for (let i = N - 10; i < N; i++) {
+        const form = posData.map(pd => classify(pd.data[i])).join('');
+        recentForms.push({ period: periodsSliced[i], form, nums: posData.map(pd => pd.data[i]) });
+    }
+
+    // 预测：每位用转移矩阵预测下期质合
+    const predForm = posData.map((pd, i) => {
+        const last = classify(pd.data[N - 1]);
+        const t = transData[i];
+        const zhiNext = last === '质' ? t['质质'] : t['合质'];
+        const heNext = last === '质' ? t['质合'] : t['合合'];
+        return zhiNext >= heNext ? '质' : '合';
+    }).join('');
+
+    const dataJson = JSON.stringify({ posLabels, posData, forms: sortedForms, transData, recentForms, predForm, N, lastPeriod: periodsSliced[periodsSliced.length - 1] });
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>📐 质合形态分析 - ${name}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; padding: 16px; }
+h2 { color: #8ec5ff; margin-bottom: 4px; }
+.meta { color: #888; font-size: 12px; margin-bottom: 16px; }
+.pred-result { padding: 16px; background: rgba(46,204,113,0.08); border: 1px solid rgba(46,204,113,0.3); border-radius: 8px; margin: 16px 0; text-align: center; }
+.pred-form { font-size: 32px; font-weight: bold; color: #2ecc71; letter-spacing: 8px; margin: 8px 0; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; max-width: 900px; }
+.panel { background: rgba(20,30,50,0.5); border: 1px solid rgba(120,180,255,0.15); border-radius: 8px; padding: 14px; }
+.panel h3 { color: #feca57; font-size: 14px; margin-bottom: 10px; }
+.bar-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
+.bar-label { width: 40px; text-align: center; font-weight: bold; }
+.bar-track { flex: 1; height: 22px; background: rgba(0,0,0,0.3); border-radius: 4px; position: relative; }
+.bar-fill { height: 100%; border-radius: 4px; }
+.bar-val { width: 80px; font-size: 12px; color: #aaa; }
+.legend { font-size: 11px; color: #666; margin-top: 6px; line-height: 1.5; }
+.form-row { display: flex; justify-content: space-between; padding: 4px 8px; margin: 2px 0; border-radius: 4px; font-size: 13px; }
+.form-row:nth-child(odd) { background: rgba(255,255,255,0.03); }
+.form-label { color: #8ec5ff; font-weight: bold; }
+.form-count { color: #feca57; }
+.form-pct { color: #888; font-size: 11px; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { padding: 4px 8px; text-align: center; border: 1px solid rgba(255,255,255,0.08); }
+th { background: rgba(0,0,0,0.3); color: #8ec5ff; }
+.zhi { color: #5ad2ff; font-weight: bold; }
+.he { color: #feca57; font-weight: bold; }
+.recent-table th { font-size: 11px; }
+</style>
+</head>
+<body>
+<h2>📐 ${name} · 质合形态分析</h2>
+<div class="meta">历史 ${N} 期 · 最新 ${periodsSliced[periodsSliced.length-1] || '?'} · 质数=2,3,5,7 · 合数=0,1,4,6,8,9</div>
+
+<div class="pred-result">
+    <div style="color:#888;font-size:12px">下期形态预测（基于转移矩阵）</div>
+    <div class="pred-form" id="predForm">-</div>
+    <div style="color:#888;font-size:11px">⚠️ 仅供娱乐参考</div>
+    <button id="btnPred" style="margin-top:10px;padding:8px 20px;background:#0e639c;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;">🔮 重新预测</button>
+</div>
+
+<div class="grid">
+    <div class="panel">
+        <h3>📊 每位质合频率</h3>
+        <div id="bars"></div>
+        <div class="legend">蓝=质数(2,3,5,7) 黄=合数(0,1,4,6,8,9) · 理论: 质40% 合60%</div>
+    </div>
+    <div class="panel">
+        <h3>📋 形态分布</h3>
+        <div id="formList"></div>
+        <div class="legend">所有历史形态按出现次数排序</div>
+    </div>
+    <div class="panel" style="grid-column: span 2;">
+        <h3>🔢 每位转移矩阵</h3>
+        <div id="transTables"></div>
+        <div class="legend">行=上期质合 · 列=本期质合</div>
+    </div>
+    <div class="panel" style="grid-column: span 2;">
+        <h3>📅 最近10期形态</h3>
+        <table class="recent-table">
+            <thead><tr><th>期号</th>${posLabels.map(l => '<th>' + l + '</th>').join('')}<th>形态</th></tr></thead>
+            <tbody id="recentBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+(function() {
+    const D = ${dataJson};
+
+    // ============ 频率条形图 ============
+    const barsEl = document.getElementById('bars');
+    D.posLabels.forEach((label, p) => {
+        const pd = D.posData[p];
+        const row = document.createElement('div');
+        row.className = 'bar-row';
+        row.innerHTML =
+            '<div class="bar-label" style="color:#feca57">' + label + '</div>' +
+            '<div class="bar-track">' +
+                '<div class="bar-fill" style="width:' + pd.zhiPct + '%; background:#5ad2ff; opacity:0.7;"></div>' +
+                '<div style="position:absolute;top:0;left:' + pd.zhiPct + '%;right:0;height:100%;background:#feca57;opacity:0.6;border-radius:0 4px 4px 0;"></div>' +
+            '</div>' +
+            '<div class="bar-val">质' + pd.zhiCnt + '(' + pd.zhiPct.toFixed(1) + '%) 合' + pd.heCnt + '(' + pd.hePct.toFixed(1) + '%)</div>';
+        barsEl.appendChild(row);
+    });
+
+    // ============ 形态列表 ============
+    const formEl = document.getElementById('formList');
+    D.forms.forEach(([form, cnt]) => {
+        const pct = (cnt / D.N * 100).toFixed(1);
+        const row = document.createElement('div');
+        row.className = 'form-row';
+        const colored = form.split('').map(c => '<span class="' + (c === '质' ? 'zhi' : 'he') + '">' + c + '</span>').join('');
+        row.innerHTML = '<span class="form-label">' + colored + '</span><span class="form-count">' + cnt + '次</span><span class="form-pct">' + pct + '%</span>';
+        formEl.appendChild(row);
+    });
+
+    // ============ 转移矩阵 ============
+    const transEl = document.getElementById('transTables');
+    D.posLabels.forEach((label, p) => {
+        const t = D.transData[p];
+        const total = t['质质'] + t['质合'] + t['合质'] + t['合合'] || 1;
+        const div = document.createElement('div');
+        div.style.cssText = 'display:inline-block;margin:8px;text-align:center;';
+        div.innerHTML =
+            '<div style="color:#feca57;font-size:13px;margin-bottom:6px">' + label + '</div>' +
+            '<table style="font-size:11px;width:180px;">' +
+                '<tr><th></th><th class="zhi">→质</th><th class="he">→合</th></tr>' +
+                '<tr><td class="zhi">质→</td><td>' + t['质质'] + ' (' + (t['质质']/total*100).toFixed(1) + '%)</td><td>' + t['质合'] + ' (' + (t['质合']/total*100).toFixed(1) + '%)</td></tr>' +
+                '<tr><td class="he">合→</td><td>' + t['合质'] + ' (' + (t['合质']/total*100).toFixed(1) + '%)</td><td>' + t['合合'] + ' (' + (t['合合']/total*100).toFixed(1) + '%)</td></tr>' +
+            '</table>';
+        transEl.appendChild(div);
+    });
+
+    // ============ 最近10期 ============
+    const recentEl = document.getElementById('recentBody');
+    D.recentForms.slice().reverse().forEach(r => {
+        const colored = r.form.split('').map(c => '<span class="' + (c === '质' ? 'zhi' : 'he') + '">' + c + '</span>').join('');
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + r.period + '</td>' + r.nums.map(n => '<td>' + n + '</td>').join('') + '<td>' + colored + '</td>';
+        recentEl.appendChild(tr);
+    });
+
+    // ============ 预测显示 ============
+    function showPred() {
+        const el = document.getElementById('predForm');
+        const colored = D.predForm.split('').map(c => '<span class="' + (c === '质' ? 'zhi' : 'he') + '" style="color:' + (c === '质' ? '#5ad2ff' : '#feca57') + '">' + c + '</span>').join('');
+        el.innerHTML = colored;
+    }
+    showPred();
+
+    document.getElementById('btnPred').addEventListener('click', () => {
+        // 重新预测：加随机扰动
+        const noisy = D.predForm.split('').map(c => {
+            return Math.random() < 0.3 ? (c === '质' ? '合' : '质') : c;
+        }).join('');
+        const el = document.getElementById('predForm');
+        el.innerHTML = noisy.split('').map(c => '<span style="color:' + (c === '质' ? '#5ad2ff' : '#feca57') + '">' + c + '</span>').join('');
+    });
+})();
+</script>
+</body>
+</html>`;
+}
+
+
+function getBoidsNumberHtml(name, posLabels, allNumbers, periods) {
+    // allNumbers: [[位1号码序列], [位2号码序列], ...]
+    // posLabels: ['百位','十位','个位'] 或 ['万位','千位','百位','十位','个位']
+    const nPos = posLabels.length;
+    const N = Math.min(300, allNumbers[0].length);
+    const periodsSliced = periods.slice(-N);
+
+    // 为每位计算统计
+    const posData = allNumbers.map((nums, p) => {
+        const data = nums.slice(-N);
+        const counts = new Array(10).fill(0);
+        for (const n of data) counts[n]++;
+        const freqs = counts.map(c => c / N * 100);
+
+        const cum = new Array(10).fill(0);
+        const cumSeries = new Array(10).fill(null).map(() => []);
+        for (let i = 0; i < N; i++) {
+            cum[data[i]]++;
+            for (let d = 0; d < 10; d++) {
+                cumSeries[d].push(cum[d] / (i + 1) * 100);
+            }
+        }
+
+        const trans = Array.from({length: 10}, () => new Array(10).fill(0));
+        for (let i = 0; i < N - 1; i++) trans[data[i]][data[i+1]]++;
+        const transMax = Math.max(...trans.map(r => Math.max(...r)));
+
+        return { data, counts, freqs, cumSeries, trans, transMax, maxFreqIdx: counts.indexOf(Math.max(...counts)) };
+    });
+
+    const colors = ['#5ad2ff','#4cd9c0','#a78bfa','#feca57','#ff7675','#10b981','#f472b6','#facc15','#60a5fa','#34d399'];
+    const dataJson = JSON.stringify({ posLabels, posData, N, periods: periodsSliced, colors, lastPeriod: periodsSliced[periodsSliced.length-1] });
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>🎲 号码分析 - ${name}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; padding: 16px; }
+h2 { color: #8ec5ff; margin-bottom: 4px; }
+.meta { color: #888; font-size: 12px; margin-bottom: 16px; }
+.pred-btn { display: block; width: 100%; max-width: 600px; padding: 14px; margin: 0 auto 16px; background: #c0392b; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 18px; font-weight: bold; }
+.pred-btn:hover { background: #e74c3c; }
+.pred-result { padding: 16px; background: rgba(192,57,43,0.1); border: 1px solid rgba(192,57,43,0.3); border-radius: 8px; margin: 0 auto 20px; max-width: 600px; text-align: center; }
+.pred-num { font-size: 48px; font-weight: bold; color: #2ecc71; letter-spacing: 12px; margin: 8px 0; }
+.pred-top3 { color: #feca57; font-size: 14px; }
+.pred-detail { color: #888; font-size: 11px; margin-top: 8px; line-height: 1.6; }
+.pos-section { margin-bottom: 20px; }
+.pos-title { color: #feca57; font-size: 16px; font-weight: bold; margin-bottom: 8px; border-bottom: 1px solid rgba(254,202,87,0.2); padding-bottom: 4px; }
+.pos-content { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.panel { background: rgba(20,30,50,0.5); border: 1px solid rgba(120,180,255,0.15); border-radius: 8px; padding: 10px; }
+.panel h4 { color: #8ec5ff; font-size: 12px; margin-bottom: 6px; }
+.panel canvas { width: 100%; display: block; background: rgba(0,0,0,0.3); border-radius: 4px; }
+.bar-row { display: flex; align-items: center; gap: 6px; margin: 3px 0; font-size: 12px; }
+.bar-label { width: 18px; text-align: center; font-weight: bold; }
+.bar-track { flex: 1; height: 16px; background: rgba(0,0,0,0.3); border-radius: 3px; position: relative; }
+.bar-fill { height: 100%; border-radius: 3px; }
+.bar-val { width: 70px; font-size: 11px; color: #aaa; }
+.legend { font-size: 10px; color: #666; margin-top: 4px; }
+</style>
+</head>
+<body>
+<h2>🎲 ${name} · 全位号码频率分析</h2>
+<div class="meta">历史 ${N} 期 · 最新 ${periodsSliced[periodsSliced.length-1] || '?'} · 各位独立统计 · 理论均匀 10%</div>
+
+<button class="pred-btn" id="btnPredict">🔮 一键预测下期号码</button>
+<div id="predResult"></div>
+
+${posLabels.map((label, p) => `
+<div class="pos-section">
+    <div class="pos-title">${label}</div>
+    <div class="pos-content">
+        <div class="panel">
+            <h4>📊 频率分布</h4>
+            <div id="bars_${p}"></div>
+            <div class="legend">最高频率 ★</div>
+        </div>
+        <div class="panel">
+            <h4>📈 累积占比</h4>
+            <canvas id="cum_${p}" width="300" height="120"></canvas>
+            <div class="legend">越接近10%越随机</div>
+        </div>
+        <div class="panel" style="grid-column: span 2;">
+            <h4>🔀 转移矩阵</h4>
+            <canvas id="trans_${p}" width="300" height="120"></canvas>
+            <div class="legend">行=当前号 · 列=下一号 · 越亮=转移越频繁</div>
+        </div>
+    </div>
+</div>
+`).join('')}
+
+<script>
+(function() {
+    const D = ${dataJson};
+
+    // 为每位渲染统计图
+    D.posLabels.forEach((label, p) => {
+        const pd = D.posData[p];
+
+        // 频率条形图
+        const barsEl = document.getElementById('bars_' + p);
+        for (let i = 0; i < 10; i++) {
+            const pct = pd.freqs[i];
+            const color = D.colors[i];
+            const isMax = i === pd.maxFreqIdx;
+            const row = document.createElement('div');
+            row.className = 'bar-row';
+            row.innerHTML =
+                '<div class="bar-label" style="color:' + color + '">' + i + '</div>' +
+                '<div class="bar-track">' +
+                    '<div class="bar-fill" style="width:' + (pct * 5) + '%; background:' + color + '; opacity:' + (isMax ? 1 : 0.6) + ';"></div>' +
+                    '<div style="position:absolute; top:0; left:50%; width:1px; height:100%; background:rgba(120,180,255,0.3);"></div>' +
+                '</div>' +
+                '<div class="bar-val">' + pd.counts[i] + '次 ' + pct.toFixed(1) + '%' + (isMax ? ' ★' : '') + '</div>';
+            barsEl.appendChild(row);
+        }
+
+        // 累积占比折线
+        const cumC = document.getElementById('cum_' + p);
+        const cx = cumC.getContext('2d');
+        cx.fillStyle = '#000';
+        cx.fillRect(0, 0, cumC.width, cumC.height);
+        const W = cumC.width, H = cumC.height - 8;
+        for (let d = 0; d < 10; d++) {
+            cx.strokeStyle = D.colors[d];
+            cx.lineWidth = 1.2;
+            cx.beginPath();
+            const series = pd.cumSeries[d];
+            for (let j = 0; j < series.length; j++) {
+                const x = (j / (series.length - 1)) * W;
+                const y = H - series[j] / 100 * H + 4;
+                if (j === 0) cx.moveTo(x, y);
+                else cx.lineTo(x, y);
+            }
+            cx.stroke();
+        }
+        cx.strokeStyle = 'rgba(255,255,255,0.3)';
+        cx.setLineDash([3, 3]);
+        cx.beginPath();
+        cx.moveTo(0, H - 0.1 * H + 4);
+        cx.lineTo(W, H - 0.1 * H + 4);
+        cx.stroke();
+        cx.setLineDash([]);
+
+        // 转移矩阵热力图
+        const tC = document.getElementById('trans_' + p);
+        const tx = tC.getContext('2d');
+        tx.fillStyle = '#000';
+        tx.fillRect(0, 0, tC.width, tC.height);
+        const cell = Math.min(tC.width / 12, (tC.height - 16) / 10);
+        const ox = (tC.width - cell * 10) / 2;
+        const oy = 14;
+        for (let i = 0; i < 10; i++) {
+            for (let j = 0; j < 10; j++) {
+                const v = pd.trans[i][j] / pd.transMax;
+                tx.fillStyle = 'rgba(254,202,87,' + v.toFixed(3) + ')';
+                tx.fillRect(ox + j * cell, oy + i * cell, cell - 1, cell - 1);
+            }
+        }
+        tx.fillStyle = '#888';
+        tx.font = '8px sans-serif';
+        tx.textAlign = 'center';
+        for (let i = 0; i < 10; i++) {
+            tx.fillText(i, ox + i * cell + cell/2, 10);
+            tx.fillText(i, ox - 6, oy + i * cell + cell/2 + 3);
+        }
+    });
+
+    // ============ 一键预测 ============
+    document.getElementById('btnPredict').addEventListener('click', () => {
+        const el = document.getElementById('predResult');
+        const preds = [];
+        const details = [];
+
+        // 对每位独立预测
+        D.posLabels.forEach((label, p) => {
+            const pd = D.posData[p];
+            const last = pd.data[pd.data.length - 1];
+            const recent5 = pd.data.slice(-5);
+            const scores = new Array(10).fill(0);
+
+            // 因子1：历史频率 30%
+            for (let i = 0; i < 10; i++) scores[i] += pd.freqs[i] / 100 * 0.3;
+            // 因子2：最近5期 30%
+            for (const n of recent5) scores[n] += 0.3 / 5;
+            // 因子3：转移概率 40%
+            const transRow = pd.trans[last];
+            const transSum = transRow.reduce((a, b) => a + b, 0) || 1;
+            for (let i = 0; i < 10; i++) scores[i] += transRow[i] / transSum * 0.4;
+
+            const top = scores.map((s, i) => ({s, i})).sort((a, b) => b.s - a.s);
+            preds.push(top[0].i);
+            details.push({ label, best: top[0].i, top5: top.slice(0, 5).map(t => t.i), scores });
+        });
+
+        const predStr = preds.join(' ');
+        const top5Str = details.map(d => d.label + ': ' + d.top5.join(',')).join(' · ');
+        const detailHtml = details.map(d => {
+            return '<div style="text-align:left;margin:4px 0;font-size:12px;">' +
+                '<b style="color:#feca57">' + d.label + '</b>: 预测 <b style="color:#2ecc71">' + d.best + '</b>' +
+                ' · Top5: [' + d.top5.join(', ') + ']' +
+                '</div>';
+        }).join('');
+
+        el.innerHTML =
+            '<div class="pred-result">' +
+                '<div style="color:#888;font-size:12px;margin-bottom:4px">下期预测号码</div>' +
+                '<div class="pred-num">' + predStr + '</div>' +
+                '<div class="pred-top3">Top5 候补: ' + top5Str + '</div>' +
+                '<div style="margin-top:12px">' + detailHtml + '</div>' +
+                '<div class="pred-detail">上期: ' + D.posData.map(pd => pd.data[pd.data.length-1]).join(' ') + ' · 历史' + D.N + '期 · 频率30%+近5期30%+转移40%</div>' +
+                '<div class="pred-detail" style="color:#666">⚠️ 仅供娱乐参考</div>' +
+            '</div>';
+    });
+})();
+</script>
+</body>
+</html>`;
+}
+
+
+
+function getBoidsLifeHtml() {
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>🐦 群鸟生命游戏</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; overflow: hidden; height: 100vh; }
+#stage { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+#hud { position: fixed; top: 16px; left: 16px; padding: 12px 16px; background: rgba(20,30,50,0.7); border: 1px solid rgba(120,180,255,0.3); border-radius: 8px; font-size: 12px; line-height: 1.7; backdrop-filter: blur(8px); pointer-events: none; }
+#hud b { color: #8ec5ff; }
+#hud .num { color: #feca57; font-weight: bold; }
+#ctrl { position: fixed; top: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px; padding: 12px; background: rgba(20,30,50,0.7); border: 1px solid rgba(120,180,255,0.3); border-radius: 8px; backdrop-filter: blur(8px); }
+#ctrl label { font-size: 12px; color: #aaa; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+#ctrl input[type="range"] { width: 120px; }
+#ctrl button { padding: 6px 14px; background: #0e639c; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; }
+#ctrl button:hover { background: #1177bb; }
+#ctrl button.danger { background: #c0392b; }
+#ctrl button.danger:hover { background: #e74c3c; }
+#legend { position: fixed; bottom: 16px; left: 16px; padding: 10px 14px; background: rgba(20,30,50,0.7); border: 1px solid rgba(120,180,255,0.3); border-radius: 8px; font-size: 11px; line-height: 1.6; backdrop-filter: blur(8px); }
+#legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin-right: 6px; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="hud">
+    <div>🐦 <b>Boids:</b> <span class="num" id="hudBoids">0</span></div>
+    <div>🦠 <b>Live cells:</b> <span class="num" id="hudCells">0</span></div>
+    <div>⚡ <b>FPS:</b> <span class="num" id="hudFps">0</span></div>
+    <div>🔄 <b>Generation:</b> <span class="num" id="hudGen">0</span></div>
+</div>
+<div id="ctrl">
+    <label>鸟数量 <span id="vBoids">150</span><input type="range" id="sBoids" min="20" max="400" value="150"></label>
+    <label>凝聚力 <span id="vCoh">0.005</span><input type="range" id="sCoh" min="0" max="20" value="5"></label>
+    <label>对齐力 <span id="vAli">0.05</span><input type="range" id="sAli" min="0" max="20" value="5"></label>
+    <label>分离力 <span id="vSep">0.5</span><input type="range" id="sSep" min="0" max="20" value="5"></label>
+    <label>生命演化速度 <span id="vLife">6</span><input type="range" id="sLife" min="1" max="20" value="6"></label>
+    <label>网格大小 <span id="vGrid">10</span><input type="range" id="sGrid" min="6" max="24" value="10"></label>
+    <button id="btnReset">重置</button>
+    <button id="btnPause">暂停</button>
+    <button id="btnSpark" class="danger">点燃中心</button>
+</div>
+<div id="legend">
+    <div><span class="dot" style="background:#5ad2ff"></span>Boid 飞鸟</div>
+    <div><span class="dot" style="background:#feca57"></span>激活态细胞（生命游戏进行中）</div>
+    <div><span class="dot" style="background:#e74c3c"></span>活细胞</div>
+    <div>💡 左键按住: 强吸引鸟群 · 右键按住: 吸引鸟群+激活生命</div>
+</div>
+
+<script>
+(function() {
+    const canvas = document.getElementById('stage');
+    const ctx = canvas.getContext('2d');
+    let W = 0, H = 0;
+    function resize() {
+        W = canvas.width = window.innerWidth;
+        H = canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // ============ 参数 ============
+    const params = {
+        boidCount: 150,
+        cohesion: 0.005,
+        alignment: 0.05,
+        separation: 0.5,
+        lifeSpeed: 6,       // 每N帧演化一次生命游戏
+        gridSize: 10,       // 每格像素大小
+        maxSpeed: 2.5,
+        maxForce: 0.07,
+        perception: 30
+    };
+
+    // ============ Boid 类 ============
+    class Boid {
+        constructor(x, y) {
+            this.pos = { x: x || Math.random() * W, y: y || Math.random() * H };
+            const a = Math.random() * Math.PI * 2;
+            const s = 1 + Math.random() * 1.5;
+            this.vel = { x: Math.cos(a) * s, y: Math.sin(a) * s };
+            this.acc = { x: 0, y: 0 };
+            this.trail = [];
+        }
+
+        edges() {
+            if (this.pos.x < 0) this.pos.x = W;
+            else if (this.pos.x > W) this.pos.x = 0;
+            if (this.pos.y < 0) this.pos.y = H;
+            else if (this.pos.y > H) this.pos.y = 0;
+        }
+
+        flock(boids) {
+            let alignX = 0, alignY = 0, alignCount = 0;
+            let cohX = 0, cohY = 0, cohCount = 0;
+            let sepX = 0, sepY = 0, sepCount = 0;
+            const per = params.perception;
+            const perSq = per * per;
+
+            for (const other of boids) {
+                if (other === this) continue;
+                const dx = other.pos.x - this.pos.x;
+                const dy = other.pos.y - this.pos.y;
+                const d2 = dx*dx + dy*dy;
+                if (d2 > perSq || d2 === 0) continue;
+
+                // 对齐
+                alignX += other.vel.x; alignY += other.vel.y; alignCount++;
+                // 凝聚
+                cohX += other.pos.x; cohY += other.pos.y; cohCount++;
+
+                // 分离（距离越近越强）
+                const d = Math.sqrt(d2);
+                if (d < per * 0.5) {
+                    sepX -= (dx / d) / d;
+                    sepY -= (dy / d) / d;
+                    sepCount++;
+                }
+            }
+
+            if (alignCount > 0) {
+                alignX /= alignCount; alignY /= alignCount;
+                this.acc.x += alignX * params.alignment * 0.01;
+                this.acc.y += alignY * params.alignment * 0.01;
+            }
+            if (cohCount > 0) {
+                cohX = cohX / cohCount - this.pos.x;
+                cohY = cohY / cohCount - this.pos.y;
+                this.acc.x += cohX * params.cohesion;
+                this.acc.y += cohY * params.cohesion;
+            }
+            if (sepCount > 0) {
+                this.acc.x += sepX * params.separation * 0.05;
+                this.acc.y += sepY * params.separation * 0.05;
+            }
+
+            // 鼠标吸引（左键按住=强吸引，右键按住=强吸引+激活生命，鼠标移动=弱吸引）
+            if (mouseActive || mouseRightActive) {
+                const dx = mouseX - this.pos.x;
+                const dy = mouseY - this.pos.y;
+                const d2 = dx*dx + dy*dy;
+                if (d2 < 300*300) {
+                    // 引力强度：距离越近越强，左键比右键更强
+                    const strength = mouseRightActive ? 0.0015 : 0.003;
+                    this.acc.x += dx * strength;
+                    this.acc.y += dy * strength;
+                }
+            }
+        }
+
+        update() {
+            // 限力
+            const mag = Math.sqrt(this.acc.x*this.acc.x + this.acc.y*this.acc.y);
+            if (mag > params.maxForce) {
+                this.acc.x = this.acc.x / mag * params.maxForce;
+                this.acc.y = this.acc.y / mag * params.maxForce;
+            }
+            this.vel.x += this.acc.x;
+            this.vel.y += this.acc.y;
+            // 限速
+            const sp = Math.sqrt(this.vel.x*this.vel.x + this.vel.y*this.vel.y);
+            if (sp > params.maxSpeed) {
+                this.vel.x = this.vel.x / sp * params.maxSpeed;
+                this.vel.y = this.vel.y / sp * params.maxSpeed;
+            }
+            this.pos.x += this.vel.x;
+            this.pos.y += this.vel.y;
+            this.acc.x = 0; this.acc.y = 0;
+            // 轨迹（短）
+            this.trail.push({ x: this.pos.x, y: this.pos.y });
+            if (this.trail.length > 8) this.trail.shift();
+        }
+
+        draw() {
+            // 轨迹
+            if (this.trail.length > 1) {
+                ctx.strokeStyle = 'rgba(90,210,255,0.15)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(this.trail[0].x, this.trail[0].y);
+                for (let i = 1; i < this.trail.length; i++) {
+                    ctx.lineTo(this.trail[i].x, this.trail[i].y);
+                }
+                ctx.stroke();
+            }
+            // 鸟身（三角形指向运动方向）
+            const angle = Math.atan2(this.vel.y, this.vel.x);
+            ctx.save();
+            ctx.translate(this.pos.x, this.pos.y);
+            ctx.rotate(angle);
+            ctx.fillStyle = '#5ad2ff';
+            ctx.beginPath();
+            ctx.moveTo(5, 0);
+            ctx.lineTo(-4, 3);
+            ctx.lineTo(-4, -3);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+        }
+    }
+
+    // ============ 生命游戏网格 ============
+    let cells = [];   // 当前生命状态
+    let activated = []; // 激活度（被Boid飞过累积）
+    let cols = 0, rows = 0;
+
+    function initGrid() {
+        cols = Math.floor(W / params.gridSize);
+        rows = Math.floor(H / params.gridSize);
+        cells = new Array(cols * rows).fill(0);
+        activated = new Array(cols * rows).fill(0);
+    }
+
+    function gridIndex(x, y) {
+        const cx = Math.floor(x / params.gridSize);
+        const cy = Math.floor(y / params.gridSize);
+        if (cx < 0 || cx >= cols || cy < 0 || cy >= rows) return -1;
+        return cy * cols + cx;
+    }
+
+    // Boid 飞过激活格子
+    function boidActivate(x, y) {
+        const i = gridIndex(x, y);
+        if (i >= 0) {
+            activated[i] = Math.min(activated[i] + 0.3, 1.5);
+            // 激活到阈值后转为活细胞
+            if (activated[i] >= 1 && cells[i] === 0 && Math.random() < 0.3) {
+                cells[i] = 1;
+            }
+        }
+    }
+
+    // 生命游戏一步演化
+    function lifeStep() {
+        const next = new Array(cols * rows).fill(0);
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                let n = 0;
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        if (dx === 0 && dy === 0) continue;
+                        const nx = (x + dx + cols) % cols;
+                        const ny = (y + dy + rows) % rows;
+                        n += cells[ny * cols + nx];
+                    }
+                }
+                const idx = y * cols + x;
+                if (cells[idx] === 1) {
+                    next[idx] = (n === 2 || n === 3) ? 1 : 0;
+                } else {
+                    next[idx] = (n === 3) ? 1 : 0;
+                }
+                // 激活度衰减
+                activated[idx] *= 0.95;
+            }
+        }
+        cells = next;
+    }
+
+    function drawGrid() {
+        // 激活态（黄色淡光）
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                const i = y * cols + x;
+                if (cells[i] === 1) {
+                    ctx.fillStyle = 'rgba(231,76,60,0.85)';
+                    ctx.fillRect(x * params.gridSize, y * params.gridSize, params.gridSize - 1, params.gridSize - 1);
+                } else if (activated[i] > 0.05) {
+                    const a = Math.min(activated[i], 1) * 0.4;
+                    ctx.fillStyle = 'rgba(254,202,87,' + a + ')';
+                    ctx.fillRect(x * params.gridSize, y * params.gridSize, params.gridSize - 1, params.gridSize - 1);
+                }
+            }
+        }
+    }
+
+    // ============ 主循环 ============
+    let boids = [];
+    function resetBoids() {
+        boids = [];
+        for (let i = 0; i < params.boidCount; i++) {
+            boids.push(new Boid());
+        }
+    }
+
+    let frame = 0;
+    let lastTime = performance.now();
+    let fpsTime = lastTime;
+    let fpsFrames = 0;
+    let gen = 0;
+    let paused = false;
+
+    function loop() {
+        requestAnimationFrame(loop);
+        if (paused) return;
+
+        const now = performance.now();
+        fpsFrames++;
+        if (now - fpsTime > 500) {
+            document.getElementById('hudFps').textContent = (fpsFrames * 1000 / (now - fpsTime)).toFixed(1);
+            fpsTime = now;
+            fpsFrames = 0;
+        }
+
+        // 背景（轻微拖尾）
+        ctx.fillStyle = 'rgba(10,14,26,0.35)';
+        ctx.fillRect(0, 0, W, H);
+
+        // 生命演化
+        frame++;
+        if (frame % params.lifeSpeed === 0) {
+            lifeStep();
+            gen++;
+            document.getElementById('hudGen').textContent = gen;
+        }
+
+        // 画生命网格
+        drawGrid();
+
+        // Boid 行为 + 绘制
+        for (const b of boids) {
+            b.flock(boids);
+            b.update();
+            b.edges();
+            boidActivate(b.pos.x, b.pos.y);
+            b.draw();
+        }
+
+        // 统计
+        document.getElementById('hudBoids').textContent = boids.length;
+        let liveCount = 0;
+        for (const c of cells) if (c) liveCount++;
+        document.getElementById('hudCells').textContent = liveCount;
+    }
+
+    // ============ 鼠标交互 ============
+    let mouseX = 0, mouseY = 0, mouseActive = false, mouseRightActive = false;
+    canvas.addEventListener('mousemove', e => {
+        mouseX = e.clientX; mouseY = e.clientY;
+    });
+    canvas.addEventListener('mousedown', e => {
+        if (e.button === 0) {
+            mouseActive = true;
+            mouseX = e.clientX; mouseY = e.clientY;
+        } else if (e.button === 2) {
+            // 右键: 强吸引鸟群 + 激活生命
+            mouseRightActive = true;
+            mouseX = e.clientX; mouseY = e.clientY;
+            for (let dy = -3; dy <= 3; dy++) {
+                for (let dx = -3; dx <= 3; dx++) {
+                    const i = gridIndex(e.clientX + dx * params.gridSize, e.clientY + dy * params.gridSize);
+                    if (i >= 0 && Math.random() < 0.4) cells[i] = 1;
+                }
+            }
+        }
+    });
+    canvas.addEventListener('mouseup', e => {
+        if (e.button === 0) mouseActive = false;
+        if (e.button === 2) mouseRightActive = false;
+    });
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+    // ============ 控件 ============
+    function bindRange(sliderId, valueId, key, scale, fmt) {
+        const s = document.getElementById(sliderId);
+        const v = document.getElementById(valueId);
+        s.addEventListener('input', () => {
+            params[key] = s.value * scale;
+            v.textContent = fmt(params[key]);
+            if (key === 'boidCount') resetBoids();
+            if (key === 'gridSize') initGrid();
+        });
+        v.textContent = fmt(params[key]);
+    }
+    bindRange('sBoids', 'vBoids', 'boidCount', 1, v => v.toFixed(0));
+    bindRange('sCoh', 'vCoh', 'cohesion', 0.001, v => v.toFixed(3));
+    bindRange('sAli', 'vAli', 'alignment', 0.01, v => v.toFixed(2));
+    bindRange('sSep', 'vSep', 'separation', 0.1, v => v.toFixed(1));
+    bindRange('sLife', 'vLife', 'lifeSpeed', 1, v => v.toFixed(0));
+    bindRange('sGrid', 'vGrid', 'gridSize', 1, v => v.toFixed(0));
+
+    document.getElementById('btnReset').addEventListener('click', () => {
+        resetBoids();
+        initGrid();
+        gen = 0;
+    });
+    document.getElementById('btnPause').addEventListener('click', e => {
+        paused = !paused;
+        e.target.textContent = paused ? '继续' : '暂停';
+    });
+    document.getElementById('btnSpark').addEventListener('click', () => {
+        // 在中心点燃细胞
+        const cx = Math.floor(cols / 2);
+        const cy = Math.floor(rows / 2);
+        for (let dy = -5; dy <= 5; dy++) {
+            for (let dx = -5; dx <= 5; dx++) {
+                const i = (cy + dy) * cols + (cx + dx);
+                if (i >= 0 && i < cells.length && Math.random() < 0.35) cells[i] = 1;
+            }
+        }
+    });
+
+    // ============ 启动 ============
+    initGrid();
+    resetBoids();
+    loop();
+})();
+</script>
+</body>
+</html>`;
+}
+
+function getMLCompareHtml(d, cfg, totalData, testCount) {
+    const models = d.models;
+    const summary = d.summary;
+    const baseline = d.baseline;
+    const perPos = d.perPos;
+    const prediction = d.prediction || null;
+    // 动态从 perPos 取位数顺序
+    const posOrder = perPos.map(p => p.pos);
+
+    // 模型英文名 → 中文名 + 算法说明
+    const MODEL_CN = {
+        'AR':            { name: '自回归',     desc: '用前5期值线性外推' },
+        'Markov':        { name: '马尔可夫',   desc: '基于上期号预测下期概率' },
+        'kNN':           { name: 'K近邻匹配',  desc: '找历史最相似片段投票' },
+        'RandomForest':  { name: '随机森林',   desc: '多决策树集成（100棵）' }
+    };
+    const modelName = m => (MODEL_CN[m] || { name: m, desc: '' }).name;
+    const modelDesc = m => (MODEL_CN[m] || { name: m, desc: '' }).desc;
+
+    // 构造推荐号码展示
+    let predictionHtml = '';
+    if (prediction && prediction.ensemble) {
+        const ensemble = prediction.ensemble;
+        const modelPred = prediction.models || {};
+        const nums = posOrder.map(p => ensemble[p] ? ensemble[p].value : '?');
+        const mainPick = nums.join(' ');
+        // 各模型预测明细
+        const modelCells = models.map(m => {
+            const parts = posOrder.map(p => {
+                const mp = modelPred[p] && modelPred[p][m];
+                return mp ? `${p}:<b>${mp.value}</b>` : `${p}:-`;
+            });
+            return `<tr><td class="model-name">${modelName(m)}<span class="model-desc">${modelDesc(m)}</span></td><td>${parts.join(' &nbsp; ')}</td></tr>`;
+        }).join('');
+        // Top3 集成
+        const top3Html = posOrder.map(p => {
+            const e = ensemble[p];
+            if (!e) return `<div class="top3-pos"><b>${p}</b>: -</div>`;
+            return `<div class="top3-pos"><b>${p}</b>: ${(e.top3 || []).join(' / ')}</div>`;
+        }).join('');
+
+        predictionHtml = `
+<h3>🎯 下期推荐号码</h3>
+<div class="ensemble-tip">
+    <b>💡 集成投票说明：</b>右侧"加权投票"结果是<b>每个模型按回测命中率加权打分</b>后的最终号码。<br>
+    若与某个模型的独立预测不一致，是因为该模型回测命中率低（权重小），它的预测被"打折"了。可信度高的模型贡献更大。
+</div>
+<div class="prediction-main">
+    ${nums.map(n => `<div class="pred-num">${n}</div>`).join('')}
+    <div class="pred-meta">
+        基于 ${prediction.basedOn || '?'} 期数据 · 4 模型集成（按命中率加权投票）<br>
+        <span style="color:#feca57;font-size:12px">🌟 好运相伴，必中一注！愿您财源滚滚来！</span><br>
+        <button id="copyPickBtn" class="copy-btn">📋 一键复制号码</button>
+        <div style="color:#888;font-size:11px;margin-top:6px;line-height:1.5">
+            ⚠️ 由于集成投票对各模型预测值敏感，重新运行可能得到不同号码。<br>
+            实际回测显示各模型命中率均接近随机基准（10%），结果仅供娱乐参考。
+        </div>
+    </div>
+</div>
+<div class="prediction-detail">
+    <div class="detail-card">
+        <div class="detail-title">各模型独立预测</div>
+        <table>
+            <tbody>${modelCells}</tbody>
+        </table>
+    </div>
+    <div class="detail-card">
+        <div class="detail-title">每位 Top3 候补（集成投票）</div>
+        <div class="top3-list">${top3Html}</div>
+    </div>
+</div>
+<div class="copy-tip">🍀 推荐号码：<code id="pickCode">${mainPick}</code><br><span style="color:#888;font-size:11px;margin-top:4px;display:inline-block">愿您一注必中，福运双至！</span></div>
+`;
+    }
+
+    // 计算表格行
+    const summaryRows = models.map(m => {
+        const s = summary[m];
+        const strictColor = s.strictPct > baseline.strict + 2 ? '#2ecc71' : (s.strictPct < baseline.strict - 2 ? '#e74c3c' : '#aaa');
+        const top3Color = s.top3Pct > baseline.top3 + 3 ? '#2ecc71' : (s.top3Pct < baseline.top3 - 3 ? '#e74c3c' : '#aaa');
+        return `<tr>
+            <td class="model-name">${modelName(m)}</td>
+            <td style="color:${strictColor};font-weight:600">${s.strictPct.toFixed(2)}%</td>
+            <td>${s.strict} / ${s.total}</td>
+            <td style="color:${top3Color};font-weight:600">${s.top3Pct.toFixed(2)}%</td>
+            <td>${s.top3} / ${s.total}</td>
+        </tr>`;
+    }).join('');
+
+    // 每位详情表
+    const posTables = perPos.map(posRow => {
+        const rows = models.map(m => {
+            const r = posRow[m];
+            const sCol = r.strictPct > 12 ? '#2ecc71' : (r.strictPct < 8 ? '#e74c3c' : '#aaa');
+            const tCol = r.top3Pct > 33 ? '#2ecc71' : (r.top3Pct < 27 ? '#e74c3c' : '#aaa');
+            return `<tr>
+                <td class="model-name">${modelName(m)}</td>
+                <td style="color:${sCol}">${r.strictPct.toFixed(2)}%</td>
+                <td>${r.strict}/${r.total}</td>
+                <td style="color:${tCol}">${r.top3Pct.toFixed(2)}%</td>
+                <td>${r.top3}/${r.total}</td>
+            </tr>`;
+        }).join('');
+        return `<div class="pos-section">
+            <div class="pos-title">${posRow.pos}位</div>
+            <table>
+                <thead><tr><th>模型</th><th>严格命中</th><th>命中/总</th><th>Top3命中</th><th>命中/总</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>`;
+    }).join('');
+
+    // 找最佳模型
+    const bestStrict = models.reduce((a, b) => summary[a].strictPct > summary[b].strictPct ? a : b);
+    const bestTop3 = models.reduce((a, b) => summary[a].top3Pct > summary[b].top3Pct ? a : b);
+    const bestS = summary[bestStrict];
+    const bestT = summary[bestTop3];
+
+    // 结论
+    let conclusion;
+    if (bestS.strictPct > baseline.strict + 3) {
+        conclusion = `<div class="conclusion good">
+            ✅ 最佳模型 <b>${modelName(bestStrict)}</b>（${bestStrict}）严格命中率 ${bestS.strictPct.toFixed(2)}%，显著高于随机基准 ${baseline.strict}%。<br>
+            <b>🌟 运势如虹，号码有灵！愿您把握良机，一举中奖！</b>
+        </div>`;
+    } else if (bestS.strictPct > baseline.strict + 1) {
+        conclusion = `<div class="conclusion neutral">
+            🟡 最佳模型 <b>${modelName(bestStrict)}</b>（${bestStrict}）严格命中率 ${bestS.strictPct.toFixed(2)}%，略高于随机（${baseline.strict}%），<br>
+            Top3最佳：<b>${modelName(bestTop3)}</b>（${bestTop3}） ${bestT.top3Pct.toFixed(2)}%。<br>
+            <b>🍀 福星高照，幸运将至！愿好运与您不期而遇！</b>
+        </div>`;
+    } else {
+        conclusion = `<div class="conclusion bad">
+            ❌ 所有模型严格命中率都在随机基准（${baseline.strict}%）附近或之下。<br>
+            <b>🎉 心诚则灵，福至心灵！愿您福气满满，必中大奖！</b>
+        </div>`;
+    }
+
+    const dataJson = JSON.stringify(d);
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>🧠 模型对比 - ${cfg.name}</title>
+<style>
+* { box-sizing:border-box;margin:0;padding:0; }
+body { background:#1e1e1e;color:#ddd;font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-size:13px;padding:20px;line-height:1.6; }
+h2 { color:#8ec5ff;margin-bottom:6px; }
+h3 { color:#feca57;margin:18px 0 10px;font-size:15px; }
+.desc { color:#888;margin-bottom:18px; }
+table { width:100%;border-collapse:collapse;margin:8px 0 14px; }
+th,td { padding:8px 12px;text-align:center;border:1px solid rgba(255,255,255,0.08); }
+th { background:rgba(0,0,0,0.3);color:#8ec5ff;font-weight:600;font-size:12px; }
+td.model-name { text-align:left;font-weight:600;color:#feca57; }
+tbody tr:nth-child(odd) { background:rgba(255,255,255,0.02); }
+.summary-card { padding:14px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:8px;margin-bottom:16px; }
+.pos-section { padding:14px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;margin-bottom:14px; }
+.pos-title { color:#feca57;font-weight:600;margin-bottom:8px;font-size:14px; }
+.conclusion { padding:16px;border-radius:8px;margin-top:20px;font-size:14px;line-height:1.8; }
+.conclusion.good { background:rgba(46,204,113,0.08);border:1px solid rgba(46,204,113,0.3);color:#2ecc71; }
+.conclusion.neutral { background:rgba(254,202,87,0.08);border:1px solid rgba(254,202,87,0.3);color:#feca57; }
+.conclusion.bad { background:rgba(231,76,60,0.08);border:1px solid rgba(231,76,60,0.3);color:#ff6b6b; }
+.prediction-main { display:flex;align-items:center;gap:24px;padding:20px;background:linear-gradient(135deg, rgba(142,197,255,0.1), rgba(254,202,87,0.1));border:1px solid rgba(254,202,87,0.3);border-radius:12px;margin-bottom:14px; }
+.pred-num { width:80px;height:80px;display:flex;align-items:center;justify-content:center;background:#0e639c;color:#fff;font-size:42px;font-weight:bold;border-radius:50%;box-shadow:0 4px 16px rgba(14,99,156,0.4); }
+.pred-meta { color:#feca57;font-size:13px;line-height:1.7; }
+.prediction-detail { display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px; }
+.detail-card { padding:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px; }
+.detail-title { color:#8ec5ff;font-weight:600;margin-bottom:8px;font-size:13px; }
+.top3-list { display:flex;gap:14px;flex-wrap:wrap; }
+.top3-pos { color:#ddd;font-size:13px; }
+.top3-pos b { color:#feca57;margin-right:6px; }
+.copy-tip { padding:10px 14px;background:rgba(46,204,113,0.08);border:1px solid rgba(46,204,113,0.2);border-radius:6px;color:#aaa;font-size:12px;margin-bottom:14px; }
+.copy-tip code { background:#222;padding:3px 10px;border-radius:4px;color:#2ecc71;font-size:14px;font-weight:bold;letter-spacing:2px;margin-left:6px; }
+.copy-btn { margin-top:8px;padding:6px 14px;background:#0e639c;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;transition:all 0.2s; }
+.copy-btn:hover { background:#1177bb;transform:translateY(-1px); }
+.copy-btn.copied { background:#2ecc71; }
+.ensemble-tip { padding:12px 14px;background:rgba(142,197,255,0.06);border:1px solid rgba(142,197,255,0.25);border-radius:6px;color:#bbb;font-size:12px;line-height:1.7;margin-bottom:12px; }
+.ensemble-tip b { color:#8ec5ff; }
+.model-desc { color:#888;font-size:11px;font-weight:normal;display:block;margin-top:2px; }
+.warn { color:#aaa;font-size:12px; }
+.badge { display:inline-block;padding:2px 8px;border-radius:3px;font-size:11px;background:#0e639c;color:#fff;margin-left:8px; }
+</style>
+</head>
+<body>
+<h2>🧠 多模型对比预测 - ${cfg.name}</h2>
+<div class="desc">
+    总数据 ${totalData} 期，回测 ${testCount} 期（每位 ${testCount} 次预测）<span class="badge">4 模型对比</span>
+</div>
+
+<h3>📊 总览（3位合计）</h3>
+<div class="summary-card">
+    <table>
+        <thead><tr><th>模型</th><th>严格命中率</th><th>命中/总</th><th>Top3命中率</th><th>命中/总</th></tr></thead>
+        <tbody>${summaryRows}</tbody>
+    </table>
+    <div style="color:#888;font-size:12px;margin-top:6px">
+        随机基准：严格 ${baseline.strict}% / Top3 ${baseline.top3}%
+    </div>
+</div>
+
+<h3>📌 各位详情</h3>
+${posTables}
+
+${predictionHtml}
+${conclusion}
+
+<script>
+(function() {
+    const btn = document.getElementById('copyPickBtn');
+    const pickCode = document.getElementById('pickCode');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+        const text = pickCode ? pickCode.innerText.trim() : '';
+        if (!text) return;
+        try {
+            await navigator.clipboard.writeText(text);
+            btn.innerText = '✅ 已复制：' + text;
+            btn.classList.add('copied');
+            setTimeout(() => {
+                btn.innerText = '📋 一键复制号码';
+                btn.classList.remove('copied');
+            }, 2000);
+        } catch (e) {
+            // Fallback: 选中复制
+            const range = document.createRange();
+            range.selectNode(pickCode);
+            window.getSelection().removeAllRanges();
+            window.getSelection().addRange(range);
+            document.execCommand('copy');
+            btn.innerText = '✅ 已复制';
+            setTimeout(() => { btn.innerText = '📋 一键复制号码'; }, 2000);
+        }
+    });
+})();
+</script>
+</body>
+</html>`;
+}
+
 /**
  * 生成均线形态识别 Webview HTML
  * @param {Object} d - {key, name, emoji, positionLabels, recentPeriod, posResults, summary}
@@ -1974,6 +4585,1656 @@ document.addEventListener('DOMContentLoaded', function() {
         };
     }
 });
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 快乐8遗漏分层 + 走势图 Webview HTML
+ * 对 1-80 号球的遗漏值进行分层统计展示：
+ *  - 分层概览：按当前遗漏值分层（0 / 1-2 / 3-5 / 6-10 / 11-20 / 20+）
+ *  - 明细表：每个号码的当前遗漏、各周期出现次数、平均遗漏、最大遗漏
+ *  - 走势图（tab 切换）：
+ *     · 号码分布走势：每期 20 个开出号码在 1-80 区间的散点分布
+ *     · 遗漏曲线：当前遗漏 TOP10 号码的遗漏值随期数变化
+ * @param {Array} history - 快乐8历史数据（最新在前），元素 {period, num:[20个号码]}
+ */
+function getKl8MissHtml(history) {
+    const total = history.length;
+    const latest = history[0];
+    const latestPeriod = latest ? latest.period : '—';
+    const latestNums = latest ? latest.num : [];
+    const updateTime = latest ? (latest.date || '') : '';
+
+    // 计算每个号码的遗漏统计
+    // missStats[n] = { miss, count10, count30, count50, count100, count150, count200, avgMiss, maxMiss, lastPeriod }
+    const missStats = {};
+    for (let n = 1; n <= 80; n++) {
+        // 当前遗漏：从最新往前找第一次出现的位置
+        let miss = -1;
+        let lastPeriod = '—';
+        const positions = []; // 出现位置（index 越小越新）
+        for (let i = 0; i < total; i++) {
+            if (history[i].num.indexOf(n) >= 0) {
+                if (miss < 0) {
+                    miss = i;
+                    lastPeriod = history[i].period;
+                }
+                positions.push(i);
+            }
+        }
+        if (miss < 0) miss = total; // 从未出现
+        const count10 = positions.filter(p => p < 10).length;
+        const count30 = positions.filter(p => p < 30).length;
+        const count50 = positions.filter(p => p < 50).length;
+        const count100 = positions.filter(p => p < 100).length;
+        const count150 = positions.filter(p => p < 150).length;
+        const count200 = positions.filter(p => p < 200).length;
+        // 平均遗漏：两次出现间隔的平均（含到第一期的距离）
+        let avgMiss = 0;
+        let maxMiss = 0;
+        if (positions.length > 1) {
+            const gaps = [];
+            for (let i = 0; i < positions.length - 1; i++) {
+                gaps.push(positions[i + 1] - positions[i] - 1);
+            }
+            gaps.push(positions[positions.length - 1]); // 最旧一期之前
+            avgMiss = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+            maxMiss = Math.max(...gaps);
+        } else if (positions.length === 1) {
+            avgMiss = positions[0];
+            maxMiss = positions[0];
+        }
+        missStats[n] = {
+            miss, count10, count30, count50, count100, count150, count200,
+            avgMiss: Math.round(avgMiss * 10) / 10,
+            maxMiss,
+            lastPeriod
+        };
+    }
+
+    // 分层定义
+    const layers = [
+        { name: '热号', range: [0, 0], cls: 'layer-hot', desc: '上期开出' },
+        { name: '温热', range: [1, 2], cls: 'layer-warm', desc: '遗漏 1-2 期' },
+        { name: '温冷', range: [3, 5], cls: 'layer-cool', desc: '遗漏 3-5 期' },
+        { name: '冷号', range: [6, 10], cls: 'layer-cold', desc: '遗漏 6-10 期' },
+        { name: '极冷', range: [11, 20], cls: 'layer-freeze', desc: '遗漏 11-20 期' },
+        { name: '冰封', range: [21, 999], cls: 'layer-ice', desc: '遗漏 20+ 期' }
+    ];
+
+    // 分层概览表格
+    let layerRows = '';
+    for (const layer of layers) {
+        const nums = [];
+        for (let n = 1; n <= 80; n++) {
+            const m = missStats[n].miss;
+            if (m >= layer.range[0] && m <= layer.range[1]) nums.push(n);
+        }
+        const ballHtml = nums.map(n => {
+            const cls = n <= 10 ? 'kball-a' : n <= 20 ? 'kball-b' : n <= 30 ? 'kball-c' : n <= 40 ? 'kball-d' : n <= 50 ? 'kball-e' : n <= 60 ? 'kball-f' : n <= 70 ? 'kball-g' : 'kball-h';
+            return '<span class="kball ' + cls + '" title="遗漏 ' + missStats[n].miss + ' 期">' + n + '</span>';
+        }).join('');
+        const avg = nums.length > 0
+            ? (nums.reduce((a, n) => a + missStats[n].miss, 0) / nums.length).toFixed(1)
+            : '—';
+        layerRows += '<tr><td class="' + layer.cls + '">' + layer.name + '</td>' +
+            '<td>' + layer.desc + '</td>' +
+            '<td>' + nums.length + ' 个</td>' +
+            '<td class="' + layer.cls + '">' + avg + '</td>' +
+            '<td class="ball-cell">' + (ballHtml || '<span style="color:#555">无</span>') + '</td></tr>';
+    }
+
+    // 明细表（按当前遗漏排序）
+    const detailRows = [];
+    for (let n = 1; n <= 80; n++) {
+        const s = missStats[n];
+        const layerCls = s.miss === 0 ? 'layer-hot' : s.miss <= 2 ? 'layer-warm' : s.miss <= 5 ? 'layer-cool' : s.miss <= 10 ? 'layer-cold' : s.miss <= 20 ? 'layer-freeze' : 'layer-ice';
+        detailRows.push({
+            n,
+            miss: s.miss,
+            count10: s.count10,
+            count30: s.count30,
+            count50: s.count50,
+            count100: s.count100,
+            count150: s.count150,
+            count200: s.count200,
+            avgMiss: s.avgMiss,
+            maxMiss: s.maxMiss,
+            lastPeriod: s.lastPeriod,
+            layerCls
+        });
+    }
+    detailRows.sort((a, b) => b.miss - a.miss);
+
+    // 明细数据（转为 JSON 传给前端，由前端按所选期数动态渲染表格）
+    const detailData = detailRows.map(r => ({
+        n: r.n,
+        miss: r.miss,
+        c10: r.count10, c30: r.count30, c50: r.count50,
+        c100: r.count100, c150: r.count150, c200: r.count200,
+        avg: r.avgMiss,
+        max: r.maxMiss,
+        last: r.lastPeriod,
+        cls: r.layerCls
+    }));
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>快乐8 遗漏分层</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
+h2 { color: #e8a87c; margin-bottom: 8px; font-size: 20px; }
+/* 遗漏明细期数选择与图例 */
+.detail-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-bottom: 8px; font-size: 12px; }
+.detail-label { color: #aaa; }
+.span-chk-label { display: inline-flex; align-items: center; gap: 3px; color: #e8a87c; cursor: pointer; user-select: none; }
+.span-chk-label input { accent-color: #e8a87c; cursor: pointer; }
+.detail-legend { color: #999; font-size: 11px; margin-left: auto; }
+.span-custom-box { display: inline-flex; align-items: center; gap: 4px; }
+.span-custom-box input { width: 96px; background: #2d2d30; border: 1px solid #3c3c3f; color: #ddd; border-radius: 3px; padding: 3px 6px; font-size: 12px; }
+.span-custom-box input:focus { outline: none; border-color: #e8a87c; }
+.span-custom-box button { background: #0e639c; color: #fff; border: none; border-radius: 3px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+.span-custom-box button:hover { background: #1177bb; }
+.span-del { margin-left: 3px; color: #e74c3c; cursor: pointer; font-size: 10px; font-weight: 700; }
+.span-del:hover { color: #ff6b5e; }
+.detail-msg { color: #2ecc71; font-size: 11px; }
+.sub { color: #888; margin-bottom: 16px; font-size: 12px; }
+.latest-box { padding: 12px 16px; background: rgba(232,168,124,0.1); border: 1px solid rgba(232,168,124,0.3); border-radius: 8px; margin-bottom: 20px; }
+.latest-box b { color: #e8a87c; }
+.latest-nums { margin-top: 8px; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 24px; background: rgba(0,0,0,0.15); }
+th, td { border: 1px solid #3a3a3d; padding: 6px 10px; text-align: center; font-size: 12px; }
+th { background: #2d2d30; color: #e8a87c; font-size: 13px; position: sticky; top: 0; z-index: 1; }
+.ball-cell { text-align: left; line-height: 1.9; }
+.kball { display: inline-block; min-width: 26px; height: 26px; line-height: 26px; text-align: center; border-radius: 50%; font-size: 12px; margin: 1px 2px; color: #fff; font-weight: 600; }
+/* 号码球配色（按区间 8 色） */
+.kball-r1 { background: #e74c3c; }
+.kball-a { background: #e67e22; }
+.kball-b { background: #f1c40f; color: #222; }
+.kball-c { background: #2ecc71; }
+.kball-d { background: #1abc9c; }
+.kball-e { background: #3498db; }
+.kball-f { background: #9b59b6; }
+.kball-g { background: #8e44ad; }
+.kball-h { background: #34495e; }
+/* 遗漏分层颜色 */
+.layer-hot { color: #e74c3c; font-weight: 600; }
+.layer-warm { color: #e67e22; font-weight: 600; }
+.layer-cool { color: #f1c40f; font-weight: 600; }
+.layer-cold { color: #2ecc71; font-weight: 600; }
+.layer-freeze { color: #3498db; font-weight: 600; }
+.layer-ice { color: #9b59b6; font-weight: 600; }
+.section-title { color: #e8a87c; font-size: 15px; font-weight: 600; margin: 18px 0 8px; }
+.scroll-wrap { max-height: 70vh; overflow-y: auto; border: 1px solid #3a3a3d; border-radius: 6px; }
+/* Tab 切换样式 */
+.tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 2px solid #3a3a3d; }
+.tab-btn { padding: 8px 22px; background: transparent; color: #aaa; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all .2s; }
+.tab-btn:hover { color: #fff; background: rgba(255,255,255,0.04); }
+.tab-btn.active { color: #e8a87c; border-bottom-color: #e8a87c; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+.sub-tabs { display: flex; gap: 6px; margin: 6px 0 12px; }
+.sub-tab-btn { padding: 5px 14px; background: #2d2d30; color: #aaa; border: 1px solid #444; border-radius: 4px; cursor: pointer; font-size: 12px; transition: all .2s; }
+.sub-tab-btn:hover { background: #3a3a3a; color: #fff; }
+.sub-tab-btn.active { background: #0e639c; color: #fff; border-color: #0e639c; font-weight: 600; }
+.canvas-wrap { overflow-x: auto; background: #151517; border: 1px solid #3a3a3d; border-radius: 6px; }
+canvas { display: block; }
+.hint { color: #777; font-size: 12px; margin: 4px 0 10px; line-height: 1.5; }
+.legend { margin-top: 8px; font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.legend-item { display: inline-flex; align-items: center; gap: 5px; color: #ccc; }
+.legend-item b { color: #fff; }
+.legend-swatch { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+/* 走势图表格 */
+.trend-wrap { overflow-x: auto; border: 1px solid #3a3a3d; border-radius: 6px; background: #151517; }
+.trend-table { width: max-content; border-collapse: collapse; font-size: 11px; }
+.trend-table thead { position: sticky; top: 0; z-index: 4; }
+.trend-table th, .trend-table td { border: 1px solid #2a2a2d; padding: 2px 4px; text-align: center; min-width: 22px; height: 22px; }
+.trend-table th { background: #2d2d30; color: #e8a87c; font-size: 10px; }
+.trend-table .th-period { min-width: 48px; position: sticky; left: 0; z-index: 5; background: #2d2d30; }
+.trend-table .td-period { background: #1e1e1e; color: #aaa; font-size: 10px; position: sticky; left: 0; z-index: 3; }
+.trend-table .td-hit { background: #e74c3c !important; color: #fff; font-weight: 700; border-radius: 2px; box-shadow: inset 0 0 0 1px #ff8a80; }
+.trend-table .td-miss { color: #777; font-size: 10px; }
+.trend-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+.trend-table tbody tr:hover { background: rgba(255,255,255,0.06); }
+/* 分区背景（8 个区间不同色调，加强版） */
+.trend-table td.g0 { background: rgba(231,76,60,0.18); color: #ff9d93; }
+.trend-table td.g1 { background: rgba(230,126,34,0.18); color: #ffb066; }
+.trend-table td.g2 { background: rgba(241,196,15,0.18); color: #f5d76e; }
+.trend-table td.g3 { background: rgba(46,204,113,0.18); color: #7ee8a4; }
+.trend-table td.g4 { background: rgba(26,188,156,0.18); color: #6ee8d2; }
+.trend-table td.g5 { background: rgba(52,152,219,0.18); color: #7ab8ff; }
+.trend-table td.g6 { background: rgba(155,89,182,0.18); color: #d0a8f0; }
+.trend-table td.g7 { background: rgba(93,109,126,0.22); color: #c0c9d4; }
+/* 表头号码按区间配色 */
+.trend-table .th-num.g0 { color: #ff8a80; }
+.trend-table .th-num.g1 { color: #ffab66; }
+.trend-table .th-num.g2 { color: #f5d76e; }
+.trend-table .th-num.g3 { color: #7ef0a8; }
+.trend-table .th-num.g4 { color: #66e6cf; }
+.trend-table .th-num.g5 { color: #82b1ff; }
+.trend-table .th-num.g6 { color: #d1a3f0; }
+.trend-table .th-num.g7 { color: #c0c9d4; }
+.trend-table td.grp-end { border-right: 2px solid #777 !important; }
+.trend-table th.grp-end { border-right: 2px solid #777 !important; }
+/* 分组表头 */
+.trend-table .grp { font-size: 11px; font-weight: 700; padding: 4px 2px; }
+.trend-table .grp-0 { background: rgba(231,76,60,0.35); color: #ffb3a7; }
+.trend-table .grp-1 { background: rgba(230,126,34,0.35); color: #ffd0a3; }
+.trend-table .grp-2 { background: rgba(241,196,15,0.35); color: #fff0a3; }
+.trend-table .grp-3 { background: rgba(46,204,113,0.35); color: #b3f5cd; }
+.trend-table .grp-4 { background: rgba(26,188,156,0.35); color: #b0f3e6; }
+.trend-table .grp-5 { background: rgba(52,152,219,0.35); color: #b5d9ff; }
+.trend-table .grp-6 { background: rgba(155,89,182,0.35); color: #dfb8f5; }
+.trend-table .grp-7 { background: rgba(93,109,126,0.4); color: #cfd6de; }
+/* 表格内预测行（与表格一体，跟随横向滚动，可点击选号） */
+.trend-table .trend-predict-row td { border-top: 2px solid #e8a87c; }
+.trend-table .td-pick { cursor: pointer; font-weight: 700; font-size: 11px; user-select: none; }
+.trend-table .td-pick:hover { box-shadow: inset 0 0 0 1px #e8a87c; }
+.trend-table .trend-predict-row.active td:not(.td-period) { background: rgba(232,168,124,0.25) !important; }
+.trend-table .trend-predict-row.active .td-period { color: #e8a87c; font-weight: 700; }
+.trend-table .td-pick.picked { background: #e74c3c !important; color: #fff !important; box-shadow: inset 0 0 0 1px #ff8a80; }
+/* 预测选号区 */
+.predict-box { margin-top: 16px; border: 1px solid rgba(232,168,124,0.4); border-radius: 8px; background: rgba(232,168,124,0.06); padding: 14px; }
+.predict-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.predict-title { color: #e8a87c; font-weight: 700; font-size: 15px; margin-right: auto; }
+.predict-box button { padding: 6px 14px; background: #0e639c; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; transition: background .2s; }
+.predict-box button:hover { background: #1177bb; }
+.predict-box button.btn-danger { background: #7a2f2f; }
+.predict-box button.btn-danger:hover { background: #a04040; }
+.predict-picker { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+.pick-ball { width: 28px; height: 28px; line-height: 26px; text-align: center; border-radius: 50%; font-size: 12px; font-weight: 600; color: #fff; cursor: pointer; border: 2px solid transparent; user-select: none; transition: all .15s; }
+.pick-ball:hover { border-color: #fff; transform: scale(1.08); }
+.pick-ball.picked { border-color: #fff; box-shadow: 0 0 0 2px #e8a87c; transform: scale(1.1); }
+.predict-rows { display: flex; flex-direction: column; gap: 8px; }
+.predict-row { display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.25); border: 1px solid #3a3a3d; border-radius: 6px; padding: 8px 10px; cursor: pointer; }
+.predict-row.active { border-color: #e8a87c; box-shadow: 0 0 0 1px #e8a87c; }
+.predict-row-label { min-width: 56px; color: #e8a87c; font-weight: 600; font-size: 12px; }
+.predict-row-nums { display: flex; flex-wrap: wrap; gap: 3px; flex: 1; }
+.predict-row-actions { display: flex; gap: 4px; }
+.predict-row-actions button { padding: 3px 8px; font-size: 11px; }
+.predict-status { margin-top: 8px; color: #2ecc71; font-size: 12px; min-height: 16px; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h2>🎱 快乐8 遗漏分层分析</h2>
+<div class="sub">数据源：500.com · 共 ${total} 期（最新 ${latestPeriod} 期${updateTime ? ' · ' + updateTime : ''}）</div>
+<div class="latest-box">
+    <b>最新开奖 ${latestPeriod} 期：</b>
+    <div class="latest-nums">${latestNums.map(n => {
+        const cls = n <= 10 ? 'kball-a' : n <= 20 ? 'kball-b' : n <= 30 ? 'kball-c' : n <= 40 ? 'kball-d' : n <= 50 ? 'kball-e' : n <= 60 ? 'kball-f' : n <= 70 ? 'kball-g' : 'kball-h';
+        return '<span class="kball ' + cls + '">' + n + '</span>';
+    }).join('')}</div>
+</div>
+
+<div class="tabs">
+    <button class="tab-btn active" data-tab="miss">📋 遗漏分层</button>
+    <button class="tab-btn" data-tab="trend">📈 走势图</button>
+</div>
+
+<div id="panel-miss" class="tab-panel active">
+<div class="section-title">📋 遗漏分层概览（按当前遗漏值分层）</div>
+<table>
+<thead><tr><th>分层</th><th>说明</th><th>号码数</th><th>平均遗漏</th><th>号码列表</th></tr></thead>
+<tbody>${layerRows}</tbody>
+</table>
+<div class="section-title">🔍 号码遗漏明细（按当前遗漏从大到小排序）</div>
+<div class="detail-toolbar">
+    <span class="detail-label">期数列：</span>
+    <span id="spanChkBox"></span>
+    <span class="span-custom-box">
+        <input type="number" id="customSpanInput" min="1" max="5000" placeholder="自定义期数，如 2000">
+        <button id="btnAddSpan">＋ 添加</button>
+    </span>
+    <span class="detail-msg" id="detailMsg"></span>
+    <span class="detail-legend">🔥≥30% 热 · 😀≥23% 较热 · 😐≥17% 一般 · 😟≥10% 较冷 · 🥶&lt;10% 冷</span>
+</div>
+<div class="scroll-wrap">
+<table>
+<thead id="detailHead"></thead>
+<tbody id="detailBody"></tbody>
+</table>
+</div>
+</div>
+
+<div id="panel-trend" class="tab-panel">
+<div class="sub-tabs">
+    <button class="sub-tab-btn active" data-subtab="zoushi">🎯 号码走势图</button>
+    <button class="sub-tab-btn" data-subtab="missline">📉 遗漏曲线</button>
+</div>
+<div id="sub-zoushi">
+    <div class="hint">横轴为开奖期数（旧 → 新，最新在右），纵轴为号码 1-80。开出号码红底白字显示，未开出号码显示当前遗漏值。表格最下方「🎯 预测」行可直接点击选号，与下方预测区联动。</div>
+    <div class="trend-wrap" id="trendTableWrap"></div>
+    <div class="predict-box" id="predictBox">
+        <div class="predict-toolbar">
+            <span class="predict-title">🎯 我的预测</span>
+            <button id="btnAddRow">＋ 增加预测行</button>
+            <button id="btnCopy">📋 一键复制</button>
+            <button id="btnClear">🗑 清空</button>
+        </div>
+        <div class="predict-picker" id="predictPicker"></div>
+        <div id="predictRows"></div>
+        <div class="predict-status" id="predictStatus"></div>
+    </div>
+</div>
+<div id="sub-missline" style="display:none;">
+    <div class="hint">当前遗漏最大的 TOP10 号码的遗漏值随期数变化曲线（开出的当期遗漏为 0）。</div>
+    <div class="canvas-wrap"><canvas id="missCanvas"></canvas></div>
+    <div class="legend" id="missLegend"></div>
+</div>
+</div>
+
+<script>
+// ===== 快乐8 走势图绘制 =====
+const HISTORY = ${JSON.stringify(history)};
+const dataOldNew = HISTORY.slice().reverse(); // 旧 → 新
+
+// ===== 遗漏明细动态渲染（可勾选期数列 + 自定义期数） =====
+const DETAIL_DATA = ${JSON.stringify(detailData)};
+// 预设期数 → 数据字段 key（自定义期数在前端实时统计）
+const spanDefs = {
+    10: 'c10', 30: 'c30', 50: 'c50', 100: 'c100', 150: 'c150', 200: 'c200'
+};
+const presetSpans = [10, 30, 50, 100, 150, 200];
+let detailSpans = [10, 30, 50, 100, 150, 200]; // 当前显示的期数列（升序）
+let customSpans = []; // 用户自定义的期数
+// 号码出现位置缓存（用于任意期数实时统计）
+const posCache = {};
+DETAIL_DATA.forEach(function(r) {
+    const ps = [];
+    for (let i = 0; i < HISTORY.length; i++) {
+        if (HISTORY[i].num.indexOf(r.n) >= 0) ps.push(i);
+    }
+    posCache[r.n] = ps;
+});
+function countInSpan(num, span) {
+    const ps = posCache[num] || [];
+    const n = Math.min(span, HISTORY.length);
+    let c = 0;
+    for (let i = 0; i < ps.length && ps[i] < n; i++) c++;
+    return c;
+}
+function hotEmoji(c, span) {
+    const r = c / span;
+    return r >= 0.30 ? '🔥' : r >= 0.233 ? '😀' : r >= 0.167 ? '😐' : r >= 0.10 ? '😟' : '🥶';
+}
+function showDetailMsg(msg, isError) {
+    const el = document.getElementById('detailMsg');
+    el.textContent = msg;
+    el.style.color = isError ? '#e74c3c' : '#2ecc71';
+    setTimeout(function() { if (el.textContent === msg) el.textContent = ''; }, 2500);
+}
+function renderSpanChks() {
+    const box = document.getElementById('spanChkBox');
+    let h = '';
+    presetSpans.forEach(function(s) {
+        h += '<label class="span-chk-label"><input type="checkbox" class="span-chk" value="' + s + '"' + (detailSpans.indexOf(s) >= 0 ? ' checked' : '') + '> 近' + s + '期</label>';
+    });
+    customSpans.forEach(function(s) {
+        h += '<label class="span-chk-label"><input type="checkbox" class="span-chk" value="' + s + '" checked> 近' + s + '期 <span class="span-del" data-del="' + s + '" title="移除该列">✕</span></label>';
+    });
+    box.innerHTML = h;
+}
+function renderMissDetail() {
+    const headEl = document.getElementById('detailHead');
+    const bodyEl = document.getElementById('detailBody');
+    if (!headEl || !bodyEl) return;
+    let h = '<tr><th>号码</th><th>当前遗漏</th>';
+    detailSpans.forEach(function(s) { h += '<th>近' + s + '期</th>'; });
+    h += '<th>平均遗漏</th><th>最大遗漏</th><th>最近出现期</th></tr>';
+    headEl.innerHTML = h;
+    let b = '';
+    DETAIL_DATA.forEach(function(r) {
+        const cls = r.n <= 10 ? 'kball-a' : r.n <= 20 ? 'kball-b' : r.n <= 30 ? 'kball-c' : r.n <= 40 ? 'kball-d' : r.n <= 50 ? 'kball-e' : r.n <= 60 ? 'kball-f' : r.n <= 70 ? 'kball-g' : 'kball-h';
+        b += '<tr><td><span class="kball ' + cls + '">' + r.n + '</span></td>';
+        b += '<td class="' + r.cls + '" style="font-weight:bold;">' + r.miss + '</td>';
+        detailSpans.forEach(function(s) {
+            const v = (s <= 200 && spanDefs[s]) ? r[spanDefs[s]] : countInSpan(r.n, s);
+            b += '<td>' + v + ' ' + hotEmoji(v, s) + '</td>';
+        });
+        b += '<td>' + r.avg + '</td><td>' + r.max + '</td><td style="color:#888;">' + r.last + '</td></tr>';
+    });
+    bodyEl.innerHTML = b;
+}
+// 勾选/取消期数列（事件委托，兼容动态生成的自定义勾选框）
+document.getElementById('spanChkBox').addEventListener('change', function(e) {
+    if (!e.target.classList.contains('span-chk')) return;
+    const s = parseInt(e.target.value);
+    const idx = detailSpans.indexOf(s);
+    if (e.target.checked) { if (idx < 0) detailSpans.push(s); }
+    else if (idx >= 0) detailSpans.splice(idx, 1);
+    detailSpans.sort(function(a, b) { return a - b; });
+    renderMissDetail();
+});
+// 移除自定义期数列
+document.getElementById('spanChkBox').addEventListener('click', function(e) {
+    if (!e.target.classList.contains('span-del')) return;
+    const s = parseInt(e.target.getAttribute('data-del'));
+    customSpans = customSpans.filter(function(x) { return x !== s; });
+    const idx = detailSpans.indexOf(s);
+    if (idx >= 0) detailSpans.splice(idx, 1);
+    renderSpanChks();
+    renderMissDetail();
+});
+// 添加自定义期数
+document.getElementById('btnAddSpan').addEventListener('click', function() {
+    const inp = document.getElementById('customSpanInput');
+    const v = parseInt(inp.value);
+    if (!v || v < 1) { showDetailMsg('请输入有效期数（≥1）', true); return; }
+    if (v > 5000) { showDetailMsg('最多支持 5000 期', true); return; }
+    if (detailSpans.indexOf(v) >= 0) { showDetailMsg('近' + v + '期已存在', true); return; }
+    customSpans.push(v);
+    detailSpans.push(v);
+    detailSpans.sort(function(a, b) { return a - b; });
+    inp.value = '';
+    renderSpanChks();
+    renderMissDetail();
+    showDetailMsg('已添加 近' + v + '期');
+});
+renderSpanChks();
+renderMissDetail();
+
+function shortPeriod(p) {
+    const s = String(p || '');
+    return s.length > 6 ? s.slice(-5) : s;
+}
+
+// 计算每期的遗漏矩阵：missMatrix[j][num] = 该号码在该期的遗漏值（0 表示开出）
+function buildMissMatrix() {
+    const n = dataOldNew.length;
+    const matrix = [];
+    const lastSeen = {};
+    for (let j = 0; j < n; j++) {
+        const row = {};
+        const nums = dataOldNew[j].num || [];
+        for (let k = 0; k < nums.length; k++) lastSeen[nums[k]] = j;
+        for (let num = 1; num <= 80; num++) {
+            if (lastSeen[num] === undefined) row[num] = j;       // 从未出现
+            else if (lastSeen[num] === j) row[num] = 0;          // 本期开出
+            else row[num] = j - lastSeen[num];                    // 未开出
+        }
+        matrix.push(row);
+    }
+    return matrix;
+}
+
+// 号码走势图表格（标准彩票走势图样式，按 1-10 / 11-20 … 71-80 分区）
+function drawTrendTable() {
+    const wrap = document.getElementById('trendTableWrap');
+    const n = dataOldNew.length;
+    if (n === 0) return;
+    const scrollLeft = wrap.scrollLeft;
+    const matrix = buildMissMatrix();
+
+    let html = '<table class="trend-table"><thead>';
+    // 分组表头
+    html += '<tr><th class="th-period"></th>';
+    for (let g = 0; g < 8; g++) {
+        const start = g * 10 + 1, end = start + 9;
+        const label = String(start).padStart(2, '0') + '-' + String(end).padStart(2, '0');
+        html += '<th colspan="10" class="grp grp-' + g + (g === 7 ? ' grp-end' : '') + '">' + label + '</th>';
+    }
+    html += '</tr>';
+    // 号码表头
+    html += '<tr><th class="th-period">期号</th>';
+    for (let num = 1; num <= 80; num++) {
+        const g = Math.floor((num - 1) / 10);
+        html += '<th class="th-num g' + g + (num % 10 === 0 ? ' grp-end' : '') + '">' + num + '</th>';
+    }
+    html += '</tr></thead><tbody>';
+
+    for (let j = 0; j < n; j++) {
+        const period = shortPeriod(dataOldNew[j].period);
+        html += '<tr><td class="td-period">' + period + '</td>';
+        const nums = dataOldNew[j].num || [];
+        const numSet = {};
+        for (let k = 0; k < nums.length; k++) numSet[nums[k]] = true;
+        for (let num = 1; num <= 80; num++) {
+            const g = Math.floor((num - 1) / 10);
+            const endCls = (num % 10 === 0) ? ' grp-end' : '';
+            if (numSet[num]) {
+                html += '<td class="td-hit g' + g + endCls + '">' + num + '</td>';
+            } else {
+                html += '<td class="td-miss g' + g + endCls + '">' + matrix[j][num] + '</td>';
+            }
+        }
+        html += '</tr>';
+    }
+    // 预测行：作为表格的一部分，紧贴数据行，跟随横向滚动，可点击选号（每行对应一个预测行）
+    for (let r = 0; r < predictRows.length; r++) {
+        const row = predictRows[r];
+        const pickedSet = {};
+        for (let k = 0; k < row.nums.length; k++) pickedSet[row.nums[k]] = true;
+        html += '<tr class="trend-predict-row' + (r === activeRow ? ' active' : '') + '" data-prow="' + r + '">';
+        html += '<td class="td-period">' + (r === activeRow ? '▶' : ' ') + ' 第' + (r + 1) + '行</td>';
+        for (let num = 1; num <= 80; num++) {
+            const g = Math.floor((num - 1) / 10);
+            const endCls = (num % 10 === 0) ? ' grp-end' : '';
+            html += '<td class="td-pick g' + g + endCls + (pickedSet[num] ? ' picked' : '') + '" data-num="' + num + '" title="点击选/取消 ' + num + '">' + num + '</td>';
+        }
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+    wrap.scrollLeft = scrollLeft;
+}
+
+// 当前遗漏 TOP10 号码
+function topMissNums() {
+    const latestSet = {};
+    const l0 = HISTORY[0];
+    if (l0 && l0.num) for (let k = 0; k < l0.num.length; k++) latestSet[l0.num[k]] = true;
+    const list = [];
+    for (let num = 1; num <= 80; num++) {
+        if (latestSet[num]) continue;
+        let miss = 0;
+        for (let i = 0; i < HISTORY.length; i++) {
+            if (HISTORY[i].num.indexOf(num) >= 0) break;
+            miss++;
+        }
+        list.push({ num: num, miss: miss });
+    }
+    list.sort(function(a, b) { return b.miss - a.miss; });
+    return list.slice(0, 10);
+}
+
+// 遗漏曲线图
+function drawMissLines() {
+    const wrap = document.getElementById('sub-missline');
+    const canvas = document.getElementById('missCanvas');
+    const n = dataOldNew.length;
+    if (n === 0) return;
+    const matrix = buildMissMatrix();
+    const topNums = topMissNums();
+    const colors = ['#e74c3c','#e67e22','#f1c40f','#2ecc71','#1abc9c','#3498db','#9b59b6','#e84393','#fd79a8','#00b894'];
+    const axisW = 40, topH = 34, bottomH = 24;
+    const w = Math.max(360, wrap.clientWidth - 8);
+    const h = 280;
+    const plotW = w - axisW - 14, plotH = h - topH - bottomH;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.fillStyle = '#151517';
+    ctx.fillRect(0, 0, w, h);
+
+    let maxMiss = 10;
+    for (let t = 0; t < topNums.length; t++) {
+        for (let j = 0; j < n; j++) {
+            const v = matrix[j][topNums[t].num];
+            if (v > maxMiss) maxMiss = v;
+        }
+    }
+    maxMiss = Math.min(maxMiss, n);
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    for (let g = 0; g <= 5; g++) {
+        const y = topH + (plotH * g) / 5;
+        ctx.beginPath(); ctx.moveTo(axisW, y); ctx.lineTo(axisW + plotW, y); ctx.stroke();
+        ctx.fillStyle = '#9a9a9a';
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(Math.round(maxMiss * (5 - g) / 5)), axisW - 4, y);
+    }
+
+    ctx.fillStyle = '#e8a87c';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('遗漏值（期）', axisW, topH / 2);
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    const step = Math.max(1, Math.ceil(n / 8));
+    for (let j = 0; j < n; j += step) {
+        const x = axisW + (j / (n - 1)) * plotW;
+        ctx.fillStyle = '#9a9a9a';
+        ctx.fillText(shortPeriod(dataOldNew[j].period), x, h - 7);
+    }
+
+    ctx.lineWidth = 1.8;
+    for (let t = 0; t < topNums.length; t++) {
+        ctx.strokeStyle = colors[t % colors.length];
+        ctx.beginPath();
+        for (let j = 0; j < n; j++) {
+            const x = axisW + (j / (n - 1)) * plotW;
+            const y = topH + plotH - (Math.min(matrix[j][topNums[t].num], maxMiss) / maxMiss) * plotH;
+            if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+    }
+
+    let lg = '';
+    for (let t = 0; t < topNums.length; t++) {
+        lg += '<span class="legend-item"><span class="legend-swatch" style="background:' + colors[t % colors.length] + '"></span><b>' + topNums[t].num + '</b> 号（当前遗漏 ' + topNums[t].miss + '）</span>';
+    }
+    document.getElementById('missLegend').innerHTML = lg;
+}
+
+// Tab 切换
+document.querySelectorAll('.tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+        this.classList.add('active');
+        document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
+        document.getElementById('panel-' + this.dataset.tab).classList.add('active');
+        if (this.dataset.tab === 'trend') {
+            const activeSub = document.querySelector('.sub-tab-btn.active');
+            if (activeSub && activeSub.dataset.subtab === 'missline') drawMissLines();
+            else drawTrendTable();
+        }
+    });
+});
+
+document.querySelectorAll('.sub-tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('.sub-tab-btn').forEach(function(b) { b.classList.remove('active'); });
+        this.classList.add('active');
+        const zoushi = document.getElementById('sub-zoushi');
+        const miss = document.getElementById('sub-missline');
+        if (this.dataset.subtab === 'zoushi') {
+            zoushi.style.display = '';
+            miss.style.display = 'none';
+            drawTrendTable();
+        } else {
+            zoushi.style.display = 'none';
+            miss.style.display = '';
+            drawMissLines();
+        }
+    });
+});
+
+// ===== 预测选号 =====
+const MAX_PICK = 20;
+const MAX_ROWS = 10;
+let predictRows = [{ nums: [] }];
+let activeRow = 0;
+
+function pickBallClass(num) {
+    if (num <= 10) return 'kball-a';
+    if (num <= 20) return 'kball-b';
+    if (num <= 30) return 'kball-c';
+    if (num <= 40) return 'kball-d';
+    if (num <= 50) return 'kball-e';
+    if (num <= 60) return 'kball-f';
+    if (num <= 70) return 'kball-g';
+    return 'kball-h';
+}
+function setStatus(msg, isError) {
+    const el = document.getElementById('predictStatus');
+    el.textContent = msg;
+    el.style.color = isError ? '#e74c3c' : '#2ecc71';
+    setTimeout(function() { if (el.textContent === msg) el.textContent = ''; }, 3000);
+}
+function renderPicker() {
+    const picker = document.getElementById('predictPicker');
+    let html = '';
+    for (let num = 1; num <= 80; num++) {
+        const picked = predictRows[activeRow].nums.indexOf(num) >= 0;
+        html += '<span class="pick-ball ' + pickBallClass(num) + (picked ? ' picked' : '') + '" data-num="' + num + '">' + num + '</span>';
+    }
+    picker.innerHTML = html;
+    picker.querySelectorAll('.pick-ball').forEach(function(b) {
+        b.addEventListener('click', function() { togglePick(parseInt(b.dataset.num)); });
+    });
+    renderTrendRow();
+}
+// 同步表格内预测行格子的选中态与活动行标记（与选号球联动）
+function renderTrendRow() {
+    const rowEls = document.querySelectorAll('.trend-predict-row');
+    if (!rowEls.length) return;
+    rowEls.forEach(function(rowEl) {
+        const r = parseInt(rowEl.getAttribute('data-prow')) || 0;
+        const row = predictRows[r];
+        const pickedSet = {};
+        if (row) for (let k = 0; k < row.nums.length; k++) pickedSet[row.nums[k]] = true;
+        rowEl.classList.toggle('active', r === activeRow);
+        const labelTd = rowEl.querySelector('.td-period');
+        if (labelTd) labelTd.textContent = (r === activeRow ? '▶' : ' ') + ' 第' + (r + 1) + '行';
+        rowEl.querySelectorAll('.td-pick').forEach(function(td) {
+            td.classList.toggle('picked', !!pickedSet[parseInt(td.getAttribute('data-num'))]);
+        });
+    });
+}
+function togglePick(num) {
+    const row = predictRows[activeRow];
+    const idx = row.nums.indexOf(num);
+    if (idx >= 0) {
+        row.nums.splice(idx, 1);
+    } else {
+        if (row.nums.length >= MAX_PICK) { setStatus('每行最多选 ' + MAX_PICK + ' 个号码', true); return; }
+        row.nums.push(num);
+        row.nums.sort(function(a, b) { return a - b; });
+    }
+    renderPredictRows();
+    renderPicker();
+}
+function renderPredictRows() {
+    const wrap = document.getElementById('predictRows');
+    let html = '';
+    for (let r = 0; r < predictRows.length; r++) {
+        const row = predictRows[r];
+        html += '<div class="predict-row' + (r === activeRow ? ' active' : '') + '" data-row="' + r + '">';
+        html += '<span class="predict-row-label">第 ' + (r + 1) + ' 行</span>';
+        html += '<span class="predict-row-nums">';
+        if (row.nums.length === 0) {
+            html += '<span style="color:#888;font-size:11px;">点击上方号码球添加（0/' + MAX_PICK + '）</span>';
+        } else {
+            for (let k = 0; k < row.nums.length; k++) {
+                const num = row.nums[k];
+                html += '<span class="kball ' + pickBallClass(num) + '" style="min-width:22px;height:22px;line-height:22px;font-size:11px;cursor:pointer;" data-rm="' + num + '">' + num + '</span>';
+            }
+        }
+        html += '</span><span class="predict-row-actions">';
+        html += '<button data-copy="' + r + '">复制</button>';
+        if (predictRows.length > 1) html += '<button class="btn-danger" data-del="' + r + '">删除</button>';
+        html += '</span></div>';
+    }
+    wrap.innerHTML = html;
+
+    // 点击行 → 设为活动行
+    wrap.querySelectorAll('.predict-row').forEach(function(rowEl) {
+        rowEl.addEventListener('click', function(e) {
+            if (e.target.tagName === 'BUTTON') return;
+            activeRow = parseInt(rowEl.dataset.row);
+            renderPredictRows();
+            renderPicker();
+        });
+    });
+    // 点击行内号码 → 移除
+    wrap.querySelectorAll('[data-rm]').forEach(function(b) {
+        b.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const r = parseInt(b.closest('.predict-row').dataset.row);
+            const row = predictRows[r];
+            const idx = row.nums.indexOf(parseInt(b.dataset.rm));
+            if (idx >= 0) row.nums.splice(idx, 1);
+            renderPredictRows();
+            renderPicker();
+        });
+    });
+    // 复制单行
+    wrap.querySelectorAll('[data-copy]').forEach(function(b) {
+        b.addEventListener('click', function(e) {
+            e.stopPropagation();
+            copyRow(parseInt(b.dataset.copy));
+        });
+    });
+    // 删除行
+    wrap.querySelectorAll('[data-del]').forEach(function(b) {
+        b.addEventListener('click', function(e) {
+            e.stopPropagation();
+            predictRows.splice(parseInt(b.dataset.del), 1);
+            if (activeRow >= predictRows.length) activeRow = predictRows.length - 1;
+            renderPredictRows();
+            renderPicker();
+            drawTrendTable();
+        });
+    });
+}
+function copyText(text, okMsg) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    if (ok) { setStatus(okMsg); return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function() { setStatus(okMsg); }, function() { setStatus('复制失败，请手动选择', true); });
+    } else {
+        setStatus('复制失败，请手动选择', true);
+    }
+}
+function formatRow(r) {
+    const row = predictRows[r];
+    return '快乐8 预测第' + (r + 1) + '行（' + row.nums.length + '个）: ' + row.nums.join(',');
+}
+function copyRow(r) {
+    if (predictRows[r].nums.length === 0) { setStatus('第 ' + (r + 1) + ' 行还没有号码', true); return; }
+    copyText(formatRow(r), '第 ' + (r + 1) + ' 行已复制 ✓');
+}
+function copyAll() {
+    const lines = [];
+    let total = 0, cnt = 0;
+    predictRows.forEach(function(row, i) {
+        if (row.nums.length > 0) { lines.push(formatRow(i)); total += row.nums.length; cnt++; }
+    });
+    if (cnt === 0) { setStatus('还没有预测号码，请先选号', true); return; }
+    copyText(lines.join('\\n'), '已复制 ' + cnt + ' 行 / ' + total + ' 个号码 ✓');
+}
+
+// 预测区按钮
+document.getElementById('btnAddRow').addEventListener('click', function() {
+    if (predictRows.length >= MAX_ROWS) { setStatus('最多 ' + MAX_ROWS + ' 行', true); return; }
+    predictRows.push({ nums: [] });
+    activeRow = predictRows.length - 1;
+    renderPredictRows();
+    renderPicker();
+    drawTrendTable();
+});
+document.getElementById('btnCopy').addEventListener('click', copyAll);
+document.getElementById('btnClear').addEventListener('click', function() {
+    predictRows = [{ nums: [] }];
+    activeRow = 0;
+    renderPredictRows();
+    renderPicker();
+    drawTrendTable();
+    setStatus('已清空');
+});
+
+// 表格内预测行点击（事件委托，绑定一次，避免重复监听）
+document.getElementById('sub-zoushi').addEventListener('click', function(e) {
+    const td = e.target;
+    if (td.classList && td.classList.contains('td-pick')) {
+        const tr = td.closest('tr');
+        if (tr && tr.hasAttribute('data-prow')) activeRow = parseInt(tr.getAttribute('data-prow'));
+        togglePick(parseInt(td.dataset.num));
+    }
+});
+
+// 初始化
+renderPicker();
+renderPredictRows();
+if (document.getElementById('panel-trend').classList.contains('active')) {
+    drawTrendTable();
+}
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 大乐透 遗漏分层 + 走势图 Webview HTML（照搬快乐8模式，适配前区 1-35 / 后区 1-12）
+ */
+function getDltMissHtml(history) {
+    const total = history.length;
+    const latest = history[0];
+    const latestPeriod = latest ? latest.period : '—';
+    const latestFront = latest ? (latest.front || []) : [];
+    const latestBack = latest ? (latest.back || []) : [];
+
+    // ===== 通用统计 =====
+    function calcStats(list, nMax) {
+        const stats = {};
+        for (let n = 1; n <= nMax; n++) {
+            let miss = -1;
+            let lastPeriod = '—';
+            const positions = [];
+            for (let i = 0; i < total; i++) {
+                if ((list[i] || []).indexOf(n) >= 0) {
+                    if (miss < 0) {
+                        miss = i;
+                        lastPeriod = history[i].period;
+                    }
+                    positions.push(i);
+                }
+            }
+            if (miss < 0) miss = total;
+            const c10 = positions.filter(p => p < 10).length;
+            const c30 = positions.filter(p => p < 30).length;
+            const c50 = positions.filter(p => p < 50).length;
+            const c100 = positions.filter(p => p < 100).length;
+            const c150 = positions.filter(p => p < 150).length;
+            const c200 = positions.filter(p => p < 200).length;
+            let avgMiss = 0;
+            let maxMiss = 0;
+            if (positions.length > 1) {
+                const gaps = [];
+                for (let i = 0; i < positions.length - 1; i++) gaps.push(positions[i + 1] - positions[i] - 1);
+                gaps.push(positions[positions.length - 1]);
+                avgMiss = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+                maxMiss = Math.max(...gaps);
+            } else if (positions.length === 1) {
+                avgMiss = positions[0];
+                maxMiss = positions[0];
+            }
+            stats[n] = {
+                miss, c10, c30, c50, c100, c150, c200,
+                avgMiss: Math.round(avgMiss * 10) / 10,
+                maxMiss,
+                lastPeriod
+            };
+        }
+        return stats;
+    }
+    const frontStats = calcStats(history.map(h => h.front || []), 35);
+    const backStats = calcStats(history.map(h => h.back || []), 12);
+
+    function layerClsOf(miss) {
+        return miss === 0 ? 'layer-hot' : miss <= 2 ? 'layer-warm' : miss <= 5 ? 'layer-cool' : miss <= 10 ? 'layer-cold' : miss <= 20 ? 'layer-freeze' : 'layer-ice';
+    }
+    function buildDetailData(stats, nMax) {
+        const arr = [];
+        for (let n = 1; n <= nMax; n++) {
+            const s = stats[n];
+            arr.push({
+                n,
+                miss: s.miss,
+                c10: s.c10, c30: s.c30, c50: s.c50,
+                c100: s.c100, c150: s.c150, c200: s.c200,
+                avg: s.avgMiss,
+                max: s.maxMiss,
+                last: s.lastPeriod,
+                cls: layerClsOf(s.miss)
+            });
+        }
+        arr.sort((a, b) => b.miss - a.miss);
+        return arr;
+    }
+    const detailF = buildDetailData(frontStats, 35);
+    const detailB = buildDetailData(backStats, 12);
+
+    // ===== 分层概览 =====
+    const layers = [
+        { name: '热号', range: [0, 0], cls: 'layer-hot', desc: '上期开出' },
+        { name: '温热', range: [1, 2], cls: 'layer-warm', desc: '遗漏 1-2 期' },
+        { name: '温冷', range: [3, 5], cls: 'layer-cool', desc: '遗漏 3-5 期' },
+        { name: '冷号', range: [6, 10], cls: 'layer-cold', desc: '遗漏 6-10 期' },
+        { name: '极冷', range: [11, 20], cls: 'layer-freeze', desc: '遗漏 11-20 期' },
+        { name: '冰封', range: [21, 999], cls: 'layer-ice', desc: '遗漏 20+ 期' }
+    ];
+    function buildLayerRows(stats, nMax, ballFn) {
+        let rows = '';
+        for (const layer of layers) {
+            const nums = [];
+            let sumMiss = 0;
+            for (let n = 1; n <= nMax; n++) {
+                const m = stats[n].miss;
+                if (m >= layer.range[0] && m <= layer.range[1]) {
+                    nums.push(n);
+                    sumMiss += m;
+                }
+            }
+            if (nums.length === 0) continue;
+            const avg = Math.round(sumMiss / nums.length * 10) / 10;
+            const balls = nums.map(n => '<span class="kball ' + ballFn(n) + '">' + n + '</span>').join('');
+            rows += '<tr><td class="' + layer.cls + '" style="font-weight:bold;">' + layer.name + '</td>' +
+                '<td style="color:#aaa;">' + layer.desc + '</td>' +
+                '<td>' + nums.length + '</td>' +
+                '<td>' + avg + '</td>' +
+                '<td>' + balls + '</td></tr>';
+        }
+        return rows;
+    }
+    const frontBallCls = n => 'kball-' + 'abcdefg'[Math.floor((n - 1) / 5)];
+    const backBallCls = n => n <= 6 ? 'kball-h' : 'kball-i';
+    const layerRowsF = buildLayerRows(frontStats, 35, frontBallCls);
+    const layerRowsB = buildLayerRows(backStats, 12, backBallCls);
+    const latestFrontBalls = latestFront.map(n => '<span class="kball ' + frontBallCls(n) + '">' + n + '</span>').join('');
+    const latestBackBalls = latestBack.map(n => '<span class="kball ' + backBallCls(n) + '">' + n + '</span>').join('');
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>大乐透遗漏分层 - ${latestPeriod}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
+h2 { color: #e8a87c; margin-bottom: 8px; font-size: 20px; }
+.sub { color: #aaa; margin-bottom: 12px; font-size: 12px; }
+.latest-box { background: rgba(232,168,124,0.08); border: 1px solid rgba(232,168,124,0.3); border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }
+.latest-nums { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; align-items: center; }
+.zone-label { color: #8ec5ff; font-weight: 600; margin: 0 6px; font-size: 12px; }
+.kball { display: inline-block; width: 28px; height: 28px; line-height: 26px; text-align: center; border-radius: 50%; font-size: 12px; font-weight: 600; color: #fff; }
+.kball-a { background: linear-gradient(135deg,#e67e22,#f39c12); }
+.kball-b { background: linear-gradient(135deg,#f1c40f,#f5d76e); color: #3a2c00; }
+.kball-c { background: linear-gradient(135deg,#2ecc71,#27ae60); }
+.kball-d { background: linear-gradient(135deg,#1abc9c,#16a085); }
+.kball-e { background: linear-gradient(135deg,#3498db,#2980b9); }
+.kball-f { background: linear-gradient(135deg,#9b59b6,#8e44ad); }
+.kball-g { background: linear-gradient(135deg,#7f8c8d,#95a5a6); }
+.kball-h { background: linear-gradient(135deg,#6c5ce7,#a29bfe); }
+.kball-i { background: linear-gradient(135deg,#e84393,#fd79a8); }
+table { border-collapse: collapse; width: 100%; }
+th, td { border: 1px solid #3a3a3d; padding: 4px 6px; text-align: center; font-size: 12px; }
+th { background: #2d2d30; color: #aaa; position: sticky; top: 0; z-index: 2; }
+.layer-hot { color: #e74c3c; font-weight: 600; }
+.layer-warm { color: #e67e22; font-weight: 600; }
+.layer-cool { color: #f1c40f; font-weight: 600; }
+.layer-cold { color: #2ecc71; font-weight: 600; }
+.layer-freeze { color: #3498db; font-weight: 600; }
+.layer-ice { color: #9b59b6; font-weight: 600; }
+.section-title { color: #e8a87c; font-size: 15px; font-weight: 600; margin: 18px 0 8px; }
+.table-caption { display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.03); border: 1px solid #3a3a3d; border-left: 4px solid #e8a87c; border-radius: 6px; padding: 6px 12px; margin: 16px 0 6px; font-size: 13px; color: #e8a87c; font-weight: 600; }
+.zone-badge-f { background: #e8a87c; color: #1e1e1e; border-radius: 10px; padding: 1px 12px; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+.zone-badge-b { background: #8ec5ff; color: #10253b; border-radius: 10px; padding: 1px 12px; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+.caption-desc { color: #999; font-size: 11px; font-weight: 400; margin-left: auto; }
+.scroll-wrap { max-height: 70vh; overflow-y: auto; border: 1px solid #3a3a3d; border-radius: 6px; }
+.tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 2px solid #3a3a3d; }
+.tab-btn { padding: 8px 22px; background: transparent; color: #aaa; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all .2s; }
+.tab-btn:hover { color: #fff; background: rgba(255,255,255,0.04); }
+.tab-btn.active { color: #e8a87c; border-bottom-color: #e8a87c; }
+.sub-tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid #3a3a3d; }
+.sub-tab-btn { padding: 6px 14px; background: transparent; color: #aaa; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; font-size: 13px; transition: all .2s; }
+.sub-tab-btn:hover { color: #fff; }
+.sub-tab-btn.active { color: #8ec5ff; border-bottom-color: #8ec5ff; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+.sub-panel { display: none; }
+.sub-panel.active { display: block; }
+.detail-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-bottom: 8px; font-size: 12px; }
+.detail-label { color: #aaa; }
+.span-chk-label { display: inline-flex; align-items: center; gap: 3px; color: #e8a87c; cursor: pointer; user-select: none; }
+.span-chk-label input { accent-color: #e8a87c; cursor: pointer; }
+.detail-legend { color: #999; font-size: 11px; margin-left: auto; }
+.span-custom-box { display: inline-flex; align-items: center; gap: 4px; }
+.span-custom-box input { width: 96px; background: #2d2d30; border: 1px solid #3c3c3f; color: #ddd; border-radius: 3px; padding: 3px 6px; font-size: 12px; }
+.span-custom-box input:focus { outline: none; border-color: #e8a87c; }
+.span-custom-box button { background: #0e639c; color: #fff; border: none; border-radius: 3px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+.span-custom-box button:hover { background: #1177bb; }
+.span-del { margin-left: 3px; color: #e74c3c; cursor: pointer; font-size: 10px; font-weight: 700; }
+.span-del:hover { color: #ff6b5e; }
+.detail-msg { color: #2ecc71; font-size: 11px; }
+.trend-wrap { overflow-x: auto; overflow-y: auto; max-height: 70vh; border: 1px solid #3a3a3d; border-radius: 6px; }
+.trend-table { border-collapse: collapse; }
+.trend-table th, .trend-table td { border: 1px solid #3a3a3d; min-width: 24px; padding: 2px 1px; text-align: center; font-size: 10px; }
+.trend-table .th-period, .trend-table .td-period { min-width: 54px; background: #1e1e1e; position: sticky; left: 0; z-index: 3; color: #bbb; font-weight: 600; }
+.trend-table th { position: sticky; top: 0; z-index: 2; background: #2d2d30; }
+.trend-table th.th-period { z-index: 4; }
+.trend-table .td-hit { background: #e74c3c !important; color: #fff; box-shadow: inset 0 0 0 1px #ff8a80; font-weight: 700; }
+.trend-table .td-miss { color: #888; }
+.trend-table td.g0 { background: rgba(231,76,60,0.18); color: #ff9d93; }
+.trend-table td.g1 { background: rgba(230,126,34,0.18); color: #ffb374; }
+.trend-table td.g2 { background: rgba(241,196,15,0.18); color: #ffd97a; }
+.trend-table td.g3 { background: rgba(46,204,113,0.18); color: #7be0a8; }
+.trend-table td.g4 { background: rgba(26,188,156,0.18); color: #7ed9c8; }
+.trend-table td.g5 { background: rgba(52,152,219,0.18); color: #7cc4ec; }
+.trend-table td.g6 { background: rgba(155,89,182,0.18); color: #c39bdd; }
+.trend-table td.g7 { background: rgba(108,122,137,0.18); color: #a9b6c2; }
+.trend-table td.g8 { background: rgba(214,69,120,0.18); color: #f5a8c5; }
+.trend-table th.grp-end, .trend-table td.grp-end { border-right: 2px solid #777 !important; }
+.trend-table .trend-predict-row td { border-top: 2px solid #e8a87c; }
+.trend-table .td-pick { cursor: pointer; font-weight: 700; font-size: 11px; user-select: none; }
+.trend-table .td-pick:hover { box-shadow: inset 0 0 0 1px #e8a87c; }
+.trend-table .trend-predict-row.active td:not(.td-period) { background: rgba(232,168,124,0.25) !important; }
+.trend-table .trend-predict-row.active .td-period { color: #e8a87c; font-weight: 700; }
+.trend-table .td-pick.picked { background: #e74c3c !important; color: #fff !important; box-shadow: inset 0 0 0 1px #ff8a80; }
+.hint { color: #999; font-size: 11px; margin-bottom: 8px; line-height: 1.6; }
+.canvas-wrap { background: #141414; border: 1px solid #3a3a3d; border-radius: 6px; padding: 8px; margin-bottom: 12px; }
+canvas { width: 100%; display: block; }
+.predict-box { margin-top: 16px; border: 1px solid rgba(232,168,124,0.4); border-radius: 8px; background: rgba(232,168,124,0.06); padding: 14px; }
+.predict-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.predict-title { color: #e8a87c; font-weight: 700; font-size: 15px; margin-right: auto; }
+.predict-box button { padding: 6px 14px; background: #0e639c; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; transition: background .2s; }
+.predict-box button:hover { background: #1177bb; }
+.predict-box button.btn-danger { background: #7a2f2f; }
+.predict-box button.btn-danger:hover { background: #a04040; }
+.predict-picker { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; align-items: center; }
+.pick-zone-label { color: #8ec5ff; font-weight: 600; font-size: 12px; margin-right: 6px; min-width: 64px; }
+.pick-ball { width: 28px; height: 28px; line-height: 26px; text-align: center; border-radius: 50%; font-size: 12px; font-weight: 600; color: #fff; cursor: pointer; border: 2px solid transparent; user-select: none; transition: all .15s; }
+.pick-ball:hover { border-color: #fff; transform: scale(1.08); }
+.pick-ball.picked { border-color: #fff; box-shadow: 0 0 0 2px #e8a87c; transform: scale(1.1); }
+.predict-rows { display: flex; flex-direction: column; gap: 8px; }
+.predict-row { display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.25); border: 1px solid #3a3a3d; border-radius: 6px; padding: 8px 10px; cursor: pointer; }
+.predict-row.active { border-color: #e8a87c; box-shadow: 0 0 0 1px #e8a87c; }
+.predict-row-label { min-width: 56px; color: #e8a87c; font-weight: 600; font-size: 12px; }
+.predict-row-nums { display: flex; flex-wrap: wrap; gap: 3px; flex: 1; align-items: center; font-size: 12px; }
+.predict-row-nums .zone-tag { color: #8ec5ff; margin: 0 2px; }
+.predict-row-actions { display: flex; gap: 4px; }
+.predict-row-actions button { padding: 3px 8px; font-size: 11px; }
+.predict-status { margin-top: 8px; color: #2ecc71; font-size: 12px; min-height: 16px; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h2>🎯 大乐透 遗漏分层分析</h2>
+<div class="sub">数据源：500.com · 共 ${total} 期（最新 ${latestPeriod} 期）</div>
+<div class="latest-box">
+    <b>最新开奖 ${latestPeriod} 期：</b>
+    <div class="latest-nums"><span class="zone-label">前区</span>${latestFrontBalls}<span class="zone-label">后区</span>${latestBackBalls}</div>
+</div>
+
+<div class="tabs">
+    <button class="tab-btn active" data-tab="miss">📋 遗漏分层</button>
+    <button class="tab-btn" data-tab="trend">📈 走势图</button>
+</div>
+
+<div id="panel-miss" class="tab-panel active">
+<div class="table-caption"><span class="zone-badge-f">前区</span>遗漏分层概览（按当前遗漏值分层）<span class="caption-desc">号码范围 1-35，每期开出 5 个</span></div>
+<table>
+<thead><tr><th>分层</th><th>说明</th><th>号码数</th><th>平均遗漏</th><th>号码列表</th></tr></thead>
+<tbody>${layerRowsF}</tbody>
+</table>
+<div class="table-caption"><span class="zone-badge-b">后区</span>遗漏分层概览（按当前遗漏值分层）<span class="caption-desc">号码范围 1-12，每期开出 2 个</span></div>
+<table>
+<thead><tr><th>分层</th><th>说明</th><th>号码数</th><th>平均遗漏</th><th>号码列表</th></tr></thead>
+<tbody>${layerRowsB}</tbody>
+</table>
+<div class="section-title">🔍 号码遗漏明细（按当前遗漏从大到小排序，可勾选 / 自定义期数列）</div>
+<div class="detail-toolbar">
+    <span class="detail-label">期数列：</span>
+    <span id="spanChkBox"></span>
+    <span class="span-custom-box">
+        <input type="number" id="customSpanInput" min="1" max="5000" placeholder="自定义期数，如 2000">
+        <button id="btnAddSpan">＋ 添加</button>
+    </span>
+    <span class="detail-msg" id="detailMsg"></span>
+    <span class="detail-legend">🔥≥30% 热 · 😀≥23% 较热 · 😐≥17% 一般 · 😟≥10% 较冷 · 🥶&lt;10% 冷</span>
+</div>
+<div class="table-caption"><span class="zone-badge-f">前区</span>号码遗漏明细<span class="caption-desc">号码 1-35，按当前遗漏从大到小排序</span></div>
+<div class="scroll-wrap" style="margin-bottom:12px;">
+<table>
+<thead id="detailHeadF"></thead>
+<tbody id="detailBodyF"></tbody>
+</table>
+</div>
+<div class="table-caption"><span class="zone-badge-b">后区</span>号码遗漏明细<span class="caption-desc">号码 1-12，按当前遗漏从大到小排序</span></div>
+<div class="scroll-wrap">
+<table>
+<thead id="detailHeadB"></thead>
+<tbody id="detailBodyB"></tbody>
+</table>
+</div>
+</div>
+
+<div id="panel-trend" class="tab-panel">
+<div class="sub-tabs">
+    <button class="sub-tab-btn active" data-subtab="front">🎯 前区走势图</button>
+    <button class="sub-tab-btn" data-subtab="back">🎯 后区走势图</button>
+    <button class="sub-tab-btn" data-subtab="missline">📉 遗漏曲线</button>
+</div>
+<div id="sub-front" class="sub-panel active">
+    <div class="hint">横轴为开奖期数（旧 → 新，最新在右），纵轴为号码 1-35。开出号码红底白字，未开出号码显示当前遗漏值。表格最下方「🎯 预测」行可直接点击选号（前区最多 5 个），与下方预测区联动。</div>
+    <div class="trend-wrap" id="trendWrapF"></div>
+</div>
+<div id="sub-back" class="sub-panel">
+    <div class="hint">横轴为开奖期数（旧 → 新，最新在右），纵轴为号码 1-12。开出号码红底白字，未开出号码显示当前遗漏值。表格最下方「🎯 预测」行可直接点击选号（后区最多 2 个），与下方预测区联动。</div>
+    <div class="trend-wrap" id="trendWrapB"></div>
+</div>
+<div id="sub-missline" class="sub-panel">
+    <div class="hint">最近 ${Math.min(60, total)} 期各号码遗漏值曲线（上方为前区，下方为后区）。</div>
+    <div class="canvas-wrap"><canvas id="missCanvasF"></canvas></div>
+    <div class="canvas-wrap"><canvas id="missCanvasB"></canvas></div>
+</div>
+<div class="predict-box">
+    <div class="predict-toolbar">
+        <span class="predict-title">🎯 预测选号</span>
+        <button id="btnAddRow">＋ 增加预测行</button>
+        <button id="btnCopyAll">📋 一键复制全部</button>
+        <button id="btnClear" class="btn-danger">🗑 清空</button>
+    </div>
+    <div class="predict-picker" id="pickBoxF"></div>
+    <div class="predict-picker" id="pickBoxB"></div>
+    <div class="predict-rows" id="predictRowsWrap"></div>
+    <div class="predict-status" id="predictStatus"></div>
+</div>
+</div>
+
+<script>
+// ===== 大乐透 遗漏分层 + 走势图 =====
+const HISTORY = ${JSON.stringify(history)};
+const dataOldNew = HISTORY.slice().reverse(); // 旧 → 新
+const DETAIL_F = ${JSON.stringify(detailF)};
+const DETAIL_B = ${JSON.stringify(detailB)};
+const spanDefs = { 10: 'c10', 30: 'c30', 50: 'c50', 100: 'c100', 150: 'c150', 200: 'c200' };
+const presetSpans = [10, 30, 50, 100, 150, 200];
+let detailSpans = [10, 30, 50, 100, 150, 200];
+let customSpans = [];
+const posCache = {};
+DETAIL_F.concat(DETAIL_B).forEach(function(r) {
+    const ps = [];
+    for (let i = 0; i < HISTORY.length; i++) {
+        const hit = (r.n <= 35) ? ((HISTORY[i].front || []).indexOf(r.n) >= 0) : ((HISTORY[i].back || []).indexOf(r.n) >= 0);
+        if (hit) ps.push(i);
+    }
+    posCache[r.n] = ps;
+});
+function countInSpan(num, span) {
+    const ps = posCache[num] || [];
+    const n = Math.min(span, HISTORY.length);
+    let c = 0;
+    for (let i = 0; i < ps.length && ps[i] < n; i++) c++;
+    return c;
+}
+function hotEmoji(c, span) {
+    const r = c / span;
+    return r >= 0.30 ? '🔥' : r >= 0.233 ? '😀' : r >= 0.167 ? '😐' : r >= 0.10 ? '😟' : '🥶';
+}
+function showDetailMsg(msg, isError) {
+    const el = document.getElementById('detailMsg');
+    el.textContent = msg;
+    el.style.color = isError ? '#e74c3c' : '#2ecc71';
+    setTimeout(function() { if (el.textContent === msg) el.textContent = ''; }, 2500);
+}
+function renderSpanChks() {
+    const box = document.getElementById('spanChkBox');
+    let h = '';
+    presetSpans.forEach(function(s) {
+        h += '<label class="span-chk-label"><input type="checkbox" class="span-chk" value="' + s + '"' + (detailSpans.indexOf(s) >= 0 ? ' checked' : '') + '> 近' + s + '期</label>';
+    });
+    customSpans.forEach(function(s) {
+        h += '<label class="span-chk-label"><input type="checkbox" class="span-chk" value="' + s + '" checked> 近' + s + '期 <span class="span-del" data-del="' + s + '" title="移除该列">✕</span></label>';
+    });
+    box.innerHTML = h;
+}
+function ballClsOf(num) {
+    if (num <= 35) return 'kball-' + 'abcdefg'[Math.floor((num - 1) / 5)];
+    return num <= 6 ? 'kball-h' : 'kball-i';
+}
+function renderMissDetail() {
+    const headF = document.getElementById('detailHeadF');
+    const bodyF = document.getElementById('detailBodyF');
+    const headB = document.getElementById('detailHeadB');
+    const bodyB = document.getElementById('detailBodyB');
+    let h = '<tr><th>号码</th><th>当前遗漏</th>';
+    detailSpans.forEach(function(s) { h += '<th>近' + s + '期</th>'; });
+    h += '<th>平均遗漏</th><th>最大遗漏</th><th>最近出现期</th></tr>';
+    headF.innerHTML = h;
+    headB.innerHTML = h;
+    function rowsHtml(data) {
+        let b = '';
+        data.forEach(function(r) {
+            b += '<tr><td><span class="kball ' + ballClsOf(r.n) + '">' + r.n + '</span></td>';
+            b += '<td class="' + r.cls + '" style="font-weight:bold;">' + r.miss + '</td>';
+            detailSpans.forEach(function(s) {
+                const v = (s <= 200 && spanDefs[s]) ? r[spanDefs[s]] : countInSpan(r.n, s);
+                b += '<td>' + v + ' ' + hotEmoji(v, s) + '</td>';
+            });
+            b += '<td>' + r.avg + '</td><td>' + r.max + '</td><td style="color:#888;">' + r.last + '</td></tr>';
+        });
+        return b;
+    }
+    bodyF.innerHTML = rowsHtml(DETAIL_F);
+    bodyB.innerHTML = rowsHtml(DETAIL_B);
+}
+document.getElementById('spanChkBox').addEventListener('change', function(e) {
+    if (!e.target.classList.contains('span-chk')) return;
+    const s = parseInt(e.target.value);
+    const idx = detailSpans.indexOf(s);
+    if (e.target.checked) { if (idx < 0) detailSpans.push(s); }
+    else if (idx >= 0) detailSpans.splice(idx, 1);
+    detailSpans.sort(function(a, b) { return a - b; });
+    renderMissDetail();
+});
+document.getElementById('spanChkBox').addEventListener('click', function(e) {
+    if (!e.target.classList.contains('span-del')) return;
+    const s = parseInt(e.target.getAttribute('data-del'));
+    customSpans = customSpans.filter(function(x) { return x !== s; });
+    const idx = detailSpans.indexOf(s);
+    if (idx >= 0) detailSpans.splice(idx, 1);
+    renderSpanChks();
+    renderMissDetail();
+});
+document.getElementById('btnAddSpan').addEventListener('click', function() {
+    const inp = document.getElementById('customSpanInput');
+    const v = parseInt(inp.value);
+    if (!v || v < 1) { showDetailMsg('请输入有效期数（≥1）', true); return; }
+    if (v > 5000) { showDetailMsg('最多支持 5000 期', true); return; }
+    if (detailSpans.indexOf(v) >= 0) { showDetailMsg('近' + v + '期已存在', true); return; }
+    customSpans.push(v);
+    detailSpans.push(v);
+    detailSpans.sort(function(a, b) { return a - b; });
+    inp.value = '';
+    renderSpanChks();
+    renderMissDetail();
+    showDetailMsg('已添加 近' + v + '期');
+});
+
+// ===== 走势图表格 =====
+function shortPeriod(p) { return p ? String(p).slice(-4) : ''; }
+function nMaxOf(zone) { return zone === 'f' ? 35 : 12; }
+function gSizeOf(zone) { return zone === 'f' ? 5 : 6; }
+function gCls(zone, num) { return zone === 'f' ? Math.floor((num - 1) / 5) : Math.floor((num - 1) / 6); }
+function gCount(zone) { return zone === 'f' ? 7 : 2; }
+function numsOf(zone, h) { return zone === 'f' ? (h.front || []) : (h.back || []); }
+function trendTableHtml(zone) {
+    const nMax = nMaxOf(zone);
+    const gSize = gSizeOf(zone);
+    const gN = gCount(zone);
+    let html = '<table class="trend-table">';
+    html += '<tr><th class="th-period">期数</th>';
+    for (let g = 0; g < gN; g++) {
+        const start = g * gSize + 1;
+        const end = Math.min(start + gSize - 1, nMax);
+        html += '<th colspan="' + gSize + '" class="grp grp-' + g + (g === gN - 1 ? ' grp-end' : '') + '">' + String(start).padStart(2, '0') + '-' + String(end).padStart(2, '0') + '</th>';
+    }
+    html += '</tr><tr><th class="th-period"></th>';
+    for (let num = 1; num <= nMax; num++) {
+        const g = gCls(zone, num);
+        html += '<th class="th-num g' + g + (num % gSize === 0 ? ' grp-end' : '') + '">' + num + '</th>';
+    }
+    html += '</tr>';
+    const last = {};
+    for (let num = 1; num <= nMax; num++) last[num] = -1;
+    for (let j = 0; j < dataOldNew.length; j++) {
+        const period = shortPeriod(dataOldNew[j].period);
+        const nums = numsOf(zone, dataOldNew[j]);
+        const numSet = {};
+        for (let k = 0; k < nums.length; k++) numSet[nums[k]] = true;
+        html += '<tr><td class="td-period">' + period + '</td>';
+        for (let num = 1; num <= nMax; num++) {
+            const g = gCls(zone, num);
+            const endCls = (num % gSize === 0) ? ' grp-end' : '';
+            if (numSet[num]) {
+                last[num] = 0;
+                html += '<td class="td-hit g' + g + endCls + '">' + num + '</td>';
+            } else {
+                if (last[num] >= 0) last[num]++;
+                html += '<td class="td-miss g' + g + endCls + '">' + (last[num] >= 0 ? last[num] : '') + '</td>';
+            }
+        }
+        html += '</tr>';
+    }
+    for (let r = 0; r < predictRows.length; r++) {
+        const row = predictRows[r];
+        const arr = zone === 'f' ? row.front : row.back;
+        const pickedSet = {};
+        for (let k = 0; k < arr.length; k++) pickedSet[arr[k]] = true;
+        html += '<tr class="trend-predict-row' + (r === activeRow ? ' active' : '') + '" data-prow="' + r + '" data-zone="' + zone + '">';
+        html += '<td class="td-period">' + (r === activeRow ? '▶' : ' ') + ' 第' + (r + 1) + '行</td>';
+        for (let num = 1; num <= nMax; num++) {
+            const g = gCls(zone, num);
+            const endCls = (num % gSize === 0) ? ' grp-end' : '';
+            html += '<td class="td-pick g' + g + endCls + (pickedSet[num] ? ' picked' : '') + '" data-num="' + num + '" title="点击选/取消 ' + num + '">' + num + '</td>';
+        }
+        html += '</tr>';
+    }
+    html += '</table>';
+    return html;
+}
+function drawTrendTable(zone) {
+    const wrap = document.getElementById(zone === 'f' ? 'trendWrapF' : 'trendWrapB');
+    const scrollLeft = wrap.scrollLeft;
+    wrap.innerHTML = trendTableHtml(zone);
+    wrap.scrollLeft = scrollLeft;
+}
+
+// ===== 遗漏曲线 =====
+function drawMissLines(zone) {
+    const canvas = document.getElementById(zone === 'f' ? 'missCanvasF' : 'missCanvasB');
+    const nMax = nMaxOf(zone);
+    const n = dataOldNew.length;
+    if (n === 0) return;
+    const show = Math.min(60, n);
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.clientWidth || 800;
+    const H = 260;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.fillStyle = '#141414';
+    ctx.fillRect(0, 0, W, H);
+    const recent = dataOldNew.slice(-show);
+    const series = {};
+    const last = {};
+    for (let num = 1; num <= nMax; num++) { series[num] = []; last[num] = -1; }
+    for (let i = 0; i < recent.length; i++) {
+        const nums = numsOf(zone, recent[i]);
+        const numSet = {};
+        for (let k = 0; k < nums.length; k++) numSet[nums[k]] = true;
+        for (let num = 1; num <= nMax; num++) {
+            if (numSet[num]) last[num] = 0; else if (last[num] >= 0) last[num]++;
+            series[num].push(last[num]);
+        }
+    }
+    const YMAX = 30;
+    const X = function(i) { return 10 + (show > 1 ? i * (W - 20) / (show - 1) : 0); };
+    const Y = function(v) { return H - 10 - Math.min(v, YMAX) / YMAX * (H - 30); };
+    const colors = ['#e74c3c','#e67e22','#f1c40f','#2ecc71','#1abc9c','#3498db','#9b59b6','#e84393','#6c5ce7','#fd79a8','#00cec9','#fdcb6e'];
+    for (let num = 1; num <= nMax; num++) {
+        const arr = series[num];
+        ctx.strokeStyle = colors[num % colors.length];
+        ctx.globalAlpha = 0.4;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let i = 0; i < arr.length; i++) {
+            const px = X(i);
+            const py = Y(arr[i]);
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+    }
+    ctx.globalAlpha = 0.15;
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let v = 0; v <= YMAX; v += 5) {
+        ctx.moveTo(10, Y(v));
+        ctx.lineTo(W - 10, Y(v));
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#888';
+    ctx.font = '10px sans-serif';
+    ctx.fillText(zone === 'f' ? '前区 1-35 遗漏曲线（最近 ' + show + ' 期）' : '后区 1-12 遗漏曲线（最近 ' + show + ' 期）', 12, 14);
+}
+
+// ===== 预测选号 =====
+const MAX_F = 5;
+const MAX_B = 2;
+const MAX_ROWS = 10;
+let predictRows = [{ front: [], back: [] }];
+let activeRow = 0;
+function setStatus(msg, isError) {
+    const el = document.getElementById('predictStatus');
+    el.textContent = msg;
+    el.style.color = isError ? '#e74c3c' : '#2ecc71';
+}
+function pickBallClsF(num) { return 'kball-' + 'abcdefg'[Math.floor((num - 1) / 5)]; }
+function pickBallClsB(num) { return num <= 6 ? 'kball-h' : 'kball-i'; }
+function togglePick(zone, num) {
+    const row = predictRows[activeRow];
+    const arr = zone === 'f' ? row.front : row.back;
+    const max = zone === 'f' ? MAX_F : MAX_B;
+    const idx = arr.indexOf(num);
+    if (idx >= 0) {
+        arr.splice(idx, 1);
+    } else {
+        if (arr.length >= max) {
+            setStatus((zone === 'f' ? '前区' : '后区') + '最多选 ' + max + ' 个（当前已选 ' + arr.length + ' 个）', true);
+            return;
+        }
+        arr.push(num);
+        arr.sort(function(a, b) { return a - b; });
+    }
+    renderPicker();
+    renderPredictRows();
+    setStatus((zone === 'f' ? '前区' : '后区') + '已选：' + (zone === 'f' ? row.front.join(',') : row.back.join(',')));
+}
+function renderPicker() {
+    const boxF = document.getElementById('pickBoxF');
+    const boxB = document.getElementById('pickBoxB');
+    let h = '<span class="pick-zone-label">前区(选5)</span>';
+    for (let num = 1; num <= 35; num++) {
+        const picked = predictRows[activeRow].front.indexOf(num) >= 0;
+        h += '<span class="pick-ball ' + pickBallClsF(num) + (picked ? ' picked' : '') + '" data-zone="f" data-num="' + num + '">' + num + '</span>';
+    }
+    boxF.innerHTML = h;
+    h = '<span class="pick-zone-label">后区(选2)</span>';
+    for (let num = 1; num <= 12; num++) {
+        const picked = predictRows[activeRow].back.indexOf(num) >= 0;
+        h += '<span class="pick-ball ' + pickBallClsB(num) + (picked ? ' picked' : '') + '" data-zone="b" data-num="' + num + '">' + num + '</span>';
+    }
+    boxB.innerHTML = h;
+    renderTrendRow();
+}
+function renderTrendRow() {
+    const rowEls = document.querySelectorAll('.trend-predict-row');
+    if (!rowEls.length) return;
+    rowEls.forEach(function(rowEl) {
+        const r = parseInt(rowEl.getAttribute('data-prow')) || 0;
+        const zone = rowEl.getAttribute('data-zone');
+        const row = predictRows[r];
+        const pickedSet = {};
+        if (row) {
+            const arr = zone === 'f' ? row.front : row.back;
+            for (let k = 0; k < arr.length; k++) pickedSet[arr[k]] = true;
+        }
+        rowEl.classList.toggle('active', r === activeRow);
+        const labelTd = rowEl.querySelector('.td-period');
+        if (labelTd) labelTd.textContent = (r === activeRow ? '▶' : ' ') + ' 第' + (r + 1) + '行';
+        rowEl.querySelectorAll('.td-pick').forEach(function(td) {
+            td.classList.toggle('picked', !!pickedSet[parseInt(td.getAttribute('data-num'))]);
+        });
+    });
+}
+function renderPredictRows() {
+    const wrap = document.getElementById('predictRowsWrap');
+    let h = '';
+    predictRows.forEach(function(row, i) {
+        const fBalls = row.front.map(function(n) {
+            return '<span class="pick-ball ' + pickBallClsF(n) + '" style="width:22px;height:22px;line-height:20px;font-size:10px;cursor:default;">' + n + '</span>';
+        }).join('');
+        const bBalls = row.back.map(function(n) {
+            return '<span class="pick-ball ' + pickBallClsB(n) + '" style="width:22px;height:22px;line-height:20px;font-size:10px;cursor:default;">' + n + '</span>';
+        }).join('');
+        h += '<div class="predict-row' + (i === activeRow ? ' active' : '') + '" data-prow="' + i + '">';
+        h += '<span class="predict-row-label">第' + (i + 1) + '行</span>';
+        h += '<div class="predict-row-nums"><span class="zone-tag">前区</span>' + (fBalls || '<span style="color:#666;">未选</span>') + '<span class="zone-tag">后区</span>' + (bBalls || '<span style="color:#666;">未选</span>') + '</div>';
+        h += '<div class="predict-row-actions">';
+        h += '<button data-copy="' + i + '" title="复制本行">📋</button>';
+        h += '<button data-del="' + i + '" class="btn-danger" title="删除本行">✕</button>';
+        h += '</div></div>';
+    });
+    wrap.innerHTML = h;
+    wrap.querySelectorAll('[data-copy]').forEach(function(b) {
+        b.addEventListener('click', function(e) {
+            e.stopPropagation();
+            copyRow(parseInt(b.dataset.copy));
+        });
+    });
+    wrap.querySelectorAll('[data-del]').forEach(function(b) {
+        b.addEventListener('click', function(e) {
+            e.stopPropagation();
+            predictRows.splice(parseInt(b.dataset.del), 1);
+            if (predictRows.length === 0) predictRows = [{ front: [], back: [] }];
+            if (activeRow >= predictRows.length) activeRow = predictRows.length - 1;
+            renderPredictRows();
+            renderPicker();
+            drawTrendTable('f');
+            drawTrendTable('b');
+        });
+    });
+    wrap.querySelectorAll('.predict-row').forEach(function(rowEl) {
+        rowEl.addEventListener('click', function() {
+            activeRow = parseInt(rowEl.getAttribute('data-prow'));
+            renderPredictRows();
+            renderPicker();
+        });
+    });
+}
+function rowText(i) {
+    const row = predictRows[i];
+    return '大乐透 预测第' + (i + 1) + '行 前区(' + row.front.length + '个): ' + row.front.join(',') + ' 后区(' + row.back.length + '个): ' + row.back.join(',');
+}
+function copyRow(i) { copyText(rowText(i)); }
+function copyAll() {
+    const lines = [];
+    predictRows.forEach(function(row, i) { lines.push(rowText(i)); });
+    copyText(lines.join('\\n'));
+}
+function copyText(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    if (!ok && navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(function() { setStatus('已复制：' + text); });
+        return;
+    }
+    setStatus(ok ? '已复制：' + text : '复制失败');
+}
+document.getElementById('btnAddRow').addEventListener('click', function() {
+    if (predictRows.length >= MAX_ROWS) { setStatus('最多 ' + MAX_ROWS + ' 行', true); return; }
+    predictRows.push({ front: [], back: [] });
+    activeRow = predictRows.length - 1;
+    renderPredictRows();
+    renderPicker();
+    drawTrendTable('f');
+    drawTrendTable('b');
+});
+document.getElementById('btnCopyAll').addEventListener('click', copyAll);
+document.getElementById('btnClear').addEventListener('click', function() {
+    predictRows = [{ front: [], back: [] }];
+    activeRow = 0;
+    renderPredictRows();
+    renderPicker();
+    drawTrendTable('f');
+    drawTrendTable('b');
+    setStatus('已清空');
+});
+document.getElementById('pickBoxF').addEventListener('click', function(e) {
+    const b = e.target;
+    if (b.classList && b.classList.contains('pick-ball')) togglePick('f', parseInt(b.dataset.num));
+});
+document.getElementById('pickBoxB').addEventListener('click', function(e) {
+    const b = e.target;
+    if (b.classList && b.classList.contains('pick-ball')) togglePick('b', parseInt(b.dataset.num));
+});
+document.getElementById('panel-trend').addEventListener('click', function(e) {
+    const td = e.target;
+    if (td.classList && td.classList.contains('td-pick')) {
+        const tr = td.closest('tr');
+        if (tr && tr.hasAttribute('data-prow')) activeRow = parseInt(tr.getAttribute('data-prow'));
+        togglePick(tr.getAttribute('data-zone'), parseInt(td.dataset.num));
+    }
+});
+document.querySelectorAll('.tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
+        const target = document.getElementById('panel-' + btn.dataset.tab);
+        target.classList.add('active');
+        if (btn.dataset.tab === 'trend') {
+            const activeSub = document.querySelector('.sub-tab-btn.active');
+            if (activeSub && activeSub.dataset.subtab === 'missline') {
+                drawMissLines('f');
+                drawMissLines('b');
+            } else {
+                drawTrendTable('f');
+                drawTrendTable('b');
+            }
+        }
+    });
+});
+document.querySelectorAll('.sub-tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('.sub-tab-btn').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        document.querySelectorAll('.sub-panel').forEach(function(p) { p.classList.remove('active'); });
+        const target = document.getElementById('sub-' + btn.dataset.subtab);
+        target.classList.add('active');
+        if (btn.dataset.subtab === 'missline') {
+            drawMissLines('f');
+            drawMissLines('b');
+        } else {
+            drawTrendTable(btn.dataset.subtab);
+        }
+    });
+});
+// 初始化
+renderSpanChks();
+renderMissDetail();
+renderPicker();
+renderPredictRows();
+if (document.getElementById('panel-trend').classList.contains('active')) {
+    drawTrendTable('f');
+    drawTrendTable('b');
+}
 </script>
 </body>
 </html>`;
@@ -4122,10 +8383,37 @@ async function runSmartFilter(redInput, blueInput, targetCount) {
     const blueScores = blues.map(scoreBlue).sort((a, b) => b.score - a.score);
 
     // 生成候选组合
+    // 策略：后区全组合覆盖 —— 先枚举后区所有 C(blues.length, 2) 种组合，
+    //       每种后区组合至少配 N/C 种前区组合，确保用户给的后区号码所有组合都被推荐到
     const candidates = [];
-    for (let iter = 0; iter < 50000; iter++) {
-        const redArr = weightedSelect(redScores, 5);
+
+    // 1. 枚举后区所有组合
+    const blueCombos = [];
+    for (let i = 0; i < blues.length; i++) {
+        for (let j = i + 1; j < blues.length; j++) {
+            blueCombos.push([blues[i], blues[j]].sort((a, b) => a - b));
+        }
+    }
+    const blueComboCount = blueCombos.length;
+
+    // 2. 每种后区组合至少分配的注数
+    const minPerBlueCombo = Math.max(1, Math.ceil(targetCount / blueComboCount));
+
+    // 3. 为每种后区组合生成前区
+    for (const blueCombo of blueCombos) {
+        const blueTotal = blueCombo.reduce((sum, n) => sum + (blueScores.find(b => b.num === n)?.score || 0), 0);
+        for (let iter = 0; iter < minPerBlueCombo * 3; iter++) { // 多生成一些再排序
+            const redArr = weightedSelect(redScores, 5);
+            const { comboScore, details } = scoreCombo(redArr, blueCombo);
+            const redTotal = redArr.reduce((sum, n) => sum + (redScores.find(r => r.num === n)?.score || 0), 0);
+            candidates.push({ reds: [...redArr].sort((a,b)=>a-b), blues: [...blueCombo], totalScore: redTotal + blueTotal*1.5 + comboScore, details });
+        }
+    }
+
+    // 4. 如果还不够 targetCount，用随机后区补充
+    while (candidates.length < targetCount * 3) {
         const blueArr = weightedSelect(blueScores, 2);
+        const redArr = weightedSelect(redScores, 5);
         const { comboScore, details } = scoreCombo(redArr, blueArr);
         const redTotal = redArr.reduce((sum, n) => sum + (redScores.find(r => r.num === n)?.score || 0), 0);
         const blueTotal = blueArr.reduce((sum, n) => sum + (blueScores.find(b => b.num === n)?.score || 0), 0);
@@ -4134,11 +8422,32 @@ async function runSmartFilter(redInput, blueInput, targetCount) {
 
     candidates.sort((a, b) => b.totalScore - a.totalScore);
 
-    // 去重取前N组
+    // 去重取前N组，同时确保每种后区组合至少出现一次
     const seen = new Set(), results = [];
+    const blueComboUsed = {}; // 记录每种后区组合已选注数
     for (const c of candidates) {
         const key = c.reds.join(',') + '|' + c.blues.join(',');
-        if (!seen.has(key)) { seen.add(key); results.push(c); if (results.length >= targetCount) break; }
+        if (seen.has(key)) continue;
+        const blueKey = c.blues.join(',');
+        blueComboUsed[blueKey] = (blueComboUsed[blueKey] || 0) + 1;
+        // 优先保留每种后区组合的前 minPerBlueCombo 注
+        seen.add(key);
+        results.push(c);
+        if (results.length >= targetCount) break;
+    }
+
+    // 校验：如果某些后区组合未被覆盖，强制补充
+    const coveredBlueCombos = new Set(results.map(r => r.blues.join(',')));
+    for (const bc of blueCombos) {
+        const bcKey = bc.join(',');
+        if (!coveredBlueCombos.has(bcKey)) {
+            // 找该后区组合的最高分候选
+            const fallback = candidates.find(c => c.blues.join(',') === bcKey);
+            if (fallback) {
+                results.push(fallback);
+                if (results.length >= targetCount + blueComboCount) break; // 允许超出一点
+            }
+        }
     }
 
     // 统计频率
@@ -4580,8 +8889,22 @@ async function runSsqFilter(redInput, blueInput, targetCount) {
     const blueScores = blues.map(scoreBlue).sort((a, b) => b.score - a.score);
 
     // 生成候选组合（双色球：6红1蓝）
+    // 策略：后区全覆盖 —— 每个蓝球号码至少分配 targetCount/blues.length 注
     const candidates = [];
-    for (let iter = 0; iter < 50000; iter++) {
+    const minPerBlueSsq = Math.max(1, Math.ceil(targetCount / blues.length));
+
+    for (const blueNum of blues) {
+        const blueTotal = (blueScores.find(b => b.num === blueNum) ? blueScores.find(b => b.num === blueNum).score : 0);
+        for (let iter = 0; iter < minPerBlueSsq * 3; iter++) {
+            const redArr = weightedSelect(redScores, 6);
+            const { comboScore, details } = scoreCombo(redArr, [blueNum]);
+            const redTotal = redArr.reduce((sum, n) => sum + (redScores.find(r => r.num === n) ? redScores.find(r => r.num === n).score : 0), 0);
+            candidates.push({ reds: [...redArr].sort((a,b)=>a-b), blues: [blueNum], totalScore: redTotal + blueTotal * 1.5 + comboScore, details });
+        }
+    }
+
+    // 如果不够，随机补充
+    while (candidates.length < targetCount * 3) {
         const redArr = weightedSelect(redScores, 6);
         const blueArr = weightedSelect(blueScores, 1);
         const { comboScore, details } = scoreCombo(redArr, blueArr);
@@ -4592,11 +8915,23 @@ async function runSsqFilter(redInput, blueInput, targetCount) {
 
     candidates.sort((a, b) => b.totalScore - a.totalScore);
 
-    // 去重取前N组
+    // 去重取前N组，确保每个蓝球至少出现一次
     const seen = new Set(), results = [];
     for (const c of candidates) {
         const key = c.reds.join(',') + '|' + c.blues.join(',');
-        if (!seen.has(key)) { seen.add(key); results.push(c); if (results.length >= targetCount) break; }
+        if (seen.has(key)) continue;
+        seen.add(key);
+        results.push(c);
+        if (results.length >= targetCount) break;
+    }
+
+    // 校验：如果某些蓝球未被覆盖，强制补充
+    const coveredBlues = new Set(results.map(r => r.blues[0]));
+    for (const bn of blues) {
+        if (!coveredBlues.has(bn)) {
+            const fallback = candidates.find(c => c.blues[0] === bn);
+            if (fallback) results.push(fallback);
+        }
     }
 
     // 统计频率
