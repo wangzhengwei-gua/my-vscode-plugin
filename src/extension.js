@@ -248,6 +248,16 @@ const LOTTERY_TYPES = [
         allNums: (h) => h.num,
         bigFn: (n) => n >= 5,
         roadFn: (n) => n % 3
+    },
+    {
+        key: 'kl8',
+        name: '快乐8',
+        emoji: '🎱',
+        file: 'kl8.json',
+        positions: [],
+        allNums: (h) => h.num,
+        bigFn: (n) => n >= 41,
+        roadFn: (n) => n % 3
     }
 ];
 
@@ -792,6 +802,54 @@ function activate(context) {
         panel.webview.html = getTransHtml(data);
     });
     context.subscriptions.push(transDisposable);
+
+    // 快乐8遗漏分层命令
+    let kl8MissDisposable = vscode.commands.registerCommand('myPlugin.kl8Miss', async () => {
+        const limitPick = await vscode.window.showQuickPick(
+            [
+                { label: '50 期', value: 50 },
+                { label: '100 期', value: 100 }
+            ],
+            { placeHolder: '选择统计的历史期数' }
+        );
+        if (!limitPick) return;
+        const limit = limitPick.value;
+
+        let history;
+        try {
+            const cfg = LOTTERY_TYPES.find(c => c.key === 'kl8');
+            if (!cfg) return;
+            history = loadLotteryData(cfg);
+            if (history.length === 0) {
+                vscode.window.showWarningMessage('快乐8数据为空，请先刷新数据');
+                return;
+            }
+        } catch (e) {
+            const choice = vscode.window.showInformationMessage(
+                '🎱 还没有快乐8数据，需要先爬取数据。是否立即爬取？',
+                '立即爬取', '稍后再说'
+            );
+            choice.then(btn => {
+                if (btn === '立即爬取') {
+                    vscode.commands.executeCommand('myPlugin.refreshData');
+                }
+            });
+            return;
+        }
+
+        // 注意：loadLotteryData 内部已 reverse（旧→新），这里切片后要还原为最新在前
+        const sliced = history.slice(-limit);
+        const rows = sliced.reverse();
+
+        const panel = vscode.window.createWebviewPanel(
+            'kl8Miss',
+            '快乐8 遗漏分层',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getKl8MissHtml(rows);
+    });
+    context.subscriptions.push(kl8MissDisposable);
 
     // 智能推荐命令（基于转移统计 TOP3 概率）
     let smartPickDisposable = vscode.commands.registerCommand('myPlugin.smartPick', async () => {
@@ -1816,6 +1874,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🔁 转移统计', 'myPlugin.showTrans', '🔁'),
                 this.createItem('🤖 智能推荐', 'myPlugin.smartPick', '🤖'),
                 this.createItem('🧬 概率推荐', 'myPlugin.probabilityPick', '🧬'),
+                this.createItem('🎱 快乐8遗漏分层', 'myPlugin.kl8Miss', '🎱'),
                 this.createItem('🛤️ 012路趋势', 'myPlugin.roadAnalysis', '🛤️'),
                 this.createItem('📜 排三口诀', 'myPlugin.pl3Formula', '📜'),
                 this.createItem('🎲 排五口诀', 'myPlugin.pl5Formula', '🎲'),
@@ -4467,6 +4526,195 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 </script>
+</body>
+</html>`;
+}
+
+/**
+ * 快乐8遗漏分层 Webview HTML
+ * 对 1-80 号球的遗漏值进行分层统计展示：
+ *  - 分层概览：按当前遗漏值分层（0 / 1-2 / 3-5 / 6-10 / 11-20 / 20+）
+ *  - 明细表：每个号码的当前遗漏、各周期出现次数、平均遗漏、最大遗漏
+ * @param {Array} history - 快乐8历史数据（最新在前），元素 {period, num:[20个号码]}
+ */
+function getKl8MissHtml(history) {
+    const total = history.length;
+    const latest = history[0];
+    const latestPeriod = latest ? latest.period : '—';
+    const latestNums = latest ? latest.num : [];
+    const updateTime = latest ? (latest.date || '') : '';
+
+    // 计算每个号码的遗漏统计
+    // missStats[n] = { miss, count10, count30, count50, avgMiss, maxMiss, lastPeriod }
+    const missStats = {};
+    for (let n = 1; n <= 80; n++) {
+        // 当前遗漏：从最新往前找第一次出现的位置
+        let miss = -1;
+        let lastPeriod = '—';
+        const positions = []; // 出现位置（index 越小越新）
+        for (let i = 0; i < total; i++) {
+            if (history[i].num.indexOf(n) >= 0) {
+                if (miss < 0) {
+                    miss = i;
+                    lastPeriod = history[i].period;
+                }
+                positions.push(i);
+            }
+        }
+        if (miss < 0) miss = total; // 从未出现
+        const count10 = positions.filter(p => p < 10).length;
+        const count30 = positions.filter(p => p < 30).length;
+        const count50 = positions.filter(p => p < 50).length;
+        // 平均遗漏：两次出现间隔的平均（含到第一期的距离）
+        let avgMiss = 0;
+        let maxMiss = 0;
+        if (positions.length > 1) {
+            const gaps = [];
+            for (let i = 0; i < positions.length - 1; i++) {
+                gaps.push(positions[i + 1] - positions[i] - 1);
+            }
+            gaps.push(positions[positions.length - 1]); // 最旧一期之前
+            avgMiss = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+            maxMiss = Math.max(...gaps);
+        } else if (positions.length === 1) {
+            avgMiss = positions[0];
+            maxMiss = positions[0];
+        }
+        missStats[n] = {
+            miss, count10, count30, count50,
+            avgMiss: Math.round(avgMiss * 10) / 10,
+            maxMiss,
+            lastPeriod
+        };
+    }
+
+    // 分层定义
+    const layers = [
+        { name: '热号', range: [0, 0], cls: 'layer-hot', desc: '上期开出' },
+        { name: '温热', range: [1, 2], cls: 'layer-warm', desc: '遗漏 1-2 期' },
+        { name: '温冷', range: [3, 5], cls: 'layer-cool', desc: '遗漏 3-5 期' },
+        { name: '冷号', range: [6, 10], cls: 'layer-cold', desc: '遗漏 6-10 期' },
+        { name: '极冷', range: [11, 20], cls: 'layer-freeze', desc: '遗漏 11-20 期' },
+        { name: '冰封', range: [21, 999], cls: 'layer-ice', desc: '遗漏 20+ 期' }
+    ];
+
+    // 分层概览表格
+    let layerRows = '';
+    for (const layer of layers) {
+        const nums = [];
+        for (let n = 1; n <= 80; n++) {
+            const m = missStats[n].miss;
+            if (m >= layer.range[0] && m <= layer.range[1]) nums.push(n);
+        }
+        const ballHtml = nums.map(n => {
+            const cls = n === 1 ? 'kball-r1' : n <= 10 ? 'kball-a' : n <= 20 ? 'kball-b' : n <= 30 ? 'kball-c' : n <= 40 ? 'kball-d' : n <= 50 ? 'kball-e' : n <= 60 ? 'kball-f' : n <= 70 ? 'kball-g' : 'kball-h';
+            return '<span class="kball ' + cls + '" title="遗漏 ' + missStats[n].miss + ' 期">' + n + '</span>';
+        }).join('');
+        const avg = nums.length > 0
+            ? (nums.reduce((a, n) => a + missStats[n].miss, 0) / nums.length).toFixed(1)
+            : '—';
+        layerRows += '<tr><td class="' + layer.cls + '">' + layer.name + '</td>' +
+            '<td>' + layer.desc + '</td>' +
+            '<td>' + nums.length + ' 个</td>' +
+            '<td class="' + layer.cls + '">' + avg + '</td>' +
+            '<td class="ball-cell">' + (ballHtml || '<span style="color:#555">无</span>') + '</td></tr>';
+    }
+
+    // 明细表（按当前遗漏排序）
+    const detailRows = [];
+    for (let n = 1; n <= 80; n++) {
+        const s = missStats[n];
+        const layerCls = s.miss === 0 ? 'layer-hot' : s.miss <= 2 ? 'layer-warm' : s.miss <= 5 ? 'layer-cool' : s.miss <= 10 ? 'layer-cold' : s.miss <= 20 ? 'layer-freeze' : 'layer-ice';
+        detailRows.push({
+            n,
+            miss: s.miss,
+            count10: s.count10,
+            count30: s.count30,
+            count50: s.count50,
+            avgMiss: s.avgMiss,
+            maxMiss: s.maxMiss,
+            lastPeriod: s.lastPeriod,
+            layerCls
+        });
+    }
+    detailRows.sort((a, b) => b.miss - a.miss);
+
+    const detailHtml = detailRows.map(r => {
+        const cls = r.n === 1 ? 'kball-r1' : r.n <= 10 ? 'kball-a' : r.n <= 20 ? 'kball-b' : r.n <= 30 ? 'kball-c' : r.n <= 40 ? 'kball-d' : r.n <= 50 ? 'kball-e' : r.n <= 60 ? 'kball-f' : r.n <= 70 ? 'kball-g' : 'kball-h';
+        const hot = r.count30 >= 9 ? '🔥' : r.count30 >= 7 ? '😀' : r.count30 >= 5 ? '😐' : r.count30 >= 3 ? '😟' : '🥶';
+        return '<tr><td><span class="kball ' + cls + '">' + r.n + '</span></td>' +
+            '<td class="' + r.layerCls + '" style="font-weight:bold;">' + r.miss + '</td>' +
+            '<td>' + r.count10 + '</td>' +
+            '<td>' + r.count30 + ' ' + hot + '</td>' +
+            '<td>' + r.count50 + '</td>' +
+            '<td>' + r.avgMiss + '</td>' +
+            '<td>' + r.maxMiss + '</td>' +
+            '<td style="color:#888;">' + r.lastPeriod + '</td></tr>';
+    }).join('');
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>快乐8 遗漏分层</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
+h2 { color: #e8a87c; margin-bottom: 8px; font-size: 20px; }
+.sub { color: #888; margin-bottom: 16px; font-size: 12px; }
+.latest-box { padding: 12px 16px; background: rgba(232,168,124,0.1); border: 1px solid rgba(232,168,124,0.3); border-radius: 8px; margin-bottom: 20px; }
+.latest-box b { color: #e8a87c; }
+.latest-nums { margin-top: 8px; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 24px; background: rgba(0,0,0,0.15); }
+th, td { border: 1px solid #3a3a3d; padding: 6px 10px; text-align: center; font-size: 12px; }
+th { background: #2d2d30; color: #e8a87c; font-size: 13px; position: sticky; top: 0; z-index: 1; }
+.ball-cell { text-align: left; line-height: 1.9; }
+.kball { display: inline-block; min-width: 26px; height: 26px; line-height: 26px; text-align: center; border-radius: 50%; font-size: 12px; margin: 1px 2px; color: #fff; font-weight: 600; }
+/* 号码球配色（按区间 8 色） */
+.kball-r1 { background: #e74c3c; }
+.kball-a { background: #e67e22; }
+.kball-b { background: #f1c40f; color: #222; }
+.kball-c { background: #2ecc71; }
+.kball-d { background: #1abc9c; }
+.kball-e { background: #3498db; }
+.kball-f { background: #9b59b6; }
+.kball-g { background: #8e44ad; }
+.kball-h { background: #34495e; }
+/* 遗漏分层颜色 */
+.layer-hot { color: #e74c3c; font-weight: 600; }
+.layer-warm { color: #e67e22; font-weight: 600; }
+.layer-cool { color: #f1c40f; font-weight: 600; }
+.layer-cold { color: #2ecc71; font-weight: 600; }
+.layer-freeze { color: #3498db; font-weight: 600; }
+.layer-ice { color: #9b59b6; font-weight: 600; }
+.section-title { color: #e8a87c; font-size: 15px; font-weight: 600; margin: 18px 0 8px; }
+.scroll-wrap { max-height: 70vh; overflow-y: auto; border: 1px solid #3a3a3d; border-radius: 6px; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h2>🎱 快乐8 遗漏分层分析</h2>
+<div class="sub">数据源：500.com · 共 ${total} 期（最新 ${latestPeriod} 期${updateTime ? ' · ' + updateTime : ''}）</div>
+<div class="latest-box">
+    <b>最新开奖 ${latestPeriod} 期：</b>
+    <div class="latest-nums">${latestNums.map(n => {
+        const cls = n === 1 ? 'kball-r1' : n <= 10 ? 'kball-a' : n <= 20 ? 'kball-b' : n <= 30 ? 'kball-c' : n <= 40 ? 'kball-d' : n <= 50 ? 'kball-e' : n <= 60 ? 'kball-f' : n <= 70 ? 'kball-g' : 'kball-h';
+        return '<span class="kball ' + cls + '">' + n + '</span>';
+    }).join('')}</div>
+</div>
+<div class="section-title">📋 遗漏分层概览（按当前遗漏值分层）</div>
+<table>
+<thead><tr><th>分层</th><th>说明</th><th>号码数</th><th>平均遗漏</th><th>号码列表</th></tr></thead>
+<tbody>${layerRows}</tbody>
+</table>
+<div class="section-title">🔍 号码遗漏明细（按当前遗漏从大到小排序）</div>
+<div class="scroll-wrap">
+<table>
+<thead><tr><th>号码</th><th>当前遗漏</th><th>近10期</th><th>近30期</th><th>近50期</th><th>平均遗漏</th><th>最大遗漏</th><th>最近出现期</th></tr></thead>
+<tbody>${detailHtml}</tbody>
+</table>
+</div>
 </body>
 </html>`;
 }

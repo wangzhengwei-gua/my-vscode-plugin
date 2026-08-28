@@ -50,6 +50,17 @@ const LOTTERY_SOURCES = {
         areas: [['num', 'cfont2', 3]],
         output: 'fc3d.json',
         limit: 500
+    },
+    kl8: {
+        name: '快乐8',
+        url: 'https://datachart.500.com/kl8/zoushi/newinc/jbzs_redblue.php?expect={limit}',
+        referer: 'https://datachart.500.com/kl8/',
+        encoding: 'gbk',
+        // 快乐8走势图是"遗漏值表"：每行 = 期号 + 80 列（chartBall01 表示该期开出，其余显示遗漏值）
+        rowPattern: /<tr[^>]*>[\s\S]*?<\/tr>/g,
+        kl8Mode: true, // 使用快乐8专用解析
+        output: 'kl8.json',
+        limit: 100 // 500.com 快乐8接口 expect 参数最大支持 100 期
     }
 };
 
@@ -193,7 +204,7 @@ async function crawlOne(type, dataDir, limit) {
     const html = decodeBuffer(buf, config.encoding);
 
     // 提取数据行
-    const rowPattern = /<tr class="t_tr1">.*?<\/tr>/g;
+    const rowPattern = config.rowPattern || /<tr class="t_tr1">.*?<\/tr>/g;
     const rows = [];
     let m;
     while ((m = rowPattern.exec(html)) !== null) {
@@ -204,8 +215,34 @@ async function crawlOne(type, dataDir, limit) {
         throw new Error(`${name} 网页结构变化或无数据（未匹配到任何数据行，可能网站改版）`);
     }
 
+    // 快乐8专用解析：每行 = 期号 + 80 列遗漏值表，chartBall01 表示开出号码
+    const parseKl8Row = (rowHtml) => {
+        const clean = rowHtml.replace(/<!--.*?-->/g, '');
+        const tds = clean.match(/<td[^>]*>[\s\S]*?<\/td>/g) || [];
+        if (tds.length < 81) return null;
+        // 期号在第一个 td
+        const period = tds[0].replace(/<[^>]+>/g, '').trim();
+        if (!/^\d{6,}$/.test(period)) return null;
+        // 提取开出号码（class 含 chartBall01 的 td）
+        const nums = [];
+        for (let i = 1; i < tds.length; i++) {
+            if (/class="[^"]*chartBall01/.test(tds[i])) {
+                const n = parseInt(tds[i].replace(/<[^>]+>/g, '').trim());
+                if (!isNaN(n)) nums.push(n);
+            }
+        }
+        if (nums.length !== 20) return null;
+        nums.sort((a, b) => a - b);
+        return { period, date: '', num: nums };
+    };
+
     const history = [];
     for (const rowHtml of rows) {
+        if (config.kl8Mode) {
+            const entry = parseKl8Row(rowHtml);
+            if (entry) history.push(entry);
+            continue;
+        }
         const { period, date } = extractPeriodAndDate(rowHtml);
         if (!period || !date) continue;
 
@@ -224,6 +261,12 @@ async function crawlOne(type, dataDir, limit) {
 
     if (history.length === 0) {
         throw new Error(`${name} 匹配到 ${rows.length} 行但未能解析出有效号码（CSS 类名可能变更）`);
+    }
+
+    // 快乐8接口返回正序（旧→新），统一为最新在前（与其他彩种一致）
+    if (config.kl8Mode && history.length > 1 &&
+        parseInt(history[0].period) < parseInt(history[history.length - 1].period)) {
+        history.reverse();
     }
 
     // 写入文件
@@ -245,7 +288,7 @@ async function crawlOne(type, dataDir, limit) {
     };
     fs.writeFileSync(outputFile, JSON.stringify(result, null, 2), 'utf-8');
 
-    console.log(`[${name}] 爬取成功! 最新: 第${history[0].period}期 (${history[0].date})，共 ${history.length} 期`);
+    console.log(`[${name}] 爬取成功! 最新: 第${history[0].period}期${history[0].date ? ' (' + history[0].date + ')' : ''}，共 ${history.length} 期`);
     return result;
 }
 

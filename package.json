@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.8.7",
+    "version": "0.8.8",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -40,6 +40,7 @@
         "onCommand:myPlugin.zhiHeAnalysis",
         "onCommand:myPlugin.toggleTimeBackground",
         "onCommand:myPlugin.drawMachine",
+        "onCommand:myPlugin.kl8Miss",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -131,6 +132,10 @@
             {
                 "command": "myPlugin.drawMachine",
                 "title": "3D Draw Machine"
+            },
+            {
+                "command": "myPlugin.kl8Miss",
+                "title": "快乐8遗漏分层"
             }
         ],
         "viewsContainers": {
