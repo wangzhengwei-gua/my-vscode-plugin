@@ -4834,6 +4834,9 @@ th { background: #2d2d30; color: #e8a87c; font-size: 13px; position: sticky; top
 .pick-label .pick-num { font-size: 17px; }
 .pick-balls { flex: 1; line-height: 1.9; }
 .pick-info { min-width: 130px; text-align: right; color: #777; font-size: 11px; white-space: nowrap; }
+.pick-copy-btn { float: right; background: #0e639c; color: #fff; border: none; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all .2s; }
+.pick-copy-btn:hover { background: #1177bb; }
+.pick-copy-btn.copied { background: #2ecc71; }
 /* Tab 切换样式 */
 .tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 2px solid #3a3a3d; }
 .tab-btn { padding: 8px 22px; background: transparent; color: #aaa; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all .2s; }
@@ -4943,7 +4946,9 @@ canvas { display: block; }
 
 <div id="panel-miss" class="tab-panel active">
 <div class="pick-box">
-    <div class="pick-box-title">🎯 智能推荐选号（选10 ~ 选1）</div>
+    <div class="pick-box-title">🎯 智能推荐选号（选10 ~ 选1）
+        <button id="btnCopyPick" class="pick-copy-btn">📋 一键复制</button>
+    </div>
     <div class="pick-box-desc">按近期活跃度综合评分排序：近10期出现次数(权重最高)＋近30期＋近50期，减去当前遗漏惩罚。选10 取前10名，选9 取前9名……选1 取第1名。悬停号码球可查看详细统计。</div>
     ${pickRows}
 </div>
@@ -5523,6 +5528,20 @@ renderPredictRows();
 if (document.getElementById('panel-trend').classList.contains('active')) {
     drawTrendTable();
 }
+
+// 一键复制智能推荐（选10 ~ 选1）
+document.getElementById('btnCopyPick').addEventListener('click', function() {
+    const lines = ['快乐8 智能推荐（选10 ~ 选1）'];
+    document.querySelectorAll('.pick-row').forEach(function(rowEl) {
+        const label = rowEl.querySelector('.pick-label').innerText.trim();
+        const balls = Array.prototype.map.call(rowEl.querySelectorAll('.pick-balls .kball'), function(b) { return b.textContent; });
+        lines.push(label + '：' + balls.join(' '));
+    });
+    copyText(lines.join('\n'), '已复制 选10~选1 智能推荐 ✓');
+    const btn = document.getElementById('btnCopyPick');
+    btn.classList.add('copied');
+    setTimeout(function() { btn.classList.remove('copied'); }, 2000);
+});
 </script>
 </body>
 </html>`;
