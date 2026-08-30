@@ -853,6 +853,14 @@ function activate(context) {
             vscode.ViewColumn.One,
             { enableScripts: true, retainContextWhenHidden: true }
         );
+        // 监听来自 Webview 的消息（用于复制功能）
+        panel.webview.onDidReceiveMessage(async (message) => {
+            if (message.command === 'copy') {
+                await vscode.env.clipboard.writeText(message.text);
+                panel.webview.postMessage({ command: 'copySuccess' });
+                return;
+            }
+        });
         panel.webview.html = getKl8MissHtml(rows);
     });
     context.subscriptions.push(kl8MissDisposable);
@@ -5460,6 +5468,15 @@ function renderPredictRows() {
     });
 }
 function copyText(text, okMsg) {
+    // 优先通过扩展端剪贴板（webview 中 execCommand/clipboard API 不可靠）
+    try {
+        if (typeof acquireVsCodeApi !== 'undefined') {
+            const api = acquireVsCodeApi();
+            api.postMessage({ command: 'copy', text: text });
+            setStatus(okMsg);
+            return;
+        }
+    } catch (e) {}
     const ta = document.createElement('textarea');
     ta.value = text;
     ta.style.position = 'fixed';
