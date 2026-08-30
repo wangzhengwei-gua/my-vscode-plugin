@@ -5563,7 +5563,7 @@ document.getElementById('btnCopyPick').addEventListener('click', function() {
     document.querySelectorAll('.pick-row').forEach(function(rowEl) {
         lines.push(pickRowText(rowEl));
     });
-    copyText(lines.join('\n'), '已复制 选10~选1 全部推荐 ✓');
+    copyText(lines.join('\\n'), '已复制 选10~选1 全部推荐 ✓');
     const btn = document.getElementById('btnCopyPick');
     btn.classList.add('copied');
     setTimeout(function() { btn.classList.remove('copied'); }, 2000);
