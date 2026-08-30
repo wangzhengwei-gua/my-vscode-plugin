@@ -5016,6 +5016,9 @@ canvas { display: block; }
 
 <script>
 // ===== 快乐8 走势图绘制 =====
+// 全局 vscode API：webview 中 acquireVsCodeApi 只能调用一次，此处缓存复用
+let vscodeApi = null;
+try { vscodeApi = acquireVsCodeApi(); } catch (e) { console.error('vscode api error:', e); }
 const HISTORY = ${JSON.stringify(history)};
 const dataOldNew = HISTORY.slice().reverse(); // 旧 → 新
 
@@ -5357,6 +5360,7 @@ function pickBallClass(num) {
 }
 function setStatus(msg, isError) {
     const el = document.getElementById('predictStatus');
+    if (!el) return;
     el.textContent = msg;
     el.style.color = isError ? '#e74c3c' : '#2ecc71';
     setTimeout(function() { if (el.textContent === msg) el.textContent = ''; }, 3000);
@@ -5469,14 +5473,13 @@ function renderPredictRows() {
 }
 function copyText(text, okMsg) {
     // 优先通过扩展端剪贴板（webview 中 execCommand/clipboard API 不可靠）
-    try {
-        if (typeof acquireVsCodeApi !== 'undefined') {
-            const api = acquireVsCodeApi();
-            api.postMessage({ command: 'copy', text: text });
+    if (vscodeApi) {
+        try {
+            vscodeApi.postMessage({ command: 'copy', text: text });
             setStatus(okMsg);
             return;
-        }
-    } catch (e) {}
+        } catch (e) { console.error('copy postMessage error:', e); }
+    }
     const ta = document.createElement('textarea');
     ta.value = text;
     ta.style.position = 'fixed';
@@ -5576,6 +5579,15 @@ document.querySelectorAll('[data-pick-copy]').forEach(function(btn) {
         setTimeout(function() { btn.classList.remove('copied'); }, 2000);
     });
 });
+
+// 监听扩展端复制成功反馈
+if (vscodeApi) {
+    vscodeApi.onDidReceiveMessage(function(msg) {
+        if (msg && msg.command === 'copySuccess') {
+            setStatus('已复制到剪贴板 ✓');
+        }
+    });
+}
 </script>
 </body>
 </html>`;
