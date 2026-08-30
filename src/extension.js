@@ -4717,10 +4717,11 @@ function getKl8MissHtml(history) {
         const hotInfo = list.length > 0
             ? '（近10期出现率 ' + (list.reduce((a, x) => a + x.count10, 0) / (pick * Math.min(total, 10)) * 100).toFixed(0) + '%）'
             : '';
-        pickRows += '<div class="pick-row">' +
+        pickRows += '<div class="pick-row" data-pick="' + pick + '">' +
             '<div class="pick-label">选<span class="pick-num">' + pick + '</span></div>' +
             '<div class="pick-balls">' + (balls || '<span style="color:#555">无</span>') + '</div>' +
             '<div class="pick-info">' + hotInfo + '</div>' +
+            '<button class="pick-copy-btn" data-pick-copy="' + pick + '" title="复制 选' + pick + ' 的号码">📋 复制</button>' +
             '</div>';
     }
 
@@ -5529,18 +5530,34 @@ if (document.getElementById('panel-trend').classList.contains('active')) {
     drawTrendTable();
 }
 
-// 一键复制智能推荐（选10 ~ 选1）
+// 复制工具：提取某行的 规格+号码
+function pickRowText(rowEl) {
+    const label = rowEl.querySelector('.pick-label').innerText.trim();
+    const balls = Array.prototype.map.call(rowEl.querySelectorAll('.pick-balls .kball'), function(b) { return b.textContent; });
+    return label + '：' + balls.join(' ');
+}
+
+// 一键复制智能推荐（选10 ~ 选1）全部
 document.getElementById('btnCopyPick').addEventListener('click', function() {
     const lines = ['快乐8 智能推荐（选10 ~ 选1）'];
     document.querySelectorAll('.pick-row').forEach(function(rowEl) {
-        const label = rowEl.querySelector('.pick-label').innerText.trim();
-        const balls = Array.prototype.map.call(rowEl.querySelectorAll('.pick-balls .kball'), function(b) { return b.textContent; });
-        lines.push(label + '：' + balls.join(' '));
+        lines.push(pickRowText(rowEl));
     });
-    copyText(lines.join('\n'), '已复制 选10~选1 智能推荐 ✓');
+    copyText(lines.join('\n'), '已复制 选10~选1 全部推荐 ✓');
     const btn = document.getElementById('btnCopyPick');
     btn.classList.add('copied');
     setTimeout(function() { btn.classList.remove('copied'); }, 2000);
+});
+
+// 每行独立复制按钮
+document.querySelectorAll('[data-pick-copy]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        const pick = btn.dataset.pickCopy;
+        const rowEl = btn.closest('.pick-row');
+        copyText(pickRowText(rowEl), '已复制 选' + pick + ' 号码 ✓');
+        btn.classList.add('copied');
+        setTimeout(function() { btn.classList.remove('copied'); }, 2000);
+    });
 });
 </script>
 </body>
