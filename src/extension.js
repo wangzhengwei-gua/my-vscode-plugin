@@ -5566,7 +5566,7 @@ function pickRowText(rowEl) {
 document.getElementById('btnCopyPick').addEventListener('click', function() {
     const multEl = document.getElementById('pickMultiplier');
     const mult = multEl ? multEl.value : '1';
-    const lines = ['快乐8 智能推荐（全部' + mult + '倍）'];
+    const lines = ['快乐8（全部' + mult + '倍）'];
     document.querySelectorAll('.pick-row').forEach(function(rowEl) {
         lines.push(pickRowText(rowEl));
     });
