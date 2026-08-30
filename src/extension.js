@@ -4664,8 +4664,9 @@ function getKl8MissHtml(history) {
         { name: '冰封', range: [21, 999], cls: 'layer-ice', desc: '遗漏 20+ 期' }
     ];
 
-    // 分层概览表格
+    // 分层概览表格 + 号码分类汇总
     let layerRows = '';
+    let layerSummary = '';
     for (const layer of layers) {
         const nums = [];
         for (let n = 1; n <= 80; n++) {
@@ -4684,6 +4685,14 @@ function getKl8MissHtml(history) {
             '<td>' + nums.length + ' 个</td>' +
             '<td class="' + layer.cls + '">' + avg + '</td>' +
             '<td class="ball-cell">' + (ballHtml || '<span style="color:#555">无</span>') + '</td></tr>';
+
+        // 号码分类汇总：每层一行，横向展示该层全部号码
+        const dotCls = 'dot-' + layer.cls.replace('layer-', '');
+        layerSummary += '<div class="summary-row">' +
+            '<div class="summary-label"><span class="summary-dot ' + dotCls + '"></span>' + layer.name + ' <small>' + layer.desc + '</small></div>' +
+            '<div class="summary-count ' + layer.cls + '">' + nums.length + ' 个</div>' +
+            '<div class="summary-balls">' + (ballHtml || '<span style="color:#555">无</span>') + '</div>' +
+            '</div>';
     }
 
     // 明细表（按当前遗漏排序）
@@ -4771,6 +4780,21 @@ th { background: #2d2d30; color: #e8a87c; font-size: 13px; position: sticky; top
 .layer-ice { color: #9b59b6; font-weight: 600; }
 .section-title { color: #e8a87c; font-size: 15px; font-weight: 600; margin: 18px 0 8px; }
 .scroll-wrap { max-height: 70vh; overflow-y: auto; border: 1px solid #3a3a3d; border-radius: 6px; }
+/* 号码分层汇总 */
+.layer-summary { background: rgba(0,0,0,0.15); border: 1px solid #3a3a3d; border-radius: 6px; padding: 12px; margin-bottom: 18px; }
+.summary-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #2a2a2d; }
+.summary-row:last-child { border-bottom: none; }
+.summary-label { min-width: 110px; font-weight: 600; color: #ddd; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.summary-label small { color: #888; font-weight: 400; font-size: 11px; margin-left: 4px; }
+.summary-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.dot-hot { background: #e74c3c; }
+.dot-warm { background: #e67e22; }
+.dot-cool { background: #f1c40f; }
+.dot-cold { background: #2ecc71; }
+.dot-freeze { background: #3498db; }
+.dot-ice { background: #9b59b6; }
+.summary-count { min-width: 50px; text-align: center; font-weight: 700; font-size: 13px; }
+.summary-balls { flex: 1; line-height: 1.9; }
 /* Tab 切换样式 */
 .tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 2px solid #3a3a3d; }
 .tab-btn { padding: 8px 22px; background: transparent; color: #aaa; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all .2s; }
@@ -4879,6 +4903,8 @@ canvas { display: block; }
 </div>
 
 <div id="panel-miss" class="tab-panel active">
+<div class="section-title">🌡️ 号码分层汇总</div>
+<div class="layer-summary">${layerSummary}</div>
 <div class="section-title">📋 遗漏分层概览（按当前遗漏值分层）</div>
 <table>
 <thead><tr><th>分层</th><th>说明</th><th>号码数</th><th>平均遗漏</th><th>号码列表</th></tr></thead>
