@@ -4695,6 +4695,35 @@ function getKl8MissHtml(history) {
             '</div>';
     }
 
+    // ===== 智能推荐：选10 ~ 选1 =====
+    // 综合评分：近期活跃度（count10 权重最高）＋中期活跃度 ＋ 遗漏回补
+    // score = count10*3 + count30*1.5 + count50*0.8 - miss*0.3
+    // 遗漏适中的活跃号码得分最高；选10 取前10名，选9 取前9名，依此类推
+    const scored = [];
+    for (let n = 1; n <= 80; n++) {
+        const s = missStats[n];
+        const score = s.count10 * 3 + s.count30 * 1.5 + s.count50 * 0.8 - s.miss * 0.3;
+        scored.push({ n, score, miss: s.miss, count10: s.count10, count30: s.count30 });
+    }
+    scored.sort((a, b) => b.score - a.score);
+
+    let pickRows = '';
+    for (let pick = 10; pick >= 1; pick--) {
+        const list = scored.slice(0, pick);
+        const balls = list.map(x => {
+            const cls = x.n <= 10 ? 'kball-a' : x.n <= 20 ? 'kball-b' : x.n <= 30 ? 'kball-c' : x.n <= 40 ? 'kball-d' : x.n <= 50 ? 'kball-e' : x.n <= 60 ? 'kball-f' : x.n <= 70 ? 'kball-g' : 'kball-h';
+            return '<span class="kball ' + cls + '" title="号码 ' + x.n + ' · 当前遗漏 ' + x.miss + ' 期 · 近10期出 ' + x.count10 + ' 次 · 近30期出 ' + x.count30 + ' 次">' + x.n + '</span>';
+        }).join('');
+        const hotInfo = list.length > 0
+            ? '（近10期出现率 ' + (list.reduce((a, x) => a + x.count10, 0) / (pick * Math.min(total, 10)) * 100).toFixed(0) + '%）'
+            : '';
+        pickRows += '<div class="pick-row">' +
+            '<div class="pick-label">选<span class="pick-num">' + pick + '</span></div>' +
+            '<div class="pick-balls">' + (balls || '<span style="color:#555">无</span>') + '</div>' +
+            '<div class="pick-info">' + hotInfo + '</div>' +
+            '</div>';
+    }
+
     // 明细表（按当前遗漏排序）
     const detailRows = [];
     for (let n = 1; n <= 80; n++) {
@@ -4795,6 +4824,16 @@ th { background: #2d2d30; color: #e8a87c; font-size: 13px; position: sticky; top
 .dot-ice { background: #9b59b6; }
 .summary-count { min-width: 50px; text-align: center; font-weight: 700; font-size: 13px; }
 .summary-balls { flex: 1; line-height: 1.9; }
+/* 智能推荐选号（选10~选1） */
+.pick-box { background: rgba(232,168,124,0.07); border: 1px solid rgba(232,168,124,0.35); border-radius: 8px; padding: 12px 14px; margin-bottom: 18px; }
+.pick-box-title { color: #e8a87c; font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+.pick-box-desc { color: #999; font-size: 11px; margin-bottom: 10px; }
+.pick-row { display: flex; align-items: center; gap: 12px; padding: 6px 0; border-bottom: 1px solid #2a2a2d; }
+.pick-row:last-child { border-bottom: none; }
+.pick-label { min-width: 42px; text-align: center; font-weight: 700; color: #e8a87c; font-size: 14px; background: rgba(232,168,124,0.12); border: 1px solid rgba(232,168,124,0.3); border-radius: 5px; padding: 3px 0; }
+.pick-label .pick-num { font-size: 17px; }
+.pick-balls { flex: 1; line-height: 1.9; }
+.pick-info { min-width: 130px; text-align: right; color: #777; font-size: 11px; white-space: nowrap; }
 /* Tab 切换样式 */
 .tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 2px solid #3a3a3d; }
 .tab-btn { padding: 8px 22px; background: transparent; color: #aaa; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all .2s; }
@@ -4903,6 +4942,11 @@ canvas { display: block; }
 </div>
 
 <div id="panel-miss" class="tab-panel active">
+<div class="pick-box">
+    <div class="pick-box-title">🎯 智能推荐选号（选10 ~ 选1）</div>
+    <div class="pick-box-desc">按近期活跃度综合评分排序：近10期出现次数(权重最高)＋近30期＋近50期，减去当前遗漏惩罚。选10 取前10名，选9 取前9名……选1 取第1名。悬停号码球可查看详细统计。</div>
+    ${pickRows}
+</div>
 <div class="section-title">🌡️ 号码分层汇总</div>
 <div class="layer-summary">${layerSummary}</div>
 <div class="section-title">📋 遗漏分层概览（按当前遗漏值分层）</div>
