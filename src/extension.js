@@ -4718,6 +4718,7 @@ function getKl8MissHtml(history) {
     let pickRows = '';
     for (let pick = 10; pick >= 1; pick--) {
         const list = scored.slice(0, pick);
+        list.sort((a, b) => a.n - b.n); // 显示按号码从小到大排序
         const balls = list.map(x => {
             const cls = x.n <= 10 ? 'kball-a' : x.n <= 20 ? 'kball-b' : x.n <= 30 ? 'kball-c' : x.n <= 40 ? 'kball-d' : x.n <= 50 ? 'kball-e' : x.n <= 60 ? 'kball-f' : x.n <= 70 ? 'kball-g' : 'kball-h';
             return '<span class="kball ' + cls + '" title="号码 ' + x.n + ' · 当前遗漏 ' + x.miss + ' 期 · 近10期出 ' + x.count10 + ' 次 · 近30期出 ' + x.count30 + ' 次">' + x.n + '</span>';
