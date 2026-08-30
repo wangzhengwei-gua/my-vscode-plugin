@@ -4850,6 +4850,11 @@ th { background: #2d2d30; color: #e8a87c; font-size: 13px; position: sticky; top
 .pick-multiplier { float: right; margin-right: 10px; color: #ccc; font-size: 12px; font-weight: 400; }
 .pick-multiplier select { background: #2d2d30; color: #e8a87c; border: 1px solid #555; border-radius: 4px; padding: 3px 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .pick-multiplier select:focus { outline: none; border-color: #e8a87c; }
+/* 算法说明悬浮提示 */
+.algo-hint { position: relative; display: inline-block; margin-left: 6px; color: #e8a87c; cursor: help; font-size: 13px; vertical-align: middle; }
+.algo-hint-text { visibility: hidden; opacity: 0; position: absolute; left: 0; top: 135%; z-index: 999; width: 430px; background: #252528; border: 1px solid rgba(232,168,124,0.5); border-radius: 6px; padding: 10px 12px; font-size: 12px; line-height: 1.7; color: #ccc; font-weight: 400; text-align: left; box-shadow: 0 4px 16px rgba(0,0,0,0.5); transition: opacity .2s, visibility .2s; pointer-events: none; white-space: normal; }
+.algo-hint-text b { color: #e8a87c; }
+.algo-hint:hover .algo-hint-text, .algo-hint:focus .algo-hint-text { visibility: visible; opacity: 1; }
 /* Tab 切换样式 */
 .tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 2px solid #3a3a3d; }
 .tab-btn { padding: 8px 22px; background: transparent; color: #aaa; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all .2s; }
@@ -4960,6 +4965,15 @@ canvas { display: block; }
 <div id="panel-miss" class="tab-panel active">
 <div class="pick-box">
     <div class="pick-box-title">🎯 智能推荐选号（选10 ~ 选1）
+        <span class="algo-hint" tabindex="0">❓
+            <span class="algo-hint-text">
+                <b>算法说明</b><br>
+                综合评分 = 近10期出现次数 × 3 ＋ 近30期出现次数 × 1.5 ＋ 近50期出现次数 × 0.8 － 当前遗漏期数 × 0.3<br><br>
+                按评分从高到低排序：<b>选10</b> 取前10名、<b>选9</b> 取前9名……<b>选1</b> 取第1名。<br>
+                显示时号码按从小到大排列。<br><br>
+                倾向近期活跃号码（热号惯性），仅供参考娱乐，不构成中奖保证。
+            </span>
+        </span>
         <span class="pick-multiplier">倍数 <select id="pickMultiplier"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="5">5</option><option value="10">10</option><option value="20">20</option><option value="50">50</option><option value="100">100</option></select> 倍</span>
         <button id="btnCopyPick" class="pick-copy-btn">📋 一键复制</button>
     </div>
