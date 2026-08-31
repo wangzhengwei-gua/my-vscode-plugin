@@ -4658,7 +4658,8 @@ function getKl8MissHtml(history) {
             miss, count10, count30, count50, count100, count150, count200,
             avgMiss: Math.round(avgMiss * 10) / 10,
             maxMiss,
-            lastPeriod
+            lastPeriod,
+            totalCount: positions.length
         };
     }
 
@@ -4784,11 +4785,19 @@ function getKl8MissHtml(history) {
         '<tr><td colspan="7" style="color:#888;text-align:left;">每期开出 20 个号，理论奇偶各 10 个（50% : 50%）。奇偶推荐在各自 40 个号码池内按活跃度评分并均衡覆盖 8 个区间，仅供参考。</td></tr>' +
         '</tbody></table>';
 
-    // 奇/偶号码池：按活跃度评分降序
+    // 奇/偶号码池：综合评分（近期活跃 + 历史出现概率 + 泊松遗漏回归）
+    // score = count10*2 + count30*1 + count50*0.4        ← 近期活跃度
+    //       + (历史频率 / 理论频率0.25) * 5              ← 历史出现概率(理论 25%)
+    //       + (1 - e^(-λ*miss)) * 8                      ← 遗漏回归概率,λ=历史频率
     const oddScored = [], evenScored = [];
     for (let n = 1; n <= 80; n++) {
         const s = missStats[n];
-        const item = { n, score: s.count10 * 2.5 + s.count30 * 1.2 + s.count50 * 0.6 - s.miss * 0.5, miss: s.miss, count10: s.count10, count30: s.count30 };
+        const freq = total > 0 ? s.totalCount / total : 0;   // 历史出现概率(每期)
+        const regression = 1 - Math.exp(-freq * s.miss);     // P(该期出现 | 已连续miss期未出)
+        const score = s.count10 * 2 + s.count30 * 1 + s.count50 * 0.4
+            + (freq / 0.25) * 5
+            + regression * 8;
+        const item = { n, score, miss: s.miss, count10: s.count10, count30: s.count30, freq };
         if (n % 2 === 1) oddScored.push(item); else evenScored.push(item);
     }
     oddScored.sort((a, b) => b.score - a.score);
@@ -4816,7 +4825,7 @@ function getKl8MissHtml(history) {
             list.sort((a, b) => a.n - b.n);
             const balls = list.map(x => {
                 const cls = x.n <= 10 ? 'kball-a' : x.n <= 20 ? 'kball-b' : x.n <= 30 ? 'kball-c' : x.n <= 40 ? 'kball-d' : x.n <= 50 ? 'kball-e' : x.n <= 60 ? 'kball-f' : x.n <= 70 ? 'kball-g' : 'kball-h';
-                return '<span class="kball ' + cls + '" title="号码 ' + x.n + ' · 当前遗漏 ' + x.miss + ' 期 · 近10期出 ' + x.count10 + ' 次 · 近30期出 ' + x.count30 + ' 次">' + x.n + '</span>';
+                return '<span class="kball ' + cls + '" title="号码 ' + x.n + ' · 当前遗漏 ' + x.miss + ' 期 · 近10期出 ' + x.count10 + ' 次 · 近30期出 ' + x.count30 + ' 次 · 历史频率 ' + (x.freq * 100).toFixed(1) + '%">' + x.n + '</span>';
             }).join('');
             rows += '<div class="pick-row oe-row" data-oe="' + oeTag + '" data-pick="' + pick + '">' +
                 '<div class="pick-label">选<span class="pick-num">' + pick + '</span></div>' +
@@ -5077,7 +5086,7 @@ canvas { display: block; }
         <span class="pick-multiplier">倍数 <select id="pickOeMultiplier"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="5">5</option><option value="10">10</option><option value="20">20</option><option value="50">50</option><option value="100">100</option></select> 倍</span>
         <button id="btnCopyOePick" class="pick-copy-btn">📋 一键复制</button>
     </div>
-    <div class="pick-box-desc">将 80 个号码分为奇数池（40个）与偶数池（40个），先统计奇偶开出概率，再在各自号码池内按活跃度评分推荐（均衡覆盖 8 个区间）。<b style="color:#e8a87c;">注意：快乐8 每期独立随机开奖，奇偶理论各占 50%，推荐仅供参考。</b></div>
+    <div class="pick-box-desc">将 80 个号码分为奇数池（40个）与偶数池（40个），先统计奇偶开出概率，再在各自号码池内按<b>三维综合评分</b>推荐：①近期活跃度（近10期最重）②历史出现概率（相对理论值25%）③泊松遗漏回归（连续未出越久、回归概率越高），并均衡覆盖 8 个区间。悬停号码球可查看详细统计。<b style="color:#e8a87c;">注意：快乐8 每期独立随机开奖，奇偶理论各占 50%，推荐仅供参考。</b></div>
     ${oeStatsHtml}
     <div class="oe-subtitle"><span class="oe-badge odd">奇数池 40个</span> 奇数推荐（1,3,5…79）</div>
     ${oddPickRows}
