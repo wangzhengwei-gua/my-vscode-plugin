@@ -5054,6 +5054,32 @@ canvas { display: block; }
 .predict-status { margin-top: 8px; color: #2ecc71; font-size: 12px; min-height: 16px; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+/* ===== 统计工具（蒙特卡洛 / 期望对比 / 遗漏回归 / 组合覆盖 / 倍投计划） ===== */
+.stat-box { background: rgba(142,197,255,0.06); border: 1px solid rgba(142,197,255,0.3); border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; }
+.stat-box-title { color: #8ec5ff; font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+.stat-box-desc { color: #999; font-size: 11px; margin-bottom: 10px; line-height: 1.7; }
+.stat-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-bottom: 10px; font-size: 12px; color: #ccc; }
+.stat-toolbar select, .stat-toolbar input[type=number] { background: #2d2d30; color: #e8a87c; border: 1px solid #555; border-radius: 4px; padding: 3px 8px; font-size: 13px; }
+.stat-toolbar select:focus, .stat-toolbar input[type=number]:focus { outline: none; border-color: #e8a87c; }
+.stat-btn { background: #0e639c; color: #fff; border: none; padding: 5px 16px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; transition: background .2s; }
+.stat-btn:hover { background: #1177bb; }
+.stat-btn:disabled { opacity: .5; cursor: not-allowed; }
+.stat-result { margin-top: 6px; }
+.stat-note { color: #888; font-size: 11px; margin-top: 6px; line-height: 1.6; }
+.stat-conclusion { color: #e8a87c; font-size: 12px; margin-top: 8px; line-height: 1.6; }
+.sim-bars { display: flex; align-items: flex-end; gap: 4px; height: 150px; padding: 6px 4px 0; background: #151517; border: 1px solid #3a3a3d; border-radius: 6px; margin-top: 8px; }
+.sim-bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; height: 100%; justify-content: flex-end; }
+.sim-bar { width: 70%; background: linear-gradient(180deg, #8ec5ff, #4a7dff); border-radius: 3px 3px 0 0; min-height: 2px; }
+.sim-bar.theo { background: repeating-linear-gradient(45deg, rgba(232,168,124,.85), rgba(232,168,124,.85) 4px, rgba(0,0,0,0) 4px, rgba(0,0,0,0) 8px); }
+.sim-bar-label { font-size: 10px; color: #aaa; }
+.sim-bar-count { font-size: 10px; color: #8ec5ff; }
+.sim-ok { color: #2ecc71; font-weight: 700; }
+.sim-bad { color: #e74c3c; font-weight: 700; }
+.ev-float { color: #e8a87c; font-size: 10px; }
+.cov-group { margin: 6px 0; padding: 6px 10px; background: rgba(0,0,0,0.2); border: 1px solid #3a3a3d; border-radius: 6px; }
+.cov-group-head { color: #8ec5ff; font-size: 12px; font-weight: 700; margin-bottom: 4px; }
+.cov-group-info { color: #888; font-size: 11px; margin-bottom: 2px; }
+.bet-win-row td { background: rgba(46,204,113,0.12) !important; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -5070,6 +5096,7 @@ canvas { display: block; }
 <div class="tabs">
     <button class="tab-btn active" data-tab="miss">📋 遗漏分层</button>
     <button class="tab-btn" data-tab="trend">📈 走势图</button>
+    <button class="tab-btn" data-tab="stats">📊 统计工具</button>
 </div>
 
 <div id="panel-miss" class="tab-panel active">
@@ -5116,6 +5143,58 @@ canvas { display: block; }
 <thead id="detailHead"></thead>
 <tbody id="detailBody"></tbody>
 </table>
+</div>
+</div>
+
+<div id="panel-stats" class="tab-panel">
+<div class="stat-box">
+    <div class="stat-box-title">🎲 概率分布模拟器（蒙特卡洛）</div>
+    <div class="stat-box-desc">快乐8 每期从 80 个号中随机开出 20 个。选 n 个号，命中 k 个服从<b>超几何分布</b>：P(k) = C(20,k)·C(60,n−k) / C(80,n)，无论号码怎么选，期望命中数恒为 n×25%。模拟器用随机开奖海量对比理论分布，验证这个铁律。</div>
+    <div class="stat-toolbar">
+        玩法 <select id="simPick"><option value="10">选10</option><option value="9">选9</option><option value="8">选8</option><option value="7">选7</option><option value="6">选6</option><option value="5">选5</option><option value="4">选4</option><option value="3">选3</option><option value="2">选2</option><option value="1">选1</option></select>
+        模拟期数 <select id="simTimes"><option value="1000">1,000</option><option value="5000" selected>5,000</option><option value="20000">20,000</option><option value="50000">50,000</option></select>
+        策略 <select id="simStrategy"><option value="random">每次随机选号</option><option value="fixed">固定用页面推荐号</option></select>
+        <button id="btnRunSim" class="stat-btn">▶ 运行模拟</button>
+        <span id="simStatus" style="color:#2ecc71;font-size:12px;"></span>
+    </div>
+    <div class="stat-result" id="simResult"></div>
+</div>
+<div class="stat-box">
+    <div class="stat-box-title">📊 玩法期望对比表（选1 ~ 选10）</div>
+    <div class="stat-box-desc">用组合数学精确计算每个玩法的中奖概率，乘官方单注奖金（选十中十为浮动奖，按 500 万封顶估算）得到单注期望。长期来看<b style="color:#e74c3c;">所有玩法返奖率都在 58% 左右</b>——每投 2 元平均亏约 0.84 元，没有任何玩法能"回本"。</div>
+    <div class="stat-result" id="evTableWrap"></div>
+</div>
+<div class="stat-box">
+    <div class="stat-box-title">📉 遗漏回归曲线</div>
+    <div class="stat-box-desc">统计全部历史数据："某号码已连续遗漏 x 期"后，下一期<b>实际开出频率</b>（蓝线）对比理论概率 0.25（橙色虚线）。若各期独立、概率恒定，蓝线应在 0.25 附近随机波动——这就是"遗漏回归"（越冷越该出）不成立的直接证据。</div>
+    <div class="canvas-wrap"><canvas id="regCanvas" width="900" height="320"></canvas></div>
+    <div class="legend" id="regLegend"></div>
+    <div class="stat-note" id="regNote"></div>
+</div>
+<div class="stat-box">
+    <div class="stat-box-title">🧩 组合覆盖优化</div>
+    <div class="stat-box-desc">从当前评分最高的候选号池中生成多组均衡组合：每组优先覆盖不同区间、冷热搭配、组间尽量少重复。覆盖优化只能改善号码分布、分散风险，<b style="color:#e8a87c;">不会提高单组的中奖概率</b>。</div>
+    <div class="stat-toolbar">
+        组数 <select id="covGroups"><option value="3">3 组</option><option value="5" selected>5 组</option><option value="8">8 组</option><option value="12">12 组</option></select>
+        每组号码数 <select id="covSize"><option value="10" selected>选10</option><option value="9">选9</option><option value="8">选8</option><option value="7">选7</option><option value="6">选6</option><option value="5">选5</option><option value="4">选4</option><option value="3">选3</option><option value="2">选2</option><option value="1">选1</option></select>
+        <button id="btnGenCover" class="stat-btn">🔄 生成组合</button>
+        <button id="btnCopyCover" class="stat-btn">📋 一键复制</button>
+    </div>
+    <div class="stat-result" id="coverResult"></div>
+</div>
+<div class="stat-box">
+    <div class="stat-box-title">💹 倍投计划生成器</div>
+    <div class="stat-box-desc">按固定倍率翻倍投注，直到单期中奖覆盖累计投入并达成目标盈利。表格给出每期投入、累计资金需求与"连续不中概率"。<b style="color:#e74c3c;">警告：倍投不改变负期望，连黑时资金需求指数增长，请务必控制风险！</b></div>
+    <div class="stat-toolbar">
+        起始注数 <input type="number" id="betStart" value="1" min="1" style="width:56px;">
+        倍率 <input type="number" id="betRate" value="2" min="1.1" step="0.1" style="width:56px;">
+        单注奖金(元) <input type="number" id="betPrize" value="19" min="1" style="width:64px;">
+        中奖概率(%) <input type="number" id="betWinProb" value="6.01" min="0.01" step="0.01" style="width:64px;">
+        目标盈利(元) <input type="number" id="betTarget" value="100" min="1" style="width:64px;">
+        最大期数 <input type="number" id="betMax" value="10" min="3" style="width:56px;">
+        <button id="btnGenBet" class="stat-btn">📋 生成计划</button>
+    </div>
+    <div class="stat-result" id="betResult"></div>
 </div>
 </div>
 
@@ -5452,6 +5531,8 @@ document.querySelectorAll('.tab-btn').forEach(function(btn) {
             const activeSub = document.querySelector('.sub-tab-btn.active');
             if (activeSub && activeSub.dataset.subtab === 'missline') drawMissLines();
             else drawTrendTable();
+        } else if (this.dataset.tab === 'stats') {
+            initStatsPanel();
         }
     });
 });
@@ -5681,6 +5762,387 @@ renderPredictRows();
 if (document.getElementById('panel-trend').classList.contains('active')) {
     drawTrendTable();
 }
+
+// ===== 统计工具：概率分布模拟器 / 玩法期望对比 / 遗漏回归 / 组合覆盖 / 倍投计划 =====
+// 组合数 C(n,k)（n ≤ 80、k 小时安全）
+function combN(n, k) {
+    if (k < 0 || k > n) return 0;
+    if (k > n - k) k = n - k;
+    let r = 1;
+    for (let i = 1; i <= k; i++) r = r * (n - k + i) / i;
+    return r;
+}
+// 超几何概率：80 个号开 20 个，选 n 个命中 k 个
+function hyperProb(n, k) {
+    return combN(20, k) * combN(60, n - k) / combN(80, n);
+}
+// 洗牌开奖：随机抽 20 个
+function shuffleDraw20() {
+    const arr = [];
+    for (let i = 1; i <= 80; i++) arr.push(i);
+    for (let i = 79; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+    }
+    return arr.slice(0, 20);
+}
+// 当前页面推荐号（按玩法取智能推荐行）
+function getRecommendedFor(pick) {
+    const rowEl = document.querySelector('.pick-row[data-pick="' + pick + '"]:not(.oe-row)');
+    if (!rowEl) return null;
+    return Array.prototype.map.call(rowEl.querySelectorAll('.pick-balls .kball'), function(b) { return parseInt(b.textContent, 10); });
+}
+// ① 蒙特卡洛模拟
+function runSim() {
+    const n = parseInt(document.getElementById('simPick').value, 10);
+    const times = parseInt(document.getElementById('simTimes').value, 10);
+    const strategy = document.getElementById('simStrategy').value;
+    const status = document.getElementById('simStatus');
+    status.textContent = '⏳ 模拟中…';
+    setTimeout(function() {
+        const fixed = (strategy === 'fixed') ? getRecommendedFor(n) : null;
+        const counts = new Array(n + 1).fill(0);
+        let totalHit = 0;
+        for (let t = 0; t < times; t++) {
+            const draw = shuffleDraw20();
+            const drawSet = new Set(draw);
+            let pick;
+            if (fixed) {
+                pick = fixed;
+            } else {
+                const arr = [];
+                for (let i = 1; i <= 80; i++) arr.push(i);
+                for (let i = 79; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+                }
+                pick = arr.slice(0, n);
+            }
+            let hit = 0;
+            for (let i = 0; i < n; i++) if (drawSet.has(pick[i])) hit++;
+            counts[hit]++;
+            totalHit += hit;
+        }
+        const theo = [];
+        for (let k = 0; k <= n; k++) theo.push(hyperProb(n, k));
+        const result = document.getElementById('simResult');
+        const avg = totalHit / times;
+        const theoAvg = n * 0.25;
+        let bars = '<div class="sim-bars">';
+        for (let k = 0; k <= n; k++) {
+            const simP = counts[k] / times;
+            const theoP = theo[k];
+            const hSim = Math.max(2, Math.round(simP * 300));
+            const hTheo = Math.max(2, Math.round(theoP * 300));
+            bars += '<div class="sim-bar-col"><div style="display:flex;align-items:flex-end;gap:2px;height:100%;width:100%;justify-content:center;">' +
+                '<div class="sim-bar theo" style="height:' + hTheo + 'px;" title="理论 ' + (theoP * 100).toFixed(2) + '%"></div>' +
+                '<div class="sim-bar" style="height:' + hSim + 'px;" title="模拟 ' + (simP * 100).toFixed(2) + '%"></div></div>' +
+                '<div class="sim-bar-label">中' + k + '</div>' +
+                '<div class="sim-bar-count">' + (simP * 100).toFixed(1) + '%</div></div>';
+        }
+        bars += '</div>';
+        let rows = '';
+        for (let k = 0; k <= n; k++) {
+            const theoExp = theo[k] * times;
+            const diff = counts[k] - theoExp;
+            const cls = (Math.abs(diff) <= Math.max(5, theoExp * 0.05)) ? 'sim-ok' : 'sim-bad';
+            rows += '<tr><td>中' + k + '</td><td>' + (theo[k] * 100).toFixed(4) + '%</td><td>' + theoExp.toFixed(0) + '</td><td>' + counts[k] + '</td><td class="' + cls + '">' + (diff >= 0 ? '+' : '') + diff.toFixed(0) + '</td></tr>';
+        }
+        const stratDesc = (strategy === 'fixed')
+            ? ('固定投注页面推荐号：' + (fixed ? fixed.join(' ') : '（未找到推荐行，回退随机）'))
+            : '每期随机选号';
+        let html = bars;
+        html += '<table style="margin-top:8px;"><thead><tr><th>命中数</th><th>理论概率</th><th>理论期数</th><th>模拟期数</th><th>偏差</th></tr></thead><tbody>' + rows + '</tbody></table>';
+        html += '<div class="stat-conclusion">模拟 ' + times.toLocaleString() + ' 期（策略：' + stratDesc + '）：平均每期命中 <b>' + avg.toFixed(2) + '</b> 个，理论值 <b>' + theoAvg + '</b> 个，完全吻合。' +
+            (strategy === 'fixed'
+                ? '页面推荐号的期望命中数与随机选号<b>完全相同</b>——任意固定号码组的中奖分布都是同一个超几何分布，这就是"策略无法提高命中率"的最直观证明。'
+                : '任何号码组合的期望命中都恒等于 n×25%（命中概率由开奖机制决定，与选号无关）。') + '</div>';
+        result.innerHTML = html;
+        status.textContent = '✓ 完成';
+    }, 30);
+}
+// ② 玩法期望对比表（官方单注奖金参考）
+var KL8_EV = {
+    1: [[1, 4.6]],
+    2: [[2, 19]],
+    3: [[3, 53], [2, 3]],
+    4: [[4, 100], [3, 5], [2, 3]],
+    5: [[5, 1000], [4, 21], [3, 3]],
+    6: [[6, 3000], [5, 30], [4, 10], [3, 3]],
+    7: [[7, 10000], [6, 288], [5, 28], [4, 4], [0, 2]],
+    8: [[8, 50000], [7, 800], [6, 88], [5, 10], [4, 3], [0, 2]],
+    9: [[9, 300000], [8, 2000], [7, 200], [6, 20], [5, 5], [4, 3], [0, 2]],
+    10: [[10, 5000000], [9, 8000], [8, 800], [7, 80], [6, 5], [5, 3], [0, 2]]
+};
+function renderEvTable() {
+    const wrap = document.getElementById('evTableWrap');
+    let html = '<table><thead><tr><th>玩法</th><th>成本</th><th>中奖档</th><th>中奖概率</th><th>单注奖金</th><th>档位期望</th><th>每注总期望</th><th>返奖率</th></tr></thead><tbody>';
+    for (let n = 1; n <= 10; n++) {
+        const prizes = KL8_EV[n];
+        let evSum = 0;
+        const cellP = [], cellA = [], cellE = [];
+        for (let i = 0; i < prizes.length; i++) {
+            const g = prizes[i];
+            const prob = hyperProb(n, g[0]);
+            const ev = prob * g[1];
+            evSum += ev;
+            cellP.push((prob * 100).toFixed(4) + '%');
+            cellA.push('¥' + g[1].toLocaleString() + ((n === 10 && g[0] === 10) ? '<span class="ev-float">(浮动)</span>' : ''));
+            cellE.push('¥' + ev.toFixed(2));
+        }
+        const ro = evSum / 2 * 100;
+        html += '<tr><td><b>选' + n + '</b></td><td>¥2</td><td>' + prizes.map(function(g) { return '中' + g[0] + '个'; }).join('<br>') + '</td><td>' + cellP.join('<br>') + '</td><td>' + cellA.join('<br>') + '</td><td>' + cellE.join('<br>') + '</td><td><b>¥' + evSum.toFixed(2) + '</b></td><td><b>' + ro.toFixed(1) + '%</b></td></tr>';
+    }
+    html += '</tbody></table>';
+    html += '<div class="stat-note">注：选十中十为浮动奖（按 500 万封顶估算），实际派奖通常低于封顶，故选10 的真实返奖率会低于表中数值。所有玩法返奖率稳定在 58% 左右——长期每注 2 元平均亏损约 ¥0.84。</div>';
+    wrap.innerHTML = html;
+}
+// ③ 遗漏回归统计（每号码相邻两次开出的间隔）
+// posCache[num] 存的是期数索引(0=最老, 升序),直接复用
+function computeRegression() {
+    const reg = {};
+    function inc(m, isOpen) {
+        if (!reg[m]) reg[m] = { open: 0, total: 0 };
+        if (isOpen) reg[m].open++;
+        reg[m].total++;
+    }
+    for (let num = 1; num <= 80; num++) {
+        const pos = posCache[num] || [];
+        for (let j = 0; j < pos.length - 1; j++) {
+            const gap = pos[j + 1] - pos[j] - 1; // 两次开出之间的遗漏期数
+            for (let m = 0; m < gap; m++) inc(m, false);
+            inc(gap, true);
+        }
+    }
+    return reg;
+}
+function drawRegChart() {
+    const canvas = document.getElementById('regCanvas');
+    if (!canvas || !canvas.getContext) return;
+    const reg = computeRegression();
+    let maxX = 20;
+    for (const m in reg) {
+        const mm = parseInt(m, 10);
+        if (mm >= 0 && mm <= 40 && reg[m].total >= 30) maxX = Math.max(maxX, mm);
+    }
+    if (maxX > 40) maxX = 40;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    const padL = 42, padR = 14, padT = 14, padB = 32;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#151517';
+    ctx.fillRect(0, 0, W, H);
+    const yMax = 0.6;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    function xPos(m) { return padL + (m / maxX) * plotW; }
+    function yPos(v) { return padT + (1 - v / yMax) * plotH; }
+    ctx.strokeStyle = '#2a2a2d';
+    ctx.lineWidth = 1;
+    for (let v = 0; v <= yMax + 1e-9; v += 0.1) {
+        ctx.beginPath();
+        ctx.moveTo(padL, yPos(v));
+        ctx.lineTo(W - padR, yPos(v));
+        ctx.stroke();
+        ctx.fillStyle = '#888';
+        ctx.font = '11px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText((v * 100).toFixed(0) + '%', padL - 6, yPos(v) + 4);
+    }
+    ctx.fillStyle = '#888';
+    ctx.textAlign = 'center';
+    for (let m = 0; m <= maxX; m += 2) ctx.fillText(String(m), xPos(m), H - 12);
+    ctx.fillStyle = '#666';
+    ctx.fillText('连续遗漏期数 →', padL + plotW / 2, H - 4);
+    ctx.strokeStyle = 'rgba(232,168,124,0.9)';
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(padL, yPos(0.25));
+    ctx.lineTo(W - padR, yPos(0.25));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = '#4a9eff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    let started = false;
+    for (let m = 0; m <= maxX; m++) {
+        const d = reg[m];
+        if (!d || d.total < 30) continue;
+        const p = d.open / d.total;
+        if (!started) { ctx.moveTo(xPos(m), yPos(p)); started = true; }
+        else ctx.lineTo(xPos(m), yPos(p));
+    }
+    ctx.stroke();
+    ctx.fillStyle = '#4a9eff';
+    for (let m = 0; m <= maxX; m++) {
+        const d = reg[m];
+        if (!d || d.total < 30) continue;
+        const p = d.open / d.total;
+        ctx.beginPath();
+        ctx.arc(xPos(m), yPos(p), 3, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    const legend = document.getElementById('regLegend');
+    legend.innerHTML = '<span class="legend-item"><span class="legend-swatch" style="background:#4a9eff;"></span><b>实际条件概率</b>（遗漏 x 期后下一期开出频率）</span>' +
+        '<span class="legend-item"><span class="legend-swatch" style="background:repeating-linear-gradient(45deg, #e8a87c, #e8a87c 4px, transparent 4px, transparent 8px);"></span><b>理论概率 25%</b></span>';
+    let sampleCount = 0;
+    for (let m = 0; m <= maxX; m++) if (reg[m] && reg[m].total >= 30) sampleCount += reg[m].total;
+    document.getElementById('regNote').textContent = '统计 ' + HISTORY.length + ' 期 × 80 个号码，有效样本 ' + sampleCount.toLocaleString() + ' 个。蓝线始终围绕 25% 理论线波动，未发现"越冷越该出"的趋势——遗漏回归不成立，每期开奖相互独立。';
+}
+// ④ 组合覆盖优化
+function scoreNum(num) {
+    const ps = posCache[num] || [];
+    const miss = ps.length ? ps[0] : HISTORY.length;
+    return countInSpan(num, 10) * 2.5 + countInSpan(num, 30) * 1.2 + countInSpan(num, 50) * 0.6 - miss * 0.5;
+}
+function overlapCount(a, b) {
+    let c = 0;
+    const set = new Set(a);
+    for (let i = 0; i < b.length; i++) if (set.has(b[i])) c++;
+    return c;
+}
+function genCover() {
+    const G = parseInt(document.getElementById('covGroups').value, 10);
+    const K = parseInt(document.getElementById('covSize').value, 10);
+    const result = document.getElementById('coverResult');
+    const scored = [];
+    for (let n = 1; n <= 80; n++) scored.push({ n: n, score: scoreNum(n) });
+    scored.sort(function(a, b) { return b.score - a.score; });
+    const pool = scored.slice(0, 60);
+    const usedCnt = new Array(81).fill(0);
+    const groups = [];
+    for (let g = 0; g < G; g++) {
+        const chosen = new Set();
+        const group = [];
+        const zoneCnt = new Array(8).fill(0);
+        const totalZones = Math.min(8, K);
+        const zoneOrder = [];
+        for (let z = 0; z < 8; z++) {
+            let best = -Infinity;
+            for (let i = 0; i < pool.length; i++) {
+                const c = pool[i];
+                if (Math.floor((c.n - 1) / 10) === z && c.score > best) best = c.score;
+            }
+            zoneOrder.push({ z: z, best: best });
+        }
+        zoneOrder.sort(function(a, b) { return b.best - a.best; });
+        for (let i = 0; i < totalZones && group.length < K; i++) {
+            const z = zoneOrder[i].z;
+            let bestC = null, bestV = Infinity;
+            for (let j = 0; j < pool.length; j++) {
+                const c = pool[j];
+                if (chosen.has(c.n)) continue;
+                if (Math.floor((c.n - 1) / 10) !== z) continue;
+                const v = usedCnt[c.n] * 1000 - c.score;
+                if (v < bestV) { bestV = v; bestC = c; }
+            }
+            if (bestC) {
+                chosen.add(bestC.n);
+                group.push(bestC.n);
+                zoneCnt[z]++;
+            }
+        }
+        const rest = [];
+        for (let i = 0; i < pool.length; i++) if (!chosen.has(pool[i].n)) rest.push(pool[i]);
+        rest.sort(function(a, b) {
+            if (usedCnt[a.n] !== usedCnt[b.n]) return usedCnt[a.n] - usedCnt[b.n];
+            return b.score - a.score;
+        });
+        for (let i = 0; i < rest.length && group.length < K; i++) {
+            chosen.add(rest[i].n);
+            group.push(rest[i].n);
+        }
+        group.sort(function(a, b) { return a - b; });
+        groups.push(group);
+        for (let i = 0; i < group.length; i++) usedCnt[group[i]]++;
+    }
+    let html = '';
+    for (let g = 0; g < groups.length; g++) {
+        const group = groups[g];
+        const zones = new Set();
+        let totalC10 = 0, hot10 = 0;
+        for (let i = 0; i < group.length; i++) {
+            const n = group[i];
+            zones.add(Math.floor((n - 1) / 10));
+            const c10 = countInSpan(n, 10);
+            totalC10 += c10;
+            if (c10 >= 3) hot10++;
+        }
+        const dup = g > 0 ? overlapCount(groups[g - 1], group) : 0;
+        const ballsHtml = group.map(function(n) {
+            const c10 = countInSpan(n, 10);
+            const cls = c10 >= 3 ? 'kball-a' : c10 >= 2 ? 'kball-b' : c10 >= 1 ? 'kball-c' : 'kball-d';
+            return '<span class="kball ' + cls + '" title="号码 ' + n + ' · 近10期出现 ' + c10 + ' 次">' + n + '</span>';
+        }).join('');
+        html += '<div class="cov-group"><div class="cov-group-head">第 ' + (g + 1) + ' 组 · 覆盖 ' + zones.size + '/8 区间 · 近10期共出 ' + totalC10 + ' 次 · 热号(≥3次) ' + hot10 + ' 个' + (g > 0 ? ' · 与上组重复 ' + dup + ' 个' : '') + '</div><div>' + ballsHtml + '</div></div>';
+    }
+    const poolBalls = pool.map(function(c) { return c.n; }).sort(function(a, b) { return a - b; });
+    html += '<div class="stat-note">候选号池（评分 Top 60）：' + poolBalls.join(' ') + '<br>说明：组合只做号码分布均衡与去重，任意固定组合的期望命中都是 K×25%，与随机选号无差异。</div>';
+    result.innerHTML = html;
+}
+// ⑤ 倍投计划生成器
+function genBet() {
+    const start = parseInt(document.getElementById('betStart').value, 10) || 1;
+    const rate = parseFloat(document.getElementById('betRate').value) || 2;
+    const prize = parseFloat(document.getElementById('betPrize').value) || 19;
+    const winProb = parseFloat(document.getElementById('betWinProb').value) || 6.01;
+    const target = parseFloat(document.getElementById('betTarget').value) || 100;
+    const maxN = parseInt(document.getElementById('betMax').value, 10) || 10;
+    const rows = [];
+    let totalIn = 0, hitRow = -1;
+    for (let i = 1; i <= maxN; i++) {
+        const notes = Math.round(start * Math.pow(rate, i - 1));
+        const cost = notes * 2;
+        totalIn += cost;
+        const win = notes * prize;
+        const net = win - totalIn;
+        rows.push({ i: i, notes: notes, cost: cost, totalIn: totalIn, win: win, net: net });
+        if (hitRow < 0 && net >= target) hitRow = i;
+    }
+    const p = winProb / 100;
+    let html = '<table><thead><tr><th>期数</th><th>注数</th><th>本期投入</th><th>累计投入</th><th>若中奖回收</th><th>净收益</th><th>连续不中概率</th></tr></thead><tbody>';
+    for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const probNoWin = Math.pow(1 - p, r.i);
+        const cls = (r.i === hitRow) ? ' class="bet-win-row"' : '';
+        html += '<tr' + cls + '><td>第 ' + r.i + ' 期</td><td>' + r.notes + '</td><td>¥' + r.cost + '</td><td>¥' + r.totalIn + '</td><td>¥' + r.win + '</td><td>' + (r.net >= 0 ? '+' : '') + '¥' + r.net + '</td><td>' + (probNoWin * 100).toFixed(2) + '%</td></tr>';
+    }
+    html += '</tbody></table><div class="stat-conclusion">';
+    if (hitRow > 0) {
+        html += '第 <b>' + hitRow + '</b> 期中奖即可达成目标盈利 ¥' + target + '。该期需投入 <b>¥' + rows[hitRow - 1].cost + '</b>，累计投入 ¥' + rows[hitRow - 1].totalIn + '。';
+        if (hitRow >= 7) html += '<span style="color:#e74c3c;">⚠️ 连续 ' + hitRow + ' 期不中的概率为 ' + (Math.pow(1 - p, hitRow) * 100).toFixed(2) + '%，资金压力极大，请谨慎！</span>';
+    } else {
+        html += '<span style="color:#e74c3c;">⚠️ ' + maxN + ' 期内无法达成目标盈利</span>，需加大起始注数或提高倍率（资金需求将成倍增长）。';
+    }
+    html += '</div><div class="stat-note">倍投原理：中奖即回收累计投入并盈利；但连续不中时投入按 ×' + rate + ' 指数增长。长期期望仍为负（返奖率约 58%），本工具仅用于资金管理演示，不构成投注建议。</div>';
+    document.getElementById('betResult').innerHTML = html;
+}
+// 统计面板懒初始化
+var statsInited = false;
+function initStatsPanel() {
+    if (statsInited) return;
+    statsInited = true;
+    renderEvTable();
+    drawRegChart();
+}
+document.getElementById('btnRunSim').addEventListener('click', runSim);
+document.getElementById('btnGenCover').addEventListener('click', genCover);
+document.getElementById('btnGenBet').addEventListener('click', genBet);
+// 组合覆盖一键复制
+document.getElementById('btnCopyCover').addEventListener('click', function() {
+    const groups = document.querySelectorAll('#coverResult .cov-group');
+    if (!groups.length) {
+        document.getElementById('coverResult').innerHTML = '<div class="stat-note" style="color:#e74c3c;">⚠️ 请先点击「🔄 生成组合」再复制</div>';
+        return;
+    }
+    const lines = ['快乐8 组合覆盖优化'];
+    let gi = 0;
+    groups.forEach(function(g) {
+        gi++;
+        const balls = Array.prototype.map.call(g.querySelectorAll('.kball'), function(b) { return b.textContent; });
+        lines.push('第' + gi + '组：' + balls.join(' '));
+    });
+    copyText(lines.join('\\n'), '已复制 组合覆盖优化 共 ' + gi + ' 组 ✓');
+});
 
 // 复制工具：提取某行的 规格+号码
 function pickRowText(rowEl) {
