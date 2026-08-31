@@ -4704,27 +4704,49 @@ function getKl8MissHtml(history) {
     }
 
     // ===== 智能推荐：选10 ~ 选1 =====
-    // 综合评分：近期活跃度（count10 权重最高）＋中期活跃度 ＋ 遗漏回补
-    // score = count10*3 + count30*1.5 + count50*0.8 - miss*0.3
-    // 遗漏适中的活跃号码得分最高；选10 取前10名，选9 取前9名，依此类推
+    // 策略：区间均衡覆盖 + 冷热搭配（避免号码扎堆在少数区间）
+    // 评分 = 近期活跃度（近10期最重）＋中期活跃度 － 当前遗漏惩罚（给冷号回补机会）
+    // score = count10*2.5 + count30*1.2 + count50*0.6 - miss*0.5
+    // 选号时先按 8 个区间(1-10…71-80)各覆盖 1 个，剩余名额再按评分补足
     const scored = [];
     for (let n = 1; n <= 80; n++) {
         const s = missStats[n];
-        const score = s.count10 * 3 + s.count30 * 1.5 + s.count50 * 0.8 - s.miss * 0.3;
+        const score = s.count10 * 2.5 + s.count30 * 1.2 + s.count50 * 0.6 - s.miss * 0.5;
         scored.push({ n, score, miss: s.miss, count10: s.count10, count30: s.count30 });
     }
     scored.sort((a, b) => b.score - a.score);
 
+    // 8 个区间（每 10 个号一组）各自按评分排序，作为均衡覆盖的候选
+    const zoneCands = [];
+    for (let z = 0; z < 8; z++) {
+        zoneCands.push(scored.filter(x => x.n >= z * 10 + 1 && x.n <= z * 10 + 10));
+    }
+    const zoneOrder = zoneCands.map((zs, z) => ({ z, best: zs[0].score })).sort((a, b) => b.best - a.best);
+
     let pickRows = '';
     for (let pick = 10; pick >= 1; pick--) {
-        const list = scored.slice(0, pick);
+        const selected = new Set();
+        const list = [];
+        // 阶段1：按区间最优分从高到低，每区间取 1 个（最多覆盖 8 个区间，不超过 pick）
+        const k = Math.min(8, pick);
+        for (let i = 0; i < k; i++) {
+            const z = zoneOrder[i].z;
+            const cand = zoneCands[z].find(x => !selected.has(x.n));
+            if (cand) { selected.add(cand.n); list.push(cand); }
+        }
+        // 阶段2：剩余名额按全局评分补足
+        for (const x of scored) {
+            if (list.length >= pick) break;
+            if (!selected.has(x.n)) { selected.add(x.n); list.push(x); }
+        }
         list.sort((a, b) => a.n - b.n); // 显示按号码从小到大排序
         const balls = list.map(x => {
             const cls = x.n <= 10 ? 'kball-a' : x.n <= 20 ? 'kball-b' : x.n <= 30 ? 'kball-c' : x.n <= 40 ? 'kball-d' : x.n <= 50 ? 'kball-e' : x.n <= 60 ? 'kball-f' : x.n <= 70 ? 'kball-g' : 'kball-h';
             return '<span class="kball ' + cls + '" title="号码 ' + x.n + ' · 当前遗漏 ' + x.miss + ' 期 · 近10期出 ' + x.count10 + ' 次 · 近30期出 ' + x.count30 + ' 次">' + x.n + '</span>';
         }).join('');
+        const zonesCovered = new Set(list.map(x => Math.floor((x.n - 1) / 10))).size;
         const hotInfo = list.length > 0
-            ? '（近10期出现率 ' + (list.reduce((a, x) => a + x.count10, 0) / (pick * Math.min(total, 10)) * 100).toFixed(0) + '%）'
+            ? '覆盖 ' + zonesCovered + '/8 区间 · 近10期出现率 ' + (list.reduce((a, x) => a + x.count10, 0) / (pick * Math.min(total, 10)) * 100).toFixed(0) + '%'
             : '';
         pickRows += '<div class="pick-row" data-pick="' + pick + '">' +
             '<div class="pick-label">选<span class="pick-num">' + pick + '</span></div>' +
@@ -4963,7 +4985,7 @@ canvas { display: block; }
         <span class="pick-multiplier">倍数 <select id="pickMultiplier"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="5">5</option><option value="10">10</option><option value="20">20</option><option value="50">50</option><option value="100">100</option></select> 倍</span>
         <button id="btnCopyPick" class="pick-copy-btn">📋 一键复制</button>
     </div>
-    <div class="pick-box-desc">按近期活跃度综合评分排序：近10期出现次数(权重最高)＋近30期＋近50期，减去当前遗漏惩罚。选10 取前10名，选9 取前9名……选1 取第1名。悬停号码球可查看详细统计。</div>
+    <div class="pick-box-desc">按近期活跃度综合评分（近10期最重），并强制 8 个区间(1-10…71-80)均衡覆盖、冷热搭配，避免号码扎堆在少数区间。选10 取前10名，选9 取前9名……选1 取第1名。悬停号码球可查看详细统计。<b style="color:#e8a87c;">注意：快乐8 每期独立随机开奖，任何推荐都无法保证命中，单号期望命中约 25%。</b></div>
     ${pickRows}
 </div>
 <div class="section-title">🌡️ 号码分层汇总</div>
