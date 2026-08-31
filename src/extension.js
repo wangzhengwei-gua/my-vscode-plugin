@@ -4756,6 +4756,79 @@ function getKl8MissHtml(history) {
             '</div>';
     }
 
+    // ===== 奇偶概率统计 + 奇偶智能推荐（选10 ~ 选1）=====
+    // 统计近30期/近100期/全部开奖中奇数与偶数的出现次数与占比（理论各 50%）
+    const oe30 = { odd: 0, even: 0 }, oe100 = { odd: 0, even: 0 }, oeAll = { odd: 0, even: 0 };
+    for (let i = 0; i < history.length; i++) {
+        let o = 0, e = 0;
+        for (const n of history[i].num) { if (n % 2 === 1) o++; else e++; }
+        oeAll.odd += o; oeAll.even += e;
+        if (i < 100) { oe100.odd += o; oe100.even += e; }
+        if (i < 30) { oe30.odd += o; oe30.even += e; }
+    }
+    const oeRow = (label, cnt, obj) => {
+        const totalN = obj.odd + obj.even;
+        const op = (obj.odd / totalN * 100).toFixed(1);
+        const ep = (obj.even / totalN * 100).toFixed(1);
+        return '<tr><td>' + label + '</td><td>' + cnt + ' 期</td>' +
+            '<td class="odd-cell">' + obj.odd + ' 次</td><td class="odd-cell">' + op + '%</td>' +
+            '<td class="even-cell">' + obj.even + ' 次</td><td class="even-cell">' + ep + '%</td>' +
+            '<td>' + (obj.odd / obj.even).toFixed(2) + ' : 1</td></tr>';
+    };
+    const oeStatsHtml = '<table class="oe-table">' +
+        '<thead><tr><th>统计范围</th><th>样本期数</th><th>奇数开出次数</th><th>奇数占比</th><th>偶数开出次数</th><th>偶数占比</th><th>奇/偶比</th></tr></thead>' +
+        '<tbody>' +
+        oeRow('近30期', Math.min(total, 30), oe30) +
+        oeRow('近100期', Math.min(total, 100), oe100) +
+        oeRow('全部', total, oeAll) +
+        '<tr><td colspan="7" style="color:#888;text-align:left;">每期开出 20 个号，理论奇偶各 10 个（50% : 50%）。奇偶推荐在各自 40 个号码池内按活跃度评分并均衡覆盖 8 个区间，仅供参考。</td></tr>' +
+        '</tbody></table>';
+
+    // 奇/偶号码池：按活跃度评分降序
+    const oddScored = [], evenScored = [];
+    for (let n = 1; n <= 80; n++) {
+        const s = missStats[n];
+        const item = { n, score: s.count10 * 2.5 + s.count30 * 1.2 + s.count50 * 0.6 - s.miss * 0.5, miss: s.miss, count10: s.count10, count30: s.count30 };
+        if (n % 2 === 1) oddScored.push(item); else evenScored.push(item);
+    }
+    oddScored.sort((a, b) => b.score - a.score);
+    evenScored.sort((a, b) => b.score - a.score);
+
+    // 奇/偶池内均衡覆盖（每个 10 分区一组，各自 5 个号）
+    const genOeRows = (pool, oeTag) => {
+        const zones = [];
+        for (let z = 0; z < 8; z++) zones.push(pool.filter(x => Math.floor((x.n - 1) / 10) === z));
+        const zoneOrder = zones.map((zs, z) => ({ z, best: zs[0].score })).sort((a, b) => b.best - a.best);
+        let rows = '';
+        for (let pick = 10; pick >= 1; pick--) {
+            const selected = new Set();
+            const list = [];
+            const k = Math.min(8, pick);
+            for (let i = 0; i < k; i++) {
+                const z = zoneOrder[i].z;
+                const cand = zones[z].find(x => !selected.has(x.n));
+                if (cand) { selected.add(cand.n); list.push(cand); }
+            }
+            for (const x of pool) {
+                if (list.length >= pick) break;
+                if (!selected.has(x.n)) { selected.add(x.n); list.push(x); }
+            }
+            list.sort((a, b) => a.n - b.n);
+            const balls = list.map(x => {
+                const cls = x.n <= 10 ? 'kball-a' : x.n <= 20 ? 'kball-b' : x.n <= 30 ? 'kball-c' : x.n <= 40 ? 'kball-d' : x.n <= 50 ? 'kball-e' : x.n <= 60 ? 'kball-f' : x.n <= 70 ? 'kball-g' : 'kball-h';
+                return '<span class="kball ' + cls + '" title="号码 ' + x.n + ' · 当前遗漏 ' + x.miss + ' 期 · 近10期出 ' + x.count10 + ' 次 · 近30期出 ' + x.count30 + ' 次">' + x.n + '</span>';
+            }).join('');
+            rows += '<div class="pick-row oe-row" data-oe="' + oeTag + '" data-pick="' + pick + '">' +
+                '<div class="pick-label">选<span class="pick-num">' + pick + '</span></div>' +
+                '<div class="pick-balls">' + (balls || '<span style="color:#555">无</span>') + '</div>' +
+                '<button class="pick-copy-btn" data-pick-copy="' + pick + '" title="复制 选' + pick + ' 的号码">📋 复制</button>' +
+                '</div>';
+        }
+        return rows;
+    };
+    const oddPickRows = genOeRows(oddScored, 'odd');
+    const evenPickRows = genOeRows(evenScored, 'even');
+
     // 明细表（按当前遗漏排序）
     const detailRows = [];
     for (let n = 1; n <= 80; n++) {
@@ -4860,6 +4933,17 @@ th { background: #2d2d30; color: #e8a87c; font-size: 13px; position: sticky; top
 .pick-box { background: rgba(232,168,124,0.07); border: 1px solid rgba(232,168,124,0.35); border-radius: 8px; padding: 12px 14px; margin-bottom: 18px; }
 .pick-box-title { color: #e8a87c; font-size: 15px; font-weight: 700; margin-bottom: 4px; }
 .pick-box-desc { color: #999; font-size: 11px; margin-bottom: 10px; }
+/* 奇偶智能推荐 */
+.oe-pick-box { border-color: rgba(142,197,255,0.4); background: rgba(142,197,255,0.05); }
+.oe-subtitle { display: flex; align-items: center; gap: 8px; color: #bbb; font-size: 13px; font-weight: 700; margin: 14px 0 4px; padding-top: 10px; border-top: 1px dashed #3a3a3d; }
+.oe-badge { border-radius: 10px; padding: 1px 10px; font-size: 12px; font-weight: 700; }
+.oe-badge.odd { background: #e8a87c; color: #1e1e1e; }
+.oe-badge.even { background: #8ec5ff; color: #10253b; }
+.oe-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 12px; }
+.oe-table th, .oe-table td { border: 1px solid #3a3a3d; padding: 4px 8px; text-align: center; }
+.oe-table th { background: rgba(142,197,255,0.12); color: #8ec5ff; }
+.oe-table .odd-cell { color: #e8a87c; font-weight: 700; }
+.oe-table .even-cell { color: #8ec5ff; font-weight: 700; }
 .pick-row { display: flex; align-items: center; gap: 12px; padding: 6px 0; border-bottom: 1px solid #2a2a2d; }
 .pick-row:last-child { border-bottom: none; }
 .pick-label { min-width: 42px; text-align: center; font-weight: 700; color: #e8a87c; font-size: 14px; background: rgba(232,168,124,0.12); border: 1px solid rgba(232,168,124,0.3); border-radius: 5px; padding: 3px 0; }
@@ -4987,6 +5071,18 @@ canvas { display: block; }
     </div>
     <div class="pick-box-desc">按近期活跃度综合评分（近10期最重），并强制 8 个区间(1-10…71-80)均衡覆盖、冷热搭配，避免号码扎堆在少数区间。选10 取前10名，选9 取前9名……选1 取第1名。悬停号码球可查看详细统计。<b style="color:#e8a87c;">注意：快乐8 每期独立随机开奖，任何推荐都无法保证命中，单号期望命中约 25%。</b></div>
     ${pickRows}
+</div>
+<div class="pick-box oe-pick-box">
+    <div class="pick-box-title">🀄 奇偶智能推荐（选10 ~ 选1）
+        <span class="pick-multiplier">倍数 <select id="pickOeMultiplier"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="5">5</option><option value="10">10</option><option value="20">20</option><option value="50">50</option><option value="100">100</option></select> 倍</span>
+        <button id="btnCopyOePick" class="pick-copy-btn">📋 一键复制</button>
+    </div>
+    <div class="pick-box-desc">将 80 个号码分为奇数池（40个）与偶数池（40个），先统计奇偶开出概率，再在各自号码池内按活跃度评分推荐（均衡覆盖 8 个区间）。<b style="color:#e8a87c;">注意：快乐8 每期独立随机开奖，奇偶理论各占 50%，推荐仅供参考。</b></div>
+    ${oeStatsHtml}
+    <div class="oe-subtitle"><span class="oe-badge odd">奇数池 40个</span> 奇数推荐（1,3,5…79）</div>
+    ${oddPickRows}
+    <div class="oe-subtitle"><span class="oe-badge even">偶数池 40个</span> 偶数推荐（2,4,6…80）</div>
+    ${evenPickRows}
 </div>
 <div class="section-title">🌡️ 号码分层汇总</div>
 <div class="layer-summary">${layerSummary}</div>
@@ -5589,11 +5685,31 @@ document.getElementById('btnCopyPick').addEventListener('click', function() {
     const multEl = document.getElementById('pickMultiplier');
     const mult = multEl ? multEl.value : '1';
     const lines = ['快乐8 智能推荐（全部' + mult + '倍）'];
-    document.querySelectorAll('.pick-row').forEach(function(rowEl) {
+    document.querySelectorAll('.pick-row:not(.oe-row)').forEach(function(rowEl) {
         lines.push(pickRowText(rowEl));
     });
     copyText(lines.join('\\n'), '已复制 选10~选1 全部推荐（' + mult + '倍）✓');
     const btn = document.getElementById('btnCopyPick');
+    btn.classList.add('copied');
+    setTimeout(function() { btn.classList.remove('copied'); }, 2000);
+});
+
+// 一键复制奇偶智能推荐（奇数选10~选1 + 偶数选10~选1）
+document.getElementById('btnCopyOePick').addEventListener('click', function() {
+    const multEl = document.getElementById('pickOeMultiplier');
+    const mult = multEl ? multEl.value : '1';
+    const oddLines = [];
+    const evenLines = [];
+    document.querySelectorAll('.oe-row').forEach(function(rowEl) {
+        (rowEl.dataset.oe === 'odd' ? oddLines : evenLines).push(pickRowText(rowEl));
+    });
+    const lines = ['快乐8 奇偶智能推荐（全部' + mult + '倍）'];
+    lines.push('【奇数】');
+    oddLines.forEach(function(l) { lines.push(l); });
+    lines.push('【偶数】');
+    evenLines.forEach(function(l) { lines.push(l); });
+    copyText(lines.join('\\n'), '已复制 奇偶推荐全部（' + mult + '倍）✓');
+    const btn = document.getElementById('btnCopyOePick');
     btn.classList.add('copied');
     setTimeout(function() { btn.classList.remove('copied'); }, 2000);
 });
