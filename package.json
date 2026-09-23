@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.8.34",
+    "version": "0.8.44",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -42,6 +42,7 @@
         "onCommand:myPlugin.drawMachine",
         "onCommand:myPlugin.kl8Miss",
         "onCommand:myPlugin.dltMiss",
+        "onCommand:myPlugin.dltZone",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -141,6 +142,10 @@
             {
                 "command": "myPlugin.dltMiss",
                 "title": "大乐透遗漏分层"
+            },
+            {
+                "command": "myPlugin.dltZone",
+                "title": "大乐透分区统计"
             }
         ],
         "viewsContainers": {

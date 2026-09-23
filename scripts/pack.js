@@ -35,6 +35,19 @@ console.log('打包中...');
 console.log('  插件:', displayName, 'v' + version);
 console.log('  发布者:', publisher);
 
+// 打包前强制检查内联 JS 语法
+// 背景：页面 HTML/JS 内联在模板字符串中，若误写单反斜杠转义（如 \n 而非 \\n），
+// 求值后会变成真实控制字符，导致生成的 <script> 语法错误、页面所有交互失效。
+// node --check src/extension.js 检查不到这类问题。
+try {
+    execSync(`node "${path.join(__dirname, 'check-inline-js.js')}"`, { stdio: 'inherit' });
+} catch (e) {
+    console.error('');
+    console.error('❌ 内联 JS 语法检查未通过，已中止打包。请修复上述问题后重试。');
+    process.exit(1);
+}
+console.log('');
+
 // 创建临时目录
 const tmpDir = path.join(PROJECT_DIR, '_vsix_tmp');
 if (fs.existsSync(tmpDir)) {
