@@ -82,6 +82,179 @@ function savePredictions(predictions) {
     }
 }
 
+/* ==================== 大乐透「选号 / 杀号」方案记录 ==================== */
+
+/**
+ * 选号杀号记录 <b>索引</b>文件路径（与预测记录同目录：globalStoragePath，跨工程共享、升级不丢失）
+ * 说明：方案以 Markdown 文件（dltPickKill.md）为主要保存形式，本 json 仅用于页面列表的增删查索引。
+ * @returns {string}
+ */
+function getPickKillFile() {
+    return path.join(getPredDir(), 'dltPickKill.index.json');
+}
+
+/**
+ * 选号杀号记录 Markdown 文件路径（用户可直接打开查看 / 复制到自己的笔记）
+ * @returns {string}
+ */
+function getPickKillMdFile() {
+    return path.join(getPredDir(), 'dltPickKill.md');
+}
+
+/**
+ * 读取选号杀号记录
+ * @returns {Array<Object>} 记录列表（最新在前）
+ */
+function loadPickKill() {
+    try {
+        const file = getPickKillFile();
+        if (!fs.existsSync(file)) {
+            // 兼容早期版本（v0.8.45 初版）的 dltPickKill.json
+            const old = path.join(getPredDir(), 'dltPickKill.json');
+            if (fs.existsSync(old)) {
+                const oldJson = JSON.parse(fs.readFileSync(old, 'utf-8'));
+                const oldList = Array.isArray(oldJson) ? oldJson : (oldJson && oldJson.records) || [];
+                if (oldList.length) savePickKill(oldList);
+                return oldList;
+            }
+            return [];
+        }
+        const raw = fs.readFileSync(file, 'utf-8');
+        const json = JSON.parse(raw);
+        const list = Array.isArray(json) ? json : (json && json.records) || [];
+        return list;
+    } catch (e) {
+        console.error('读取选号杀号记录失败:', e.message);
+        return [];
+    }
+}
+
+/**
+ * 号码数组格式化为两位字符串（用于 Markdown）
+ * @param {Array<number>} arr
+ * @returns {string}
+ */
+function fmtPickKillNums(arr) {
+    const list = arr || [];
+    if (!list.length) return '—';
+    return list.map(n => (Number(n) < 10 ? '0' : '') + Number(n)).join(' ');
+}
+
+/**
+ * 把方案记录渲染成 Markdown 文本（总览表 + 逐条明细）
+ * @param {Array<Object>} list - 记录列表（最新在前）
+ * @returns {string}
+ */
+function renderPickKillMd(list) {
+    const L = [];
+    const nowTxt = new Date().toLocaleString('zh-CN');
+    L.push('# 大乐透 选号 / 杀号 方案记录');
+    L.push('');
+    L.push('> 共 ' + list.length + ' 条 · 最近更新：' + nowTxt);
+    L.push('');
+    if (!list.length) {
+        L.push('（暂无记录）');
+        L.push('');
+        return L.join('\n');
+    }
+    // 每条记录的分行格式与页面「复制当前方案」保持一致，方便对照
+    list.forEach(function (r, i) {
+        const tm = r.savedAt ? new Date(r.savedAt).toLocaleString('zh-CN') : '—';
+        const p = pickKillParts(r);
+        L.push('### ' + (i + 1) + '. ' + tm + ' · 基于 ' + (r.basePeriod || '—') + ' 期');
+        L.push('');
+        L.push('- 🟢 前区选号（胆码，' + p.fp.length + ' 个）：' + fmtPickKillNums(r.frontPick));
+        L.push('- 🔴 前区杀号（' + p.fk.length + ' 个）：' + fmtPickKillNums(r.frontKill));
+        L.push('- 🟢 后区选号（胆码，' + p.bp.length + ' 个）：' + fmtPickKillNums(r.backPick));
+        L.push('- 🔴 后区杀号（' + p.bk.length + ' 个）：' + fmtPickKillNums(r.backKill));
+        L.push('- ⚪ 前区剩余可用池（' + p.fPool.length + ' 个）：' + fmtPickKillNums(p.fPool));
+        L.push('- ⚪ 后区剩余可用池（' + p.bPool.length + ' 个）：' + fmtPickKillNums(p.bPool));
+        L.push('- ' + pickKillBetLine(p, true));
+        L.push('- 📝 备注：' + (r.note || '—'));
+        L.push('');
+    });
+    L.push('---');
+    L.push('');
+    L.push('> ⚠️ 大乐透每期独立随机开奖，选号 / 杀号没有任何预测效力，本文件仅用于记录与复盘。');
+    L.push('');
+    return L.join('\n');
+}
+
+/**
+ * 由一条记录推导剩余池与复式注数
+ * @param {Object} r - 记录
+ * @returns {Object} { fp, fk, bp, bk, fPool, bPool, bets }
+ */
+function pickKillParts(r) {
+    const fp = r.frontPick || [], fk = r.frontKill || [], bp = r.backPick || [], bk = r.backKill || [];
+    const fPool = [], bPool = [];
+    for (let i = 1; i <= 35; i++) if (fp.indexOf(i) < 0 && fk.indexOf(i) < 0) fPool.push(i);
+    for (let i = 1; i <= 12; i++) if (bp.indexOf(i) < 0 && bk.indexOf(i) < 0) bPool.push(i);
+    return { fp, fk, bp, bk, fPool, bPool, bets: pkComb(fp.length, 5) * pkComb(bp.length, 2) };
+}
+
+/**
+ * 组合数 C(n,k)
+ */
+function pkComb(n, k) {
+    if (k < 0 || k > n) return 0;
+    if (k === 0 || k === n) return 1;
+    if (k > n - k) k = n - k;
+    let r = 1;
+    for (let i = 0; i < k; i++) r = r * (n - i) / (i + 1);
+    return r;
+}
+
+/**
+ * 千分位格式化
+ */
+function pkNum(x) {
+    const s = String(Math.round(x));
+    let out = '';
+    for (let i = 0; i < s.length; i++) {
+        if (i > 0 && (s.length - i) % 3 === 0) out += ',';
+        out += s.charAt(i);
+    }
+    return out;
+}
+
+/**
+ * 复式投注说明行：C(前区选号数,5) × C(后区选号数,2)
+ * @param {Object} p - pickKillParts 的结果
+ * @param {boolean} isMd - 是否加粗（Markdown）
+ */
+function pickKillBetLine(p, isMd) {
+    if (p.fp.length >= 5 && p.bp.length >= 2) {
+        const n = isMd ? '**' + pkNum(p.bets) + '**' : pkNum(p.bets);
+        return '💰 复式投注（前区 ' + p.fp.length + ' + 后区 ' + p.bp.length + '）：' + n + ' 注（约 ' + pkNum(p.bets * 2) + ' 元，2 元/注）';
+    }
+    return '💰 复式投注：—（前区选号需 ≥5 个、后区选号需 ≥2 个）';
+}
+
+/**
+ * 保存选号杀号记录：写 json 索引 + 同步生成 Markdown 文件
+ * @param {Array<Object>} list - 记录列表
+ */
+function savePickKill(list) {
+    const dir = getPredDir();
+    if (!fs.existsSync(dir)) {
+        try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { /* ignore */ }
+    }
+    try {
+        const file = getPickKillFile();
+        fs.writeFileSync(file, JSON.stringify({ version: 1, records: list }, null, 2), 'utf-8');
+    } catch (e) {
+        console.error('保存选号杀号索引失败:', e.message);
+    }
+    try {
+        const mdFile = getPickKillMdFile();
+        fs.writeFileSync(mdFile, renderPickKillMd(list), 'utf-8');
+        console.log('选号杀号方案已保存为 Markdown:', mdFile);
+    } catch (e) {
+        console.error('保存选号杀号 Markdown 失败:', e.message);
+    }
+}
+
 /**
  * 判断一条预测记录是否中奖（仅判断"位置全中"，即直选）
  * @param {Object} pred - 预测记录 {type, targetPeriod, picks, note}
@@ -954,6 +1127,174 @@ function activate(context) {
         panel.webview.html = getDltZoneHtml(rows);
     });
     context.subscriptions.push(dltZoneDisposable);
+
+    // 号码排序工具（粘贴任意分隔的号码 → 升序/降序排列，可去重、补零、复制）
+    let sortNumbersDisposable = vscode.commands.registerCommand('myPlugin.sortNumbers', async () => {
+        const panel = vscode.window.createWebviewPanel(
+            'sortNumbers',
+            '号码排序',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getSortNumbersHtml();
+
+        // 兜底复制：webview 内 navigator.clipboard 受限时回传给扩展写入剪贴板
+        panel.webview.onDidReceiveMessage(async (msg) => {
+            if (msg.command === 'copyText') {
+                try {
+                    await vscode.env.clipboard.writeText(msg.text);
+                    panel.webview.postMessage({ command: 'copyOk' });
+                } catch (e) {
+                    panel.webview.postMessage({ command: 'copyFail' });
+                }
+            }
+        });
+    });
+    context.subscriptions.push(sortNumbersDisposable);
+
+    // 热号统计（大乐透 / 双色球 / 快乐8 / 排列三 / 排列五 / 福彩3D，页面内可选 10~50 期）
+    let hotNumbersDisposable = vscode.commands.registerCommand('myPlugin.hotNumbers', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎲 大乐透', value: 'dlt', description: '前区 1-35 / 后区 1-12' },
+                { label: '🔴 双色球', value: 'ssq', description: '红球 1-33 / 蓝球 1-16' },
+                { label: '🎱 快乐8', value: 'kl8', description: '每期从 1-80 中开 20 个' },
+                { label: '🎯 排列三', value: 'pl3', description: '百/十/个 位 0-9' },
+                { label: '🎰 排列五', value: 'pl5', description: '万/千/百/十/个 位 0-9' },
+                { label: '🎁 福彩3D', value: 'fc3d', description: '百/十/个 位 0-9' }
+            ],
+            { placeHolder: '选择要统计热号的彩种' }
+        );
+        if (!pick) return;
+
+        const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+        if (!cfg) return;
+
+        let history;
+        try {
+            history = loadLotteryData(cfg);
+            if (history.length === 0) {
+                vscode.window.showWarningMessage(cfg.name + '数据为空，请先刷新数据');
+                return;
+            }
+        } catch (e) {
+            const choice = vscode.window.showInformationMessage(
+                '📊 还没有' + cfg.name + '数据，需要先爬取数据。是否立即爬取？',
+                '立即爬取', '稍后再说'
+            );
+            choice.then(btn => {
+                if (btn === '立即爬取') {
+                    vscode.commands.executeCommand('myPlugin.refreshData');
+                }
+            });
+            return;
+        }
+
+        // 页面最多需要 50 期（下拉最大档）；loadLotteryData 返回旧→新，取最后若干期再反转为新→旧
+        const N = Math.min(50, history.length);
+        const rows = history.slice(-N).slice().reverse();
+
+        const panel = vscode.window.createWebviewPanel(
+            'hotNumbers',
+            cfg.name + ' 热号统计',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getHotNumbersHtml(cfg, rows);
+    });
+    context.subscriptions.push(hotNumbersDisposable);
+
+    // 大乐透选号 / 杀号（可视化选号盘 + 方案持久化记录）
+    let dltPickKillDisposable = vscode.commands.registerCommand('myPlugin.dltPickKill', async () => {
+        let history = [];
+        try {
+            const cfg = LOTTERY_TYPES.find(c => c.key === 'dlt');
+            if (cfg) history = loadLotteryData(cfg);
+        } catch (e) {
+            history = [];
+        }
+        if (history.length === 0) {
+            const choice = vscode.window.showInformationMessage(
+                '🎯 还没有大乐透数据，需要先爬取数据。是否立即爬取？',
+                '立即爬取', '仍继续（不做历史校验）'
+            );
+            const btn = await choice;
+            if (btn === '立即爬取') {
+                vscode.commands.executeCommand('myPlugin.refreshData');
+                return;
+            }
+        }
+
+        // 新→旧（最新期在最前），页面最多用到最近 300 期做校验
+        const rows = history.slice().reverse().slice(0, 300);
+        const records = loadPickKill();
+
+        const panel = vscode.window.createWebviewPanel(
+            'dltPickKill',
+            '大乐透 选号 / 杀号',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getDltPickKillHtml(rows, records, getPickKillMdFile());
+
+        panel.webview.onDidReceiveMessage(async (msg) => {
+            if (!msg || !msg.command) return;
+            if (msg.command === 'copy') {
+                await vscode.env.clipboard.writeText(String(msg.text || ''));
+                panel.webview.postMessage({ command: 'copySuccess' });
+                return;
+            }
+            if (msg.command === 'saveRecord') {
+                const list = loadPickKill();
+                const rec = msg.record || {};
+                rec.id = rec.id || ('r' + Date.now() + Math.floor(Math.random() * 1000));
+                rec.savedAt = rec.savedAt || new Date().toISOString();
+                list.unshift(rec);
+                savePickKill(list);
+                panel.webview.postMessage({ command: 'records', data: loadPickKill() });
+                panel.webview.postMessage({ command: 'toast', text: '✅ 方案已保存（Markdown 已更新）' });
+                return;
+            }
+            if (msg.command === 'deleteRecord') {
+                const list = loadPickKill().filter(r => r.id !== msg.id);
+                savePickKill(list);
+                panel.webview.postMessage({ command: 'records', data: loadPickKill() });
+                panel.webview.postMessage({ command: 'toast', text: '🗑 已删除该方案' });
+                return;
+            }
+            if (msg.command === 'clearRecords') {
+                savePickKill([]);
+                panel.webview.postMessage({ command: 'records', data: [] });
+                panel.webview.postMessage({ command: 'toast', text: '🗑 已清空全部方案' });
+                return;
+            }
+            if (msg.command === 'cleanRecords') {
+                // 清理「中间态」= 前区选号 <5 个或后区选号 <2 个（无法组成复式）的记录
+                const list = loadPickKill();
+                const kept = list.filter(r => ((r.frontPick || []).length >= 5) && ((r.backPick || []).length >= 2));
+                const removed = list.length - kept.length;
+                if (removed > 0) savePickKill(kept);
+                panel.webview.postMessage({ command: 'records', data: loadPickKill() });
+                panel.webview.postMessage({
+                    command: 'toast',
+                    text: removed > 0 ? ('🧹 已清理 ' + removed + ' 条中间态记录，保留 ' + kept.length + ' 条') : '没有可清理的中间态记录'
+                });
+                return;
+            }
+            if (msg.command === 'openFile') {
+                const file = getPickKillMdFile();
+                try {
+                    if (!fs.existsSync(file)) savePickKill(loadPickKill()); // 首次打开先生成一份
+                    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+                    await vscode.window.showTextDocument(doc);
+                } catch (e) {
+                    vscode.window.showInformationMessage('记录文件路径：' + file);
+                }
+                return;
+            }
+        });
+    });
+    context.subscriptions.push(dltPickKillDisposable);
 
     // 智能推荐命令（基于转移统计 TOP3 概率）
     let smartPickDisposable = vscode.commands.registerCommand('myPlugin.smartPick', async () => {
@@ -1981,6 +2322,9 @@ class LotteryTreeDataProvider {
                 this.createItem('🎱 快乐8遗漏分层', 'myPlugin.kl8Miss', '🎱'),
                 this.createItem('🎯 大乐透遗漏分层', 'myPlugin.dltMiss', '🎯'),
                 this.createItem('🧮 大乐透分区统计', 'myPlugin.dltZone', '🧮'),
+                this.createItem('🎯 大乐透选号杀号', 'myPlugin.dltPickKill', '🎯'),
+                this.createItem('🔢 号码排序', 'myPlugin.sortNumbers', '🔢'),
+                this.createItem('🔥 热号统计', 'myPlugin.hotNumbers', '🔥'),
                 this.createItem('🛤️ 012路趋势', 'myPlugin.roadAnalysis', '🛤️'),
                 this.createItem('📜 排三口诀', 'myPlugin.pl3Formula', '📜'),
                 this.createItem('🎲 排五口诀', 'myPlugin.pl5Formula', '🎲'),
@@ -8081,14 +8425,14 @@ if (document.getElementById('panel-trend').classList.contains('active')) {
  * 大乐透 分区统计 Webview HTML
  * 前区 1-35 分 5 区（每区 7 号）：1-7 / 8-14 / 15-21 / 22-28 / 29-35
  * 后区 1-12 分 4 区（每区 3 号）：1-3 / 4-6 / 7-9 / 10-12
- * 页面内可选统计期数 50/100/150，统计各区出现次数、实测频率 vs 超几何理论概率
+ * 页面内可选统计期数 50/100/150/300，统计各区出现次数、实测频率 vs 超几何理论概率
  * 注意：history 参数为新→旧（最新期在最前），页面取前 N 期即最近 N 期
  */
 function getDltZoneHtml(history) {
     const total = history.length;
     const latest = history[0];
     const latestPeriod = latest ? latest.period : '—';
-    const recent = history.slice(0, 150); // 页面最多需要 150 期，避免注入超大 JSON
+    const recent = history.slice(0, 300); // 页面最多需要 300 期（下拉最大档），避免注入超大 JSON
     const dataJson = JSON.stringify(recent.map(h => ({ period: h.period, front: h.front || [], back: h.back || [] })));
     const latestFront = latest ? (latest.front || []) : [];
     const latestBack = latest ? (latest.back || []) : [];
@@ -8167,6 +8511,7 @@ tr.sum-row td { background: rgba(142,197,255,0.06); color: #feca57; font-weight:
         <option value="50">近 50 期</option>
         <option value="100" selected>近 100 期</option>
         <option value="150">近 150 期</option>
+        <option value="300">近 300 期</option>
     </select>
     <label for="selThr">冷热阈值：</label>
     <select id="selThr">
@@ -8469,6 +8814,1286 @@ var selN = document.getElementById('selN');
 selN.addEventListener('change', renderAll);
 document.getElementById('selThr').addEventListener('change', renderAll);
 renderAll();
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 号码排序工具 Webview HTML
+ * 粘贴任意分隔（逗号/空格/顿号/换行/分号等）的号码，输出升序或降序结果
+ * 支持：去重、补零（统一位数）、自定义输出分隔符、统计个数/范围/重复号、一键复制
+ */
+function getSortNumbersHtml() {
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>号码排序</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
+h2 { color: #e8a87c; margin-bottom: 6px; font-size: 20px; }
+h3 { color: #8ec5ff; margin: 16px 0 8px; font-size: 15px; }
+.sub { color: #aaa; margin-bottom: 12px; font-size: 12px; line-height: 1.7; }
+.ctrl { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+textarea { width: 100%; min-height: 140px; background: #252526; color: #ddd; border: 1px solid #555; border-radius: 6px; padding: 10px; font-size: 13px; font-family: Consolas, "Microsoft YaHei", monospace; resize: vertical; }
+textarea:focus, select:focus { outline: none; border-color: #8ec5ff; }
+select { background: #2d2d30; color: #ddd; border: 1px solid #555; border-radius: 5px; padding: 4px 8px; font-size: 13px; }
+button { background: #0e639c; color: #fff; border: none; border-radius: 5px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+button:hover { background: #1177bb; }
+button.ghost { background: #3a3d41; }
+button.ghost:hover { background: #45494e; }
+.out-box { background: #252526; border: 1px solid #444; border-radius: 6px; padding: 12px; min-height: 60px; font-family: Consolas, monospace; font-size: 15px; line-height: 1.9; word-break: break-all; }
+.stat { color: #feca57; font-size: 12px; margin-top: 8px; line-height: 1.8; }
+.ball-box { margin-top: 8px; line-height: 2.4; }
+.zball { display: inline-block; min-width: 30px; height: 30px; line-height: 30px; text-align: center; border-radius: 50%; font-size: 13px; font-weight: 600; color: #fff; margin: 2px 3px; padding: 0 4px; }
+.zc1 { background: linear-gradient(135deg,#e67e22,#f39c12); }
+.zc2 { background: linear-gradient(135deg,#2ecc71,#27ae60); }
+.zc3 { background: linear-gradient(135deg,#3498db,#2980b9); }
+.zc4 { background: linear-gradient(135deg,#9b59b6,#8e44ad); }
+.zc5 { background: linear-gradient(135deg,#e74c3c,#c0392b); }
+.warn { color: #f39c12; }
+.ok { color: #2ecc71; }
+.note { background: rgba(142,197,255,0.08); border: 1px solid rgba(142,197,255,0.25); border-radius: 8px; padding: 10px 14px; color: #aaa; font-size: 12px; line-height: 1.9; margin-top: 18px; }
+.note b { color: #8ec5ff; }
+</style>
+</head>
+<body>
+<h2>🔢 号码排序</h2>
+<div class="sub">
+    把一堆号码粘进下面的输入框（逗号、空格、顿号、分号、换行、斜杠等任意分隔都可以，非数字会被自动忽略）→ 自动从小到大排好
+</div>
+<textarea id="inText" placeholder="例如：08 12 03 35 21 07&#10;或：3, 15, 7, 22, 9, 31, 7"></textarea>
+<div class="ctrl">
+    <label for="selOrder">排序方式：</label>
+    <select id="selOrder">
+        <option value="asc" selected>从小到大（升序）</option>
+        <option value="desc">从大到小（降序）</option>
+    </select>
+    <label for="selDedup">重复号码：</label>
+    <select id="selDedup">
+        <option value="keep" selected>保留</option>
+        <option value="uniq">去重（只留一个）</option>
+    </select>
+    <label for="selPad">补零：</label>
+    <select id="selPad">
+        <option value="0" selected>不补零（7）</option>
+        <option value="2">补成 2 位（07）</option>
+        <option value="3">补成 3 位（007）</option>
+    </select>
+    <label for="selSep">输出分隔：</label>
+    <select id="selSep">
+        <option value=", ">逗号 + 空格</option>
+        <option value=" " selected>空格</option>
+        <option value="、">顿号</option>
+        <option value=",">逗号</option>
+    </select>
+    <button id="btnSort">🔢 排序</button>
+    <button id="btnCopy" class="ghost">📋 复制结果</button>
+    <button id="btnClear" class="ghost">🧹 清空</button>
+</div>
+<div class="stat" id="stat">等待输入…</div>
+
+<h3>排序结果（文本）</h3>
+<div class="out-box" id="outText">—</div>
+<h3>排序结果（号码球）</h3>
+<div class="ball-box" id="outBalls">—</div>
+
+<div class="note">
+    <b>说明：</b><br>
+    · 只按数值大小排序（1 &lt; 2 &lt; 10），不是按字符逐位比较，所以 2 会排在 10 前面。<br>
+    · 「去重」会剔除重复出现的号码，统计区会列出被剔除的重复号及出现次数。<br>
+    · 「补零」只影响显示与复制的文本（如 7 → 07），不改变数值大小与排序。<br>
+    · 复制优先使用页面剪贴板，失败时自动回退到 VSCode 剪贴板（由扩展写入）。
+</div>
+<script>
+(function() {
+    var vscode = null;
+    try {
+        if (typeof acquireVsCodeApi === 'function') vscode = acquireVsCodeApi();
+    } catch (e) { vscode = null; }
+    var inText = document.getElementById('inText');
+    var outText = document.getElementById('outText');
+    var outBalls = document.getElementById('outBalls');
+    var stat = document.getElementById('stat');
+    var lastResult = '';
+
+    // 逐字符扫描提取数字（不用正则，避免模板字符串转义问题）
+    function parseNums(text) {
+        var nums = [];
+        var cur = '';
+        for (var i = 0; i <= text.length; i++) {
+            var c = i < text.length ? text.charAt(i) : ',';
+            if (c >= '0' && c <= '9') {
+                cur += c;
+            } else {
+                if (cur !== '') { nums.push(parseInt(cur, 10)); cur = ''; }
+            }
+        }
+        return nums;
+    }
+    function padNum(n, w) {
+        var s = String(n);
+        while (s.length < w) s = '0' + s;
+        return s;
+    }
+    function esc(s) {
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function ballCls(n) {
+        return 'zc' + ((n % 5) + 1);
+    }
+    function copyText(text) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+        document.body.removeChild(ta);
+        if (ok) { setCopyMsg('✅ 已复制到剪贴板'); return; }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(function() {
+                setCopyMsg('✅ 已复制到剪贴板');
+            }, function() {
+                tryCopyByHost(text);
+            });
+        } else {
+            tryCopyByHost(text);
+        }
+    }
+    function tryCopyByHost(text) {
+        if (vscode && vscode.postMessage) {
+            try {
+                vscode.postMessage({ command: 'copyText', text: text });
+                setCopyMsg('📤 已交给 VSCode 复制…');
+                return;
+            } catch (e) { /* ignore */ }
+        }
+        setCopyMsg('⚠️ 复制失败，请手动选中结果复制');
+    }
+    function setCopyMsg(msg) {
+        stat.innerHTML = esc(msg) + '　|　' + esc(stat.dataset.base || '');
+    }
+    function render() {
+        var raw = inText.value;
+        var nums = parseNums(raw);
+        var order = document.getElementById('selOrder').value;
+        var dedup = document.getElementById('selDedup').value;
+        var padW = parseInt(document.getElementById('selPad').value, 10);
+        var sep = document.getElementById('selSep').value;
+
+        if (nums.length === 0) {
+            outText.textContent = '—';
+            outBalls.innerHTML = '—';
+            lastResult = '';
+            stat.textContent = raw.trim() === '' ? '等待输入…' : '⚠️ 没有识别到数字，请检查输入';
+            stat.dataset.base = stat.textContent;
+            return;
+        }
+        // 重复统计（基于原始输入）
+        var cntMap = {};
+        for (var i = 0; i < nums.length; i++) cntMap[nums[i]] = (cntMap[nums[i]] || 0) + 1;
+        var dupList = [];
+        for (var key in cntMap) {
+            if (cntMap[key] > 1) dupList.push({ n: parseInt(key, 10), c: cntMap[key] });
+        }
+        dupList.sort(function(a, b) { return b.c - a.c || a.n - b.n; });
+
+        var list = nums.slice();
+        if (dedup === 'uniq') {
+            var seen = {};
+            var uniq = [];
+            for (i = 0; i < list.length; i++) {
+                if (!seen[list[i]]) { seen[list[i]] = true; uniq.push(list[i]); }
+            }
+            list = uniq;
+        }
+        list.sort(function(a, b) { return order === 'desc' ? b - a : a - b; });
+
+        var texts = list.map(function(n) { return padNum(n, padW); });
+        var joined = texts.join(sep);
+        lastResult = joined;
+        outText.textContent = joined;
+        outBalls.innerHTML = texts.map(function(t, idx) {
+            return '<span class="zball ' + ballCls(list[idx]) + '">' + t + '</span>';
+        }).join('');
+
+        var minV = list[0];
+        var maxV = list[list.length - 1];
+        if (order === 'desc') { minV = list[list.length - 1]; maxV = list[0]; }
+        var msg = '共 ' + nums.length + ' 个号码' +
+            (dedup === 'uniq' && nums.length !== list.length ? '，去重后 ' + list.length + ' 个' : '') +
+            '　|　范围：' + minV + ' ~ ' + maxV +
+            '　|　' + (order === 'desc' ? '降序' : '升序');
+        if (dupList.length > 0) {
+            msg += '　|　⚠️ 重复：' + dupList.map(function(d) { return padNum(d.n, padW) + '×' + d.c; }).join('、');
+        }
+        stat.textContent = msg;
+        stat.dataset.base = msg;
+    }
+
+    inText.addEventListener('input', render);
+    document.getElementById('selOrder').addEventListener('change', render);
+    document.getElementById('selDedup').addEventListener('change', render);
+    document.getElementById('selPad').addEventListener('change', render);
+    document.getElementById('selSep').addEventListener('change', render);
+    document.getElementById('btnSort').addEventListener('click', function() {
+        render();
+        setCopyMsg('✅ 已重新排序');
+    });
+    document.getElementById('btnClear').addEventListener('click', function() {
+        inText.value = '';
+        render();
+    });
+    document.getElementById('btnCopy').addEventListener('click', function() {
+        if (!lastResult) { stat.textContent = '⚠️ 还没有可复制的结果'; stat.dataset.base = stat.textContent; return; }
+        copyText(lastResult);
+    });
+
+    // 接收扩展回传的复制结果
+    window.addEventListener('message', function(ev) {
+        var m = ev.data;
+        if (!m) return;
+        if (m.command === 'copyOk') setCopyMsg('✅ 已复制到剪贴板');
+        else if (m.command === 'copyFail') setCopyMsg('⚠️ 复制失败，请手动选中结果复制');
+        else if (m.command === 'paste') { inText.value = m.text; render(); }
+    });
+    render();
+})();
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 热号统计 Webview HTML（大乐透 / 双色球 / 快乐8 / 排列三 / 排列五 / 福彩3D）
+ * @param {Object} cfg - LOTTERY_TYPES 中的彩种配置
+ * @param {Array<Object>} rows - 最近若干期历史（新→旧，最多 50 期）
+ * 输出：每个号码在所选期数内的出现次数（热度矩阵）、TOP 列表、逐期开奖明细、理论期望对比
+ * 页面内可切换统计期数 10/20/30/40/50
+ */
+function getHotNumbersHtml(cfg, rows) {
+    let groups;
+    if (cfg.key === 'dlt') {
+        groups = [
+            { key: 'front', label: '前区', min: 1, max: 35, pick: 5, val: h => h.front },
+            { key: 'back', label: '后区', min: 1, max: 12, pick: 2, val: h => h.back }
+        ];
+    } else if (cfg.key === 'ssq') {
+        groups = [
+            { key: 'red', label: '红球', min: 1, max: 33, pick: 6, val: h => h.red },
+            { key: 'blue', label: '蓝球', min: 1, max: 16, pick: 1, val: h => h.blue }
+        ];
+    } else if (cfg.key === 'kl8') {
+        groups = [
+            { key: 'num', label: '号码', min: 1, max: 80, pick: 20, val: h => h.num }
+        ];
+    } else {
+        // 数字彩（排列三 / 排列五 / 福彩3D）：按位置分组，另附全位置合计
+        groups = cfg.positions.map((p, i) => ({
+            key: 'p' + i, label: p.label, min: 0, max: p.max, pick: 1, val: h => [h.num[i]]
+        }));
+        groups.push({
+            key: 'allpos', label: '全部位合计', min: 0, max: 9,
+            pick: cfg.positions.length, val: h => h.num
+        });
+    }
+    const dataJson = JSON.stringify(rows.map(h => {
+        const o = { period: h.period, date: h.date || '' };
+        groups.forEach(g => { o[g.key] = g.val(h) || []; });
+        return o;
+    }));
+    const groupsJson = JSON.stringify(groups.map(g => ({
+        key: g.key, label: g.label, min: g.min, max: g.max, pick: g.pick
+    })));
+    const latest = rows[0] || null;
+    const latestPeriod = latest ? latest.period : '—';
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>${cfg.name} 热号统计</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
+h2 { color: #e8a87c; margin-bottom: 6px; font-size: 20px; }
+h3 { color: #8ec5ff; margin: 16px 0 8px; font-size: 15px; }
+.sub { color: #aaa; margin-bottom: 12px; font-size: 12px; line-height: 1.7; }
+.ctrl { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+select { background: #2d2d30; color: #ddd; border: 1px solid #555; border-radius: 5px; padding: 4px 8px; font-size: 13px; }
+.calc-time { color: #feca57; font-size: 12px; margin: 6px 0 14px; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+th, td { border: 1px solid #444; padding: 6px 10px; text-align: center; }
+th { background: #2d2d30; color: #8ec5ff; }
+.ball-box { line-height: 2.4; margin-top: 6px; }
+.zball { display: inline-block; min-width: 30px; height: 30px; line-height: 30px; text-align: center; border-radius: 50%; font-size: 13px; font-weight: 600; color: #fff; margin: 2px 3px; padding: 0 4px; }
+.zc-red { background: linear-gradient(135deg,#e74c3c,#c0392b); }
+.zc-blue { background: linear-gradient(135deg,#3498db,#2980b9); }
+.zc-p { background: linear-gradient(135deg,#9b59b6,#8e44ad); }
+/* 号码矩阵格：按热度分档上色 */
+.mgrid { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.mcell { width: 38px; height: 40px; border-radius: 5px; text-align: center; font-size: 11px; color: #fff; padding-top: 3px; }
+.mcell b { display: block; font-size: 13px; }
+.mcell span { color: rgba(255,255,255,0.85); font-size: 10px; }
+.hv0 { background: #3a3d41; color: #888; }
+.hv1 { background: linear-gradient(135deg,#2c6e49,#27ae60); }
+.hv2 { background: linear-gradient(135deg,#d35400,#e67e22); }
+.hv3 { background: linear-gradient(135deg,#c0392b,#ff5252); }
+.hv4 { background: linear-gradient(135deg,#8e44ad,#e74c3c); box-shadow: 0 0 6px rgba(231,76,60,0.6); }
+.rank { color: #feca57; font-weight: bold; }
+.period-cell { white-space: nowrap; }
+.note { background: rgba(142,197,255,0.08); border: 1px solid rgba(142,197,255,0.25); border-radius: 8px; padding: 10px 14px; color: #aaa; font-size: 12px; line-height: 1.9; margin-top: 18px; }
+.note b { color: #8ec5ff; }
+</style>
+</head>
+<body>
+<h2>🔥 ${cfg.name} · 热号统计</h2>
+<div class="ctrl">
+    <label for="selN">统计期数：</label>
+    <select id="selN">
+        <option value="10" selected>近 10 期</option>
+        <option value="20">近 20 期</option>
+        <option value="30">近 30 期</option>
+        <option value="40">近 40 期</option>
+        <option value="50">近 50 期</option>
+    </select>
+    <span class="sub" id="availTip"></span>
+</div>
+<div class="sub">
+    统计区间：<b id="rangeTip"></b>　·　最新一期：${latestPeriod}<br>
+    按号码在所选期数中的<b>实际出现次数</b>排名（次数相同则号码小的在前）
+</div>
+<div class="calc-time" id="calcTime"></div>
+<div id="groups"></div>
+
+<h3>📋 开奖明细（<span id="detailN"></span>期）</h3>
+<div id="detail"></div>
+
+<div class="note">
+    <b>口径说明：</b><br>
+    · 出现次数 = 该号码在所选期数里被开出的期数（同一期同一号码最多计 1 次；「全部位合计」组按位累加，同一期同位重复数字才可能多次计入）。<br>
+    · 理论期望 = 期数 × 每组每期开出个数 ÷ 该组号码总数，页面每个分组都会给出自己的实际值。<br>
+    · 🔥 热度仅描述<b>已发生</b>的结果：次数高于期望的叫热号、低于期望的叫冷号。<br>
+    · ⚠️ 每期独立随机开奖，热号<b>不会</b>因为之前热就更容易在下期开出。下一期每个号码的概率恒等于「该组每期开出个数 ÷ 号码总数」（如大乐透前区 5÷35 ≈ 14.29%、后区 2÷12 ≈ 16.67%；双色球红球 6÷33 ≈ 18.18%、蓝球 1÷16 = 6.25%；快乐8 20÷80 = 25%；数字彩每位 1÷10 = 10%）。
+</div>
+<script>
+var ROWS = ${dataJson};
+var GROUPS = ${groupsJson};
+var AVAIL = ROWS.length;
+function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function hvCls(c, maxC) {
+    if (c <= 0) return 'hv0';
+    var lv = Math.ceil(c / Math.max(1, maxC) * 4);
+    if (lv > 4) lv = 4;
+    return 'hv' + lv;
+}
+function ballHtml(n, cls) {
+    return '<span class="zball ' + cls + '">' + n + '</span>';
+}
+// 两位数号码补零，数字彩（0-9）保持原样
+function fmt(n, g) {
+    if (g.max <= 9) return String(n);
+    return n < 10 ? '0' + n : String(n);
+}
+function clsOf(key) {
+    if (key === 'blue') return 'zc-blue';
+    if (key === 'allpos') return 'zc-blue';
+    if (key.charAt(0) === 'p' && key.length === 2) return 'zc-p';
+    return 'zc-red';
+}
+function render() {
+    var N = Math.min(parseInt(document.getElementById('selN').value, 10) || 10, AVAIL);
+    var rows = ROWS.slice(0, N);
+    var groupsHtml = '';
+    for (var gi = 0; gi < GROUPS.length; gi++) {
+        var g = GROUPS[gi];
+        var cnt = [];
+        var i, j;
+        for (i = 0; i <= g.max; i++) cnt[i] = 0;
+        for (i = 0; i < N; i++) {
+            var arr = rows[i][g.key] || [];
+            var seenRow = {};
+            for (j = 0; j < arr.length; j++) {
+                var v = arr[j];
+                if (v >= g.min && v <= g.max) {
+                    // 同一期同一号码最多计 1 次；「全部位合计」例外（按位累加）
+                    if (g.key === 'allpos') cnt[v]++;
+                    else if (!seenRow[v]) { seenRow[v] = true; cnt[v]++; }
+                }
+            }
+        }
+        var maxC = 0;
+        for (i = g.min; i <= g.max; i++) if (cnt[i] > maxC) maxC = cnt[i];
+        var size = g.max - g.min + 1;
+        var exp = N * g.pick / size;
+        var hitCount = 0;
+        var list = [];
+        for (i = g.min; i <= g.max; i++) {
+            if (cnt[i] > 0) hitCount++;
+            list.push({ n: i, c: cnt[i] });
+        }
+        list.sort(function(a, b) { return b.c - a.c || a.n - b.n; });
+
+        var cls1 = clsOf(g.key);
+        groupsHtml += '<h3>🎯 ' + esc(g.label) + '（' + g.min + '-' + g.max + '，每期开 ' + g.pick + ' 个）· 理论期望 ' + exp.toFixed(2) + ' 次/号 · 下一期单号概率 ' + (g.pick / size * 100).toFixed(2) + '%</h3>';
+
+        // 热度矩阵：每个号码一格，显示号码 + 次数
+        var grid = '<div class="mgrid">';
+        for (i = g.min; i <= g.max; i++) {
+            grid += '<div class="mcell ' + hvCls(cnt[i], maxC) + '" title="' + esc(g.label) + ' ' + fmt(i, g) + ' 号：出现 ' + cnt[i] + ' 次">' +
+                '<b>' + fmt(i, g) + '</b><span>' + cnt[i] + '次</span></div>';
+        }
+        grid += '</div>';
+        groupsHtml += grid;
+
+        // TOP 列表
+        var topN = Math.min(size >= 30 ? 15 : 10, list.length);
+        var rowsHtml = '';
+        for (i = 0; i < topN; i++) {
+            var it = list[i];
+            rowsHtml += '<tr>' +
+                '<td class="rank">' + (i + 1) + '</td>' +
+                '<td>' + ballHtml(fmt(it.n, g), cls1) + '</td>' +
+                '<td>' + it.c + ' / ' + N + '</td>' +
+                '<td>' + (it.c / N * 100).toFixed(1) + '%</td>' +
+                '<td style="color:#aaa;">' + exp.toFixed(2) + '</td>' +
+                '<td class="' + (it.c > exp ? 'rank' : '') + '">' + (it.c - exp >= 0 ? '+' : '') + (it.c - exp).toFixed(2) + '</td>' +
+                '</tr>';
+        }
+        groupsHtml += '<h3 style="margin-top:14px;">🔥 ' + esc(g.label) + ' 热号 TOP ' + topN + '</h3>' +
+            '<table><thead><tr><th>排名</th><th>号码</th><th>出现/期数</th><th>出现率</th><th>理论期望</th><th>差值</th></tr></thead><tbody>' +
+            rowsHtml + '</tbody></table>';
+
+        // 冷号区（未出现过的号码）
+        var coldArr = [];
+        for (i = g.min; i <= g.max; i++) if (cnt[i] === 0) coldArr.push(fmt(i, g));
+        groupsHtml += '<div class="sub">未出现过的号码（' + coldArr.length + ' / ' + size + ' 个）：' +
+            (coldArr.length ? coldArr.map(function(x) { return '<span class="zball ' + cls1 + '" style="opacity:0.45;">' + x + '</span>'; }).join('') : '无') +
+            '</div>';
+        groupsHtml += '<div class="sub">出现过的号码：<b>' + hitCount + '</b> / ' + size + '　·　本组最高出现次数：<b>' + maxC + '</b> 次</div>';
+    }
+    document.getElementById('groups').innerHTML = groupsHtml;
+
+    // 明细（跳过「全部位合计」这类汇总组）
+    var showGroups = [];
+    for (gi = 0; gi < GROUPS.length; gi++) if (GROUPS[gi].key !== 'allpos') showGroups.push(GROUPS[gi]);
+    var dHtml = '<table><thead><tr><th>期号</th>';
+    for (gi = 0; gi < showGroups.length; gi++) dHtml += '<th>' + esc(showGroups[gi].label) + '</th>';
+    dHtml += '</tr></thead><tbody>';
+    for (var r = 0; r < N; r++) {
+        var row = rows[r];
+        dHtml += '<tr><td class="period-cell">' + esc(row.period) + (row.date ? '<br><span style="color:#888;font-size:11px;">' + esc(row.date) + '</span>' : '') + '</td>';
+        for (gi = 0; gi < showGroups.length; gi++) {
+            var gk = showGroups[gi];
+            var arr2 = (row[gk.key] || []).slice().sort(function(a, b) { return a - b; });
+            dHtml += '<td style="text-align:left;">' + arr2.map(function(x) { return ballHtml(fmt(x, gk), clsOf(gk.key)); }).join('') + '</td>';
+        }
+        dHtml += '</tr>';
+    }
+    dHtml += '</tbody></table>';
+    document.getElementById('detail').innerHTML = dHtml;
+
+    document.getElementById('rangeTip').textContent = N > 0 ? (rows[N - 1].period + ' ~ ' + rows[0].period + '（共 ' + N + ' 期）') : '—';
+    document.getElementById('detailN').textContent = N;
+    document.getElementById('availTip').textContent = '本页共载入最近 ' + AVAIL + ' 期数据';
+    document.getElementById('calcTime').textContent = '⏱ 本次计算时间：' + new Date().toLocaleString('zh-CN');
+}
+(function() {
+    var sel = document.getElementById('selN');
+    for (var i = 0; i < sel.options.length; i++) {
+        if (parseInt(sel.options[i].value, 10) > AVAIL) sel.options[i].disabled = true;
+    }
+    sel.addEventListener('change', render);
+})();
+render();
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 大乐透「选号 / 杀号」Webview HTML
+ * 功能：点击号码盘三态切换（未选 → 选号胆码 → 杀号）、批量输入、剩余池与复式注数、
+ *       历史校验（实测 vs 超几何理论）、方案记录持久化（webview ↔ extension 消息保存）
+ * @param {Array<Object>} rows - 大乐透历史（新→旧，最多 300 期）
+ * @param {Array<Object>} records - 已保存的方案记录
+ * @param {string} storePath - 记录文件绝对路径
+ */
+function getDltPickKillHtml(rows, records, storePath) {
+    const latest = rows[0] || null;
+    const latestPeriod = latest ? latest.period : '—';
+    const latestDate = (latest && latest.date) ? latest.date : '';
+    const dataJson = JSON.stringify(rows.map(h => ({ period: h.period, front: h.front || [], back: h.back || [] })));
+    const recordsJson = JSON.stringify(records || []);
+    const pathJson = JSON.stringify(storePath || '');
+    const zoneCls = n => 'zc' + (Math.floor((Number(n) - 1) / 7) + 1);
+    const frontBalls = ((latest && latest.front) || []).map(n => '<span class="zball big-ball ' + zoneCls(n) + '">' + n + '</span>').join('');
+    const backBalls = ((latest && latest.back) || []).map(n => '<span class="zball big-ball zc5">' + n + '</span>').join('');
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>大乐透 选号 / 杀号</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
+h2 { color: #e8a87c; font-size: 20px; margin-bottom: 6px; }
+h3 { color: #8ec5ff; font-size: 15px; margin: 18px 0 8px; }
+.sub { color: #aaa; font-size: 12px; line-height: 1.9; margin-bottom: 12px; }
+.latest-box { background: rgba(232,168,124,0.08); border: 1px solid rgba(232,168,124,0.35); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; }
+.latest-box b { color: #e8a87c; }
+.latest-nums { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; align-items: center; }
+.zone-label { color: #8ec5ff; font-weight: 600; font-size: 12px; margin: 0 6px; }
+.zball { display: inline-block; min-width: 26px; height: 24px; line-height: 24px; border-radius: 50%; text-align: center; font-size: 11px; font-weight: 600; color: #fff; margin: 2px 0; padding: 0 4px; }
+.big-ball { min-width: 30px; height: 30px; line-height: 30px; font-size: 14px; }
+.zc1 { background: linear-gradient(135deg,#e67e22,#f39c12); }
+.zc2 { background: linear-gradient(135deg,#2ecc71,#27ae60); }
+.zc3 { background: linear-gradient(135deg,#3498db,#2980b9); }
+.zc4 { background: linear-gradient(135deg,#9b59b6,#8e44ad); }
+.zc5 { background: linear-gradient(135deg,#e74c3c,#c0392b); }
+/* 号码盘 */
+.zone-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+.zone-tag { color: #8ec5ff; font-size: 12px; min-width: 78px; font-weight: 600; }
+.pk-wrap { display: flex; flex-wrap: wrap; gap: 3px; }
+.pk-cell { width: 38px; text-align: center; }
+.pkball { width: 34px; height: 34px; line-height: 32px; border-radius: 50%; font-size: 13px; font-weight: 600; cursor: pointer; margin: 0 auto; border: 2px solid #4a4a50; background: #333338; color: #bbb; user-select: none; }
+.pkball:hover { border-color: #999; color: #fff; }
+.pk-pick { background: linear-gradient(135deg,#2ecc71,#27ae60); color: #05330f; border-color: #2ecc71; font-weight: 700; }
+.pk-kill { background: linear-gradient(135deg,#e74c3c,#c0392b); color: #fff; border-color: #e74c3c; text-decoration: line-through; opacity: 0.9; }
+.pkcnt { font-size: 10px; color: #888; margin-top: 2px; height: 13px; }
+/* 控件 */
+.card { background: rgba(142,197,255,0.06); border: 1px solid rgba(142,197,255,0.22); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
+.inp-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.inp-row label { color: #aaa; min-width: 74px; font-size: 12px; }
+.inp { background: #2d2d30; color: #ddd; border: 1px solid #555; border-radius: 5px; padding: 5px 8px; font-size: 13px; width: 260px; }
+.inp.note-inp { width: 320px; }
+.btn { background: #0e639c; color: #fff; border: none; border-radius: 5px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+.btn:hover { background: #1177bb; }
+.btn.ghost { background: #3a3a3f; }
+.btn.ghost:hover { background: #4a4a50; }
+.btn.ok { background: #1e8e4e; }
+.btn.ok:hover { background: #27a35c; }
+.btn.danger { background: #a33; }
+.btn.danger:hover { background: #c44; }
+select { background: #2d2d30; color: #ddd; border: 1px solid #555; border-radius: 5px; padding: 4px 8px; font-size: 13px; }
+.ctrl { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+/* 结果区 */
+.stat-grid { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.stat-box { flex: 1; min-width: 168px; background: #252529; border: 1px solid #3a3a40; border-radius: 8px; padding: 10px 12px; }
+.stat-box .t { color: #8ec5ff; font-size: 12px; margin-bottom: 4px; }
+.stat-box b { color: #feca57; font-size: 18px; }
+.stat-box .d { color: #999; font-size: 11px; margin-top: 4px; line-height: 1.6; }
+.pool-line { margin-bottom: 8px; line-height: 2.2; }
+.pool-line .lb { color: #aaa; font-size: 12px; margin-right: 6px; }
+.pball { display: inline-block; min-width: 26px; height: 24px; line-height: 24px; border-radius: 50%; text-align: center; font-size: 11px; font-weight: 600; color: #fff; margin: 2px 3px 2px 0; padding: 0 4px; }
+.pick-c { background: linear-gradient(135deg,#2ecc71,#27ae60); color: #05330f; }
+.kill-c { background: linear-gradient(135deg,#e74c3c,#c0392b); text-decoration: line-through; }
+.pool-c { background: #3a3f4a; }
+.warn { color: #f39c12; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+th, td { border: 1px solid #444; padding: 6px 10px; text-align: center; }
+th { background: #2d2d30; color: #8ec5ff; }
+.zok { color: #2ecc71; }
+.zwarn { color: #f39c12; }
+.zhot { color: #e74c3c; font-weight: bold; }
+.muted { color: #999; }
+.note { background: rgba(142,197,255,0.08); border: 1px solid rgba(142,197,255,0.25); border-radius: 8px; padding: 10px 14px; color: #aaa; font-size: 12px; line-height: 1.9; margin-top: 18px; }
+.note b { color: #8ec5ff; }
+.rec-actions { white-space: nowrap; }
+.rec-actions .btn { padding: 3px 8px; font-size: 12px; margin: 1px; }
+.empty { color: #888; padding: 10px; font-size: 12px; }
+.toast { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); background: #1e8e4e; color: #fff; padding: 8px 18px; border-radius: 6px; font-size: 13px; opacity: 0; transition: opacity 0.2s; pointer-events: none; z-index: 99; }
+.toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<h2>🎯 大乐透 选号 / 杀号</h2>
+<div class="latest-box">
+    <b>🆕 最新开奖 ${latestPeriod} 期${latestDate ? ' · ' + latestDate : ''}：</b>
+    <div class="latest-nums"><span class="zone-label">前区</span>${frontBalls}<span class="zone-label">后区</span>${backBalls}</div>
+</div>
+<div class="sub">
+    <b style="color:#8ec5ff;">操作：</b>点击号码球循环切换 <span class="pball pool-c">灰</span>未选 → <span class="pball pick-c">绿</span>选号（胆码）→ <span class="pball kill-c">红</span>杀号 → 未选；球下方数字 = 该号在所选期数内的出现次数。<br>
+    也可以在下方「批量输入」框里直接填号码（支持 01 05 12 / 1,5,12 / 1 5 12 等写法）。<br>
+    <b style="color:#8ec5ff;">记录：</b>改动号码盘<b>不会</b>自动记录；只有点「💾 保存当前方案」才会写入记录文件（与最近一条完全相同时不重复记录）。<br>
+    方案以 <b>Markdown 文件</b>（<code>dltPickKill.md</code>）形式保存，可点「📂 打开记录文件」直接查看，或「📋 导出为 Markdown」复制到自己的笔记；同目录的 <code>dltPickKill.index.json</code> 只是页面列表用的索引，随 md 同步更新。
+</div>
+
+<h3>① 前区号码盘（1-35，每期开 5 个）</h3>
+<div id="frontBoard"></div>
+<h3>② 后区号码盘（1-12，每期开 2 个）</h3>
+<div id="backBoard"></div>
+
+<h3>③ 批量输入 / 快捷操作</h3>
+<div class="card">
+    <div class="inp-row"><label>前区选号</label><input class="inp" id="inFrontPick" placeholder="如 01 05 12"><button class="btn" data-apply="frontPick">写入</button><button class="btn ghost" data-clear="frontPick">清空</button></div>
+    <div class="inp-row"><label>前区杀号</label><input class="inp" id="inFrontKill" placeholder="如 03 21 33"><button class="btn" data-apply="frontKill">写入</button><button class="btn ghost" data-clear="frontKill">清空</button></div>
+    <div class="inp-row"><label>后区选号</label><input class="inp" id="inBackPick" placeholder="如 03 08"><button class="btn" data-apply="backPick">写入</button><button class="btn ghost" data-clear="backPick">清空</button></div>
+    <div class="inp-row"><label>后区杀号</label><input class="inp" id="inBackKill" placeholder="如 01 12"><button class="btn" data-apply="backKill">写入</button><button class="btn ghost" data-clear="backKill">清空</button></div>
+    <div class="inp-row" style="margin-bottom:0;">
+        <button class="btn ghost" id="btnClearAll">全部清空</button>
+        <button class="btn ghost" id="btnSwap">选号 ↔ 杀号 互换</button>
+        <button class="btn ghost" id="btnOnlyPick">只留选号（清杀号）</button>
+        <button class="btn ghost" id="btnLatestAsPick">把最新一期当胆码</button>
+        <span class="muted" id="applyTip"></span>
+    </div>
+</div>
+
+<h3>④ 当前方案</h3>
+<div class="stat-grid" id="statBox"></div>
+<div class="card" id="poolBox"></div>
+
+<h3>⑤ 历史校验（这套选 / 杀在过去 N 期里的实际表现）</h3>
+<div class="ctrl">
+    <label for="selN">统计期数：</label>
+    <select id="selN">
+        <option value="30">近 30 期</option>
+        <option value="50">近 50 期</option>
+        <option value="100" selected>近 100 期</option>
+        <option value="200">近 200 期</option>
+        <option value="300">近 300 期</option>
+    </select>
+    <span class="muted" id="availTip"></span>
+</div>
+<div id="checkBox"></div>
+<div id="checkDetail"></div>
+
+<h3>⑥ 方案记录</h3>
+<div class="card">
+    <div class="inp-row">
+        <label>备注</label><input class="inp note-inp" id="inNote" placeholder="可留空，如：周三方案 / 杀大号">
+        <button class="btn ok" id="btnSave">💾 保存当前方案</button>
+        <span class="muted" style="font-size:12px;">只有点这个按钮才会写进记录文件；改号码不会自动产生记录</span>
+    </div>
+    <div class="inp-row" style="margin-bottom:0;">
+        <button class="btn ghost" id="btnExport">📋 导出为 Markdown（复制全部）</button>
+        <button class="btn ghost" id="btnOpenFile">📂 打开记录文件（Markdown）</button>
+        <button class="btn ghost" id="btnClean">🧹 清理中间态记录</button>
+        <button class="btn danger" id="btnClearRec">🗑 清空全部记录</button>
+        <span class="muted" id="storePath"></span>
+    </div>
+</div>
+<div id="recordBox"></div>
+
+<div class="note">
+    <b>口径说明：</b><br>
+    · 「杀号被击穿」= 某一期的开奖号里出现了至少一个你杀掉的号；理论概率 = 1 − C(35−k,5)/C(35,5)（前区，k 为前区杀号个数）、1 − C(12−m,2)/C(12,2)（后区，m 为后区杀号个数）。<br>
+    · 「胆码场均命中」= 每期开奖号里胆码的平均命中个数；理论 = 5×p÷35（前区，p 为前区胆码个数）、2×p÷12（后区）。<br>
+    · z 值 = (实测 − 理论) ÷ √(理论×(1−理论)÷N)，|z| &lt; 2 属正常波动。<br>
+    · 复式投注注数 = C(前区选号个数, 5) × C(后区选号个数, 2)，只按你<b>选中的号</b>组复式（如前区 8 + 后区 4 = C(8,5)×C(4,2) = 336 注 = 672 元），金额按 2 元/注估算。<br>
+    · 页面另给出「连同剩余池一起全包」的注数，那是把<b>所有没杀掉的号</b>都买下来的极端情况，仅供对比，不是你要买的注数。<br>
+    · ⚠️ 大乐透每期独立随机开奖，选号 / 杀号<b>没有任何预测效力</b>。杀号越多，短期内"看起来越准"只是因为覆盖号码少；本页校验只是对已发生结果的统计描述，不构成任何推荐。
+</div>
+<div class="toast" id="toast"></div>
+<script>
+var HISTORY = ${dataJson};
+var AVAIL = HISTORY.length;
+var RECORDS = ${recordsJson};
+var STORE_PATH = ${pathJson};
+var NL = String.fromCharCode(10);
+var vscodeApi = null;
+try { vscodeApi = acquireVsCodeApi(); } catch (e) { console.error('vscode api error:', e); }
+var FRONT_ZONES = [
+    { name: '一区', from: 1, to: 7 },
+    { name: '二区', from: 8, to: 14 },
+    { name: '三区', from: 15, to: 21 },
+    { name: '四区', from: 22, to: 28 },
+    { name: '五区', from: 29, to: 35 }
+];
+var BACK_ZONES = [
+    { name: '一区', from: 1, to: 3 },
+    { name: '二区', from: 4, to: 6 },
+    { name: '三区', from: 7, to: 9 },
+    { name: '四区', from: 10, to: 12 }
+];
+var ST = { front: {}, back: {} };
+var COUNTS = { front: {}, back: {} };
+var toastTimer = null;
+
+function combN(n, k) {
+    if (k < 0 || k > n) return 0;
+    if (k === 0 || k === n) return 1;
+    if (k > n - k) k = n - k;
+    var r = 1;
+    for (var i = 0; i < k; i++) { r = r * (n - i) / (i + 1); }
+    return r;
+}
+function fmtNum(x) {
+    var s = String(Math.round(x));
+    var out = '';
+    for (var i = 0; i < s.length; i++) {
+        if (i > 0 && (s.length - i) % 3 === 0) out += ',';
+        out += s.charAt(i);
+    }
+    return out;
+}
+function pad2(n) { return (n < 10 ? '0' : '') + n; }
+function showToast(text) {
+    var el = document.getElementById('toast');
+    el.textContent = text;
+    el.className = 'toast show';
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.className = 'toast'; }, 1500);
+}
+function pkCopy(text) {
+    if (vscodeApi) vscodeApi.postMessage({ command: 'copy', text: text });
+    showToast('📋 已复制');
+}
+function zCls(z) {
+    var a = Math.abs(z);
+    if (a >= 2) return 'zhot';
+    if (a >= 1) return 'zwarn';
+    return 'zok';
+}
+function parseNums(str, min, max) {
+    var parts = String(str || '').split(/[^0-9]+/);
+    var out = [];
+    for (var i = 0; i < parts.length; i++) {
+        if (parts[i] === '') continue;
+        var n = parseInt(parts[i], 10);
+        if (n >= min && n <= max && out.indexOf(n) < 0) out.push(n);
+    }
+    out.sort(function (a, b) { return a - b; });
+    return out;
+}
+function numsOf(key, state) {
+    var arr = [];
+    var o = ST[key];
+    for (var k in o) {
+        if (o.hasOwnProperty(k) && o[k] === state) arr.push(parseInt(k, 10));
+    }
+    arr.sort(function (a, b) { return a - b; });
+    return arr;
+}
+function setNums(key, arr, state) {
+    for (var i = 0; i < arr.length; i++) ST[key][arr[i]] = state;
+}
+function clearKeyPart(key, state) {
+    var o = ST[key];
+    for (var k in o) {
+        if (o.hasOwnProperty(k) && o[k] === state) o[k] = 0;
+    }
+}
+function planText(keyPart) {
+    return numsOf(keyPart[0], keyPart[1]);
+}
+function curN() {
+    var n = parseInt(document.getElementById('selN').value, 10);
+    if (n > AVAIL) n = AVAIL;
+    if (n < 1) n = 1;
+    return n;
+}
+function calcCounts(n) {
+    var cf = {}, cb = {}, i, j;
+    for (i = 1; i <= 35; i++) cf[i] = 0;
+    for (i = 1; i <= 12; i++) cb[i] = 0;
+    var rows = HISTORY.slice(0, n);
+    for (i = 0; i < rows.length; i++) {
+        var f = rows[i].front || [], b = rows[i].back || [];
+        for (j = 0; j < f.length; j++) if (cf[f[j]] !== undefined) cf[f[j]]++;
+        for (j = 0; j < b.length; j++) if (cb[b[j]] !== undefined) cb[b[j]]++;
+    }
+    return { front: cf, back: cb, rows: rows };
+}
+function missOf(rows, key, n) {
+    for (var i = 0; i < rows.length; i++) {
+        var arr = rows[i][key] || [];
+        if (arr.indexOf(n) >= 0) return i;
+    }
+    return rows.length;
+}
+/* ---------- 号码盘 ---------- */
+function buildBoard(containerId, zones, key) {
+    var html = '';
+    for (var i = 0; i < zones.length; i++) {
+        var z = zones[i];
+        html += '<div class="zone-row"><span class="zone-tag">' + z.name + ' ' + z.from + '-' + z.to + '</span><div class="pk-wrap">';
+        for (var n = z.from; n <= z.to; n++) {
+            html += '<div class="pk-cell"><div class="pkball pk-none" id="b' + key + n + '" data-k="' + key + '" data-n="' + n + '">' + n + '</div>' +
+                '<div class="pkcnt" id="c' + key + n + '"></div></div>';
+        }
+        html += '</div></div>';
+    }
+    var box = document.getElementById(containerId);
+    box.innerHTML = html;
+    box.addEventListener('click', function (e) {
+        var t = e.target;
+        if (!t || !t.getAttribute) return;
+        var k = t.getAttribute('data-k');
+        var ns = t.getAttribute('data-n');
+        if (!k || !ns) return;
+        var n = parseInt(ns, 10);
+        var cur = ST[k][n] || 0;
+        ST[k][n] = (cur + 1) % 3;
+        syncInputs();
+        renderAll();
+    });
+}
+function updateBoard() {
+    var keys = ['front', 'back'];
+    var maxN = { front: 35, back: 12 };
+    for (var a = 0; a < keys.length; a++) {
+        var k = keys[a];
+        for (var n = 1; n <= maxN[k]; n++) {
+            var el = document.getElementById('b' + k + n);
+            if (!el) continue;
+            var st = ST[k][n] || 0;
+            el.className = 'pkball ' + (st === 1 ? 'pk-pick' : (st === 2 ? 'pk-kill' : 'pk-none'));
+            var cnt = document.getElementById('c' + k + n);
+            if (cnt) cnt.textContent = '×' + (COUNTS[k][n] || 0);
+        }
+    }
+}
+/* ---------- 输入框同步 ---------- */
+function syncInputs() {
+    var map = { frontPick: ['front', 1], frontKill: ['front', 2], backPick: ['back', 1], backKill: ['back', 2] };
+    for (var id in map) {
+        if (!map.hasOwnProperty(id)) continue;
+        var arr = numsOf(map[id][0], map[id][1]);
+        var txt = [];
+        for (var i = 0; i < arr.length; i++) txt.push(pad2(arr[i]));
+        document.getElementById('in' + id.charAt(0).toUpperCase() + id.slice(1)).value = txt.join(' ');
+    }
+}
+/* ---------- 结果区 ---------- */
+function ballsHtml(arr, cls) {
+    var out = '';
+    for (var i = 0; i < arr.length; i++) out += '<span class="pball ' + cls + '">' + pad2(arr[i]) + '</span>';
+    return out || '<span class="muted">—</span>';
+}
+function renderResult() {
+    var fp = numsOf('front', 1), fk = numsOf('front', 2);
+    var bp = numsOf('back', 1), bk = numsOf('back', 2);
+    var fPool = [], bPool = [], i;
+    for (i = 1; i <= 35; i++) { if ((ST.front[i] || 0) === 0) fPool.push(i); }
+    for (i = 1; i <= 12; i++) { if ((ST.back[i] || 0) === 0) bPool.push(i); }
+    var fTotal = fp.length + fPool.length, bTotal = bp.length + bPool.length;
+    // 复式投注 = 用「选号」本身组成复式：C(前区选号数,5) × C(后区选号数,2)
+    var bets = combN(fp.length, 5) * combN(bp.length, 2);
+    var okBet = fp.length >= 5 && bp.length >= 2;
+    // 对比用：连同剩余池一起全包（只是参考，不是你要买的注数）
+    var allBets = combN(fTotal, 5) * combN(bTotal, 2);
+    var html = '';
+    html += '<div class="stat-box"><div class="t">前区 选号（胆码）</div><b>' + fp.length + '</b> 个' +
+        '<div class="d">候选 ' + fTotal + ' 个 · 已杀 ' + fk.length + ' 个' + (fp.length && fp.length < 5 ? '<br><span class="warn">⚠ 不足 5 个，无法组成复式</span>' : '') + '</div></div>';
+    html += '<div class="stat-box"><div class="t">前区 杀号</div><b>' + fk.length + '</b> 个' +
+        '<div class="d">剩余可用池 ' + fPool.length + ' 个</div></div>';
+    html += '<div class="stat-box"><div class="t">后区 选号（胆码）</div><b>' + bp.length + '</b> 个' +
+        '<div class="d">候选 ' + bTotal + ' 个 · 已杀 ' + bk.length + ' 个' + (bp.length && bp.length < 2 ? '<br><span class="warn">⚠ 不足 2 个，无法组成复式</span>' : '') + '</div></div>';
+    html += '<div class="stat-box"><div class="t">后区 杀号</div><b>' + bk.length + '</b> 个' +
+        '<div class="d">剩余可用池 ' + bPool.length + ' 个</div></div>';
+    html += '<div class="stat-box"><div class="t">复式投注（前区 ' + fp.length + ' + 后区 ' + bp.length + '）</div>' +
+        (okBet
+            ? '<b>' + fmtNum(bets) + '</b> 注<div class="d">约 ' + fmtNum(bets * 2) + ' 元 · C(' + fp.length + ',5)×C(' + bp.length + ',2) = ' + combN(fp.length, 5) + '×' + combN(bp.length, 2) + '</div>'
+            : '<b>—</b><div class="d">前区选号需 ≥5 个、后区选号需 ≥2 个</div>') + '</div>';
+    document.getElementById('statBox').innerHTML = html;
+
+    var pool = '<div class="pool-line"><span class="lb">🟢 前区胆码</span>' + ballsHtml(fp, 'pick-c') + '</div>' +
+        '<div class="pool-line"><span class="lb">🔴 前区杀号</span>' + ballsHtml(fk, 'kill-c') + '</div>' +
+        '<div class="pool-line"><span class="lb">⚪ 前区剩余池</span>' + ballsHtml(fPool, 'pool-c') + '</div>' +
+        '<div class="pool-line"><span class="lb">🟢 后区胆码</span>' + ballsHtml(bp, 'pick-c') + '</div>' +
+        '<div class="pool-line"><span class="lb">🔴 后区杀号</span>' + ballsHtml(bk, 'kill-c') + '</div>' +
+        '<div class="pool-line"><span class="lb">⚪ 后区剩余池</span>' + ballsHtml(bPool, 'pool-c') + '</div>' +
+        '<div style="margin-top:8px;"><button class="btn ghost" id="btnCopyPool">📋 复制当前方案（分行标注）</button>' +
+        ' <button class="btn ghost" id="btnCopyPick">📋 只复制选号</button>' +
+        ' <button class="btn ghost" id="btnCopyKill">📋 只复制杀号</button>' +
+        ' <button class="btn ghost" id="btnCopyMd">📋 复制为 Markdown</button></div>' +
+        '<div class="muted" style="font-size:12px;margin-top:8px;line-height:1.7;">注数口径：复式投注 = C(前区选号数,5) × C(后区选号数,2)，即只按你选的号组复式。' +
+        '对比参考：连同剩余池一起全包 = ' + fmtNum(allBets) + ' 注（约 ' + fmtNum(allBets * 2) + ' 元，C(' + fTotal + ',5)×C(' + bTotal + ',2)）。</div>';
+    document.getElementById('poolBox').innerHTML = pool;
+    var note = document.getElementById('inNote').value || '';
+    var cp = document.getElementById('btnCopyPool');
+    if (cp) cp.onclick = function () { pkCopy(buildPlanLines(fp, fk, bp, bk, fPool, bPool, bets, note).join(NL)); };
+    var cpk = document.getElementById('btnCopyPick');
+    if (cpk) cpk.onclick = function () {
+        pkCopy(['🟢 前区选号（胆码，' + fp.length + ' 个）：' + fmtArr(fp),
+            '🟢 后区选号（胆码，' + bp.length + ' 个）：' + fmtArr(bp)].join(NL));
+    };
+    var ckl = document.getElementById('btnCopyKill');
+    if (ckl) ckl.onclick = function () {
+        pkCopy(['🔴 前区杀号（' + fk.length + ' 个）：' + fmtArr(fk),
+            '🔴 后区杀号（' + bk.length + ' 个）：' + fmtArr(bk)].join(NL));
+    };
+    var cmd = document.getElementById('btnCopyMd');
+    if (cmd) cmd.onclick = function () { pkCopy(buildPlanMd(fp, fk, bp, bk, fPool, bPool, bets, note).join(NL)); };
+}
+/* 复制文本：分行标注，选号 / 杀号一目了然 */
+function fmtArr(arr) {
+    if (!arr || !arr.length) return '—';
+    var out = [];
+    for (var i = 0; i < arr.length; i++) out.push(pad2(arr[i]));
+    return out.join(' ');
+}
+function planTitle(r) {
+    return '【大乐透 选号 / 杀号】' +
+        (r && r.savedAt ? new Date(r.savedAt).toLocaleString('zh-CN') : new Date().toLocaleString('zh-CN')) +
+        ' · 基于 ' + ((r && r.basePeriod) || (AVAIL ? HISTORY[0].period : '—')) + ' 期';
+}
+function betLine(fp, bp, bets, isMd) {
+    if (fp.length >= 5 && bp.length >= 2) {
+        var n = isMd ? '**' + fmtNum(bets) + '**' : fmtNum(bets);
+        return '💰 复式投注（前区 ' + fp.length + ' + 后区 ' + bp.length + '）：' + n + ' 注（约 ' + fmtNum(bets * 2) + ' 元，2 元/注）';
+    }
+    return '💰 复式投注：—（前区选号需 ≥5 个、后区选号需 ≥2 个）';
+}
+function buildPlanLines(fp, fk, bp, bk, fPool, bPool, bets, note, r) {
+    var L = [];
+    L.push(planTitle(r));
+    L.push('🟢 前区选号（胆码，' + fp.length + ' 个）：' + fmtArr(fp));
+    L.push('🔴 前区杀号（' + fk.length + ' 个）：' + fmtArr(fk));
+    L.push('🟢 后区选号（胆码，' + bp.length + ' 个）：' + fmtArr(bp));
+    L.push('🔴 后区杀号（' + bk.length + ' 个）：' + fmtArr(bk));
+    L.push('⚪ 前区剩余可用池（' + fPool.length + ' 个）：' + fmtArr(fPool));
+    L.push('⚪ 后区剩余可用池（' + bPool.length + ' 个）：' + fmtArr(bPool));
+    L.push(betLine(fp, bp, bets));
+    L.push('📝 备注：' + (note || '—'));
+    return L;
+}
+/* 复制文本：Markdown 表格（与 dltPickKill.md 的明细格式一致，可直接粘贴进笔记） */
+function buildPlanMd(fp, fk, bp, bk, fPool, bPool, bets, note, r) {
+    var L = [];
+    L.push('### 大乐透方案 · ' + ((r && r.savedAt) ? new Date(r.savedAt).toLocaleString('zh-CN') : new Date().toLocaleString('zh-CN')) +
+        ' · 基于 ' + ((r && r.basePeriod) || (AVAIL ? HISTORY[0].period : '—')) + ' 期');
+    L.push('');
+    L.push('| 类型 | 前区 | 后区 |');
+    L.push('| --- | --- | --- |');
+    L.push('| 🟢 选号（胆码） | ' + fmtArr(fp) + ' | ' + fmtArr(bp) + ' |');
+    L.push('| 🔴 杀号 | ' + fmtArr(fk) + ' | ' + fmtArr(bk) + ' |');
+    L.push('| ⚪ 剩余可用池 | ' + fmtArr(fPool) + ' | ' + fmtArr(bPool) + ' |');
+    L.push('');
+    L.push('- ' + betLine(fp, bp, bets, true));
+    L.push('- 备注：' + (note || '—'));
+    return L;
+}
+/* ---------- 历史校验 ---------- */
+function renderCheck() {
+    var n = curN();
+    var c = calcCounts(n);
+    var rows = c.rows;
+    document.getElementById('availTip').textContent = '实际统计 ' + rows.length + ' 期' +
+        (rows.length ? '（' + rows[rows.length - 1].period + ' ~ ' + rows[0].period + '）' : '');
+    var fk = numsOf('front', 2), fp = numsOf('front', 1);
+    var bk = numsOf('back', 2), bp = numsOf('back', 1);
+    var i, j;
+    var fBreak = 0, bBreak = 0, fPickSum = 0, bPickSum = 0;
+    for (i = 0; i < rows.length; i++) {
+        var f = rows[i].front || [], b = rows[i].back || [];
+        var hit = false, pc = 0;
+        for (j = 0; j < f.length; j++) {
+            if (ST.front[f[j]] === 2) hit = true;
+            if (ST.front[f[j]] === 1) pc++;
+        }
+        if (hit) fBreak++;
+        fPickSum += pc;
+        var hb = false, pcb = 0;
+        for (j = 0; j < b.length; j++) {
+            if (ST.back[b[j]] === 2) hb = true;
+            if (ST.back[b[j]] === 1) pcb++;
+        }
+        if (hb) bBreak++;
+        bPickSum += pcb;
+    }
+    var N = rows.length || 1;
+    var fThr = fk.length ? 1 - combN(35 - fk.length, 5) / combN(35, 5) : 0;
+    var bThr = bk.length ? 1 - combN(12 - bk.length, 2) / combN(12, 2) : 0;
+    var fExp = 5 * fp.length / 35;
+    var bExp = 2 * bp.length / 12;
+    function row(label, obs, thr, unit, se) {
+        var z = se > 0 ? (obs - thr) / se : 0;
+        return '<tr><td>' + label + '</td><td>' + obs.toFixed(unit === '%' ? 1 : 2) + (unit === '%' ? '%' : '') + '</td>' +
+            '<td class="muted">' + thr.toFixed(unit === '%' ? 1 : 2) + (unit === '%' ? '%' : '') + '</td>' +
+            '<td class="' + (unit === '%' ? zCls(z) : 'muted') + '">' + (unit === '%' ? (z >= 0 ? '+' : '') + z.toFixed(2) : '—') + '</td></tr>';
+    }
+    var seF = Math.sqrt(fThr * (1 - fThr) / N);
+    var seB = Math.sqrt(bThr * (1 - bThr) / N);
+    var html = '<table><thead><tr><th>校验项</th><th>实测</th><th>理论</th><th>z 值</th></tr></thead><tbody>';
+    html += row('前区杀号被击穿（开出 ≥1 个被杀号）的期数占比', 100 * fBreak / N, 100 * fThr, '%', 100 * seF);
+    html += row('前区杀号全对（一个都没开）的期数占比', 100 * (N - fBreak) / N, 100 * (1 - fThr), '%', 100 * seF);
+    html += row('后区杀号被击穿的期数占比', 100 * bBreak / N, 100 * bThr, '%', 100 * seB);
+    html += row('后区杀号全对的期数占比', 100 * (N - bBreak) / N, 100 * (1 - bThr), '%', 100 * seB);
+    html += row('前区胆码场均命中个数', fPickSum / N, fExp, 'n', 0);
+    html += row('后区胆码场均命中个数', bPickSum / N, bExp, 'n', 0);
+    html += '</tbody></table>';
+    html += '<div class="muted" style="font-size:12px;line-height:1.8;">前区杀 ' + fk.length + ' 个 / 胆 ' + fp.length + ' 个 · 后区杀 ' + bk.length + ' 个 / 胆 ' + bp.length +
+        ' 个；未设杀号时"被击穿"恒为 0%，属正常。</div>';
+    document.getElementById('checkBox').innerHTML = html;
+
+    var d = '<div class="sub" style="margin:10px 0 6px;">逐号明细（近 ' + rows.length + ' 期出现次数 / 当前遗漏）</div>';
+    d += '<table><thead><tr><th>类型</th><th style="text-align:left;">号码 × 出现次数（当前遗漏）</th></tr></thead><tbody>';
+    d += detailRow('🟢 前区胆码', rows, 'front', fp, c.front);
+    d += detailRow('🔴 前区杀号', rows, 'front', fk, c.front);
+    d += detailRow('🟢 后区胆码', rows, 'back', bp, c.back);
+    d += detailRow('🔴 后区杀号', rows, 'back', bk, c.back);
+    d += '</tbody></table>';
+    document.getElementById('checkDetail').innerHTML = d;
+}
+function detailRow(title, rows, key, arr, counts) {
+    var out = '';
+    for (var i = 0; i < arr.length; i++) {
+        var n = arr[i];
+        out += '<span class="pball ' + (title.indexOf('胆') >= 0 ? 'pick-c' : 'kill-c') + '">' + pad2(n) + '</span>' +
+            '<span class="muted" style="font-size:11px;margin-right:8px;">×' + (counts[n] || 0) + ' (漏' + missOf(rows, key, n) + ')</span>';
+    }
+    return '<tr><td>' + title + '</td><td style="text-align:left;">' + (out || '<span class="muted">—</span>') + '</td></tr>';
+}
+/* ---------- 记录 ---------- */
+function renderRecords() {
+    var box = document.getElementById('recordBox');
+    if (!RECORDS.length) {
+        box.innerHTML = '<div class="empty">还没有保存任何方案。选好号码后点上方「💾 保存当前方案」即可写入记录文件。</div>';
+        return;
+    }
+    var html = '<table><thead><tr><th>#</th><th>保存时间</th><th>针对期号</th><th>前区选</th><th>前区杀</th><th>后区选</th><th>后区杀</th><th>备注</th><th>操作</th></tr></thead><tbody>';
+    for (var i = 0; i < RECORDS.length; i++) {
+        var r = RECORDS[i];
+        var tm = r.savedAt ? new Date(r.savedAt).toLocaleString('zh-CN') : '—';
+        html += '<tr>' +
+            '<td>' + (i + 1) + '</td>' +
+            '<td>' + tm + '</td>' +
+            '<td>' + (r.basePeriod || '—') + '</td>' +
+            '<td style="text-align:left;">' + ballsHtml(r.frontPick || [], 'pick-c') + '</td>' +
+            '<td style="text-align:left;">' + ballsHtml(r.frontKill || [], 'kill-c') + '</td>' +
+            '<td style="text-align:left;">' + ballsHtml(r.backPick || [], 'pick-c') + '</td>' +
+            '<td style="text-align:left;">' + ballsHtml(r.backKill || [], 'kill-c') + '</td>' +
+            '<td>' + (r.note ? String(r.note) : '—') + '</td>' +
+            '<td class="rec-actions"><button class="btn" data-load="' + r.id + '">载入</button>' +
+            '<button class="btn ghost" data-copyrec="' + r.id + '">复制</button>' +
+            '<button class="btn danger" data-del="' + r.id + '">删除</button></td></tr>';
+    }
+    html += '</tbody></table>';
+    box.innerHTML = html;
+    var btns = box.getElementsByTagName('button');
+    for (var j = 0; j < btns.length; j++) {
+        (function (b) {
+            b.onclick = function () {
+                var lid = b.getAttribute('data-load');
+                var cid = b.getAttribute('data-copyrec');
+                var did = b.getAttribute('data-del');
+                if (lid) loadRecord(lid);
+                else if (cid) copyRecord(cid);
+                else if (did) delRecord(did);
+            };
+        })(btns[j]);
+    }
+}
+function findRecord(id) {
+    for (var i = 0; i < RECORDS.length; i++) if (RECORDS[i].id === id) return RECORDS[i];
+    return null;
+}
+function loadRecord(id) {
+    var r = findRecord(id);
+    if (!r) return;
+    ST = { front: {}, back: {} };
+    setNums('front', r.frontPick || [], 1);
+    setNums('front', r.frontKill || [], 2);
+    setNums('back', r.backPick || [], 1);
+    setNums('back', r.backKill || [], 2);
+    syncInputs();
+    renderAll();
+    window.scrollTo(0, 0);
+    showToast('📂 已载入该方案');
+}
+function recordParts(r) {
+    var fp = r.frontPick || [], fk = r.frontKill || [], bp = r.backPick || [], bk = r.backKill || [];
+    var fPool = [], bPool = [], i;
+    for (i = 1; i <= 35; i++) { if (fp.indexOf(i) < 0 && fk.indexOf(i) < 0) fPool.push(i); }
+    for (i = 1; i <= 12; i++) { if (bp.indexOf(i) < 0 && bk.indexOf(i) < 0) bPool.push(i); }
+    return {
+        fp: fp, fk: fk, bp: bp, bk: bk, fPool: fPool, bPool: bPool,
+        bets: combN(fp.length, 5) * combN(bp.length, 2)
+    };
+}
+function copyRecord(id) {
+    var r = findRecord(id);
+    if (!r) return;
+    var p = recordParts(r);
+    pkCopy(buildPlanLines(p.fp, p.fk, p.bp, p.bk, p.fPool, p.bPool, p.bets, r.note, r).join(NL));
+}
+function delRecord(id) {
+    if (vscodeApi) vscodeApi.postMessage({ command: 'deleteRecord', id: id });
+}
+function currentRecord() {
+    return {
+        id: 'r' + Date.now() + Math.floor(Math.random() * 1000),
+        savedAt: new Date().toISOString(),
+        basePeriod: AVAIL ? HISTORY[0].period : '',
+        frontPick: numsOf('front', 1),
+        frontKill: numsOf('front', 2),
+        backPick: numsOf('back', 1),
+        backKill: numsOf('back', 2),
+        note: document.getElementById('inNote').value || ''
+    };
+}
+function sameAsLatest(rec) {
+    var last = RECORDS[0];
+    if (!last) return false;
+    var a = (rec.frontPick || []).join(',') + '|' + (rec.frontKill || []).join(',') + '|' + (rec.backPick || []).join(',') + '|' + (rec.backKill || []).join(',');
+    var b = (last.frontPick || []).join(',') + '|' + (last.frontKill || []).join(',') + '|' + (last.backPick || []).join(',') + '|' + (last.backKill || []).join(',');
+    return a === b;
+}
+function saveCurrent() {
+    var rec = currentRecord();
+    if (sameAsLatest(rec)) {
+        showToast('⏭ 与最近一条相同，未重复记录');
+        return;
+    }
+    if (vscodeApi) vscodeApi.postMessage({ command: 'saveRecord', record: rec });
+}
+
+/* ---------- 总渲染 ---------- */
+function renderAll() {
+    var n = curN();
+    var c = calcCounts(n);
+    COUNTS = { front: c.front, back: c.back };
+    updateBoard();
+    renderResult();
+    renderCheck();
+}
+/* ---------- 事件绑定 ---------- */
+buildBoard('frontBoard', FRONT_ZONES, 'front');
+buildBoard('backBoard', BACK_ZONES, 'back');
+(function () {
+    var sel = document.getElementById('selN');
+    var lastOk = null;
+    for (var i = 0; i < sel.options.length; i++) {
+        if (parseInt(sel.options[i].value, 10) <= AVAIL) lastOk = sel.options[i];
+        else sel.options[i].disabled = true;
+    }
+    if (lastOk && sel.options[sel.selectedIndex].disabled) lastOk.selected = true;
+})();
+document.getElementById('selN').addEventListener('change', renderAll);
+(function () {
+    var map = { frontPick: ['front', 1, 35], frontKill: ['front', 2, 35], backPick: ['back', 1, 12], backKill: ['back', 2, 12] };
+    var btns = document.querySelectorAll('[data-apply]');
+    for (var i = 0; i < btns.length; i++) {
+        (function (b) {
+            b.onclick = function () {
+                var key = b.getAttribute('data-apply');
+                var cfg = map[key];
+                var arr = parseNums(document.getElementById('in' + key.charAt(0).toUpperCase() + key.slice(1)).value, 1, cfg[2]);
+                clearKeyPart(cfg[0], cfg[1]);
+                setNums(cfg[0], arr, cfg[1]); // 同一号码被重复指定时以最后一次写入为准（选/杀互斥）
+                syncInputs();
+                renderAll();
+                        document.getElementById('applyTip').textContent = '✅ 已写入 ' + arr.length + ' 个号码';
+                setTimeout(function () { document.getElementById('applyTip').textContent = ''; }, 1500);
+            };
+        })(btns[i]);
+    }
+    var cbs = document.querySelectorAll('[data-clear]');
+    for (var k = 0; k < cbs.length; k++) {
+        (function (b) {
+            b.onclick = function () {
+                var key = b.getAttribute('data-clear');
+                var cfg = map[key];
+                clearKeyPart(cfg[0], cfg[1]);
+                syncInputs();
+                renderAll();
+                    };
+        })(cbs[k]);
+    }
+})();
+document.getElementById('btnClearAll').onclick = function () {
+    ST = { front: {}, back: {} };
+    syncInputs();
+    renderAll();
+    showToast('🧹 已清空');
+};
+document.getElementById('btnSwap').onclick = function () {
+    var nf = { front: {}, back: {} };
+    var keys = ['front', 'back'], maxN = { front: 35, back: 12 };
+    for (var a = 0; a < keys.length; a++) {
+        for (var n = 1; n <= maxN[keys[a]]; n++) {
+            var v = ST[keys[a]][n] || 0;
+            nf[keys[a]][n] = (v === 1 ? 2 : (v === 2 ? 1 : 0));
+        }
+    }
+    ST = nf;
+    syncInputs();
+    renderAll();
+    showToast('🔄 已互换');
+};
+document.getElementById('btnOnlyPick').onclick = function () {
+    clearKeyPart('front', 2);
+    clearKeyPart('back', 2);
+    syncInputs();
+    renderAll();
+    showToast('🔴 杀号已清空');
+};
+document.getElementById('btnLatestAsPick').onclick = function () {
+    if (!AVAIL) return;
+    var f = HISTORY[0].front || [], b = HISTORY[0].back || [];
+    ST = { front: {}, back: {} };
+    setNums('front', f, 1);
+    setNums('back', b, 1);
+    syncInputs();
+    renderAll();
+    showToast('🆕 已用 ' + HISTORY[0].period + ' 期号码');
+};
+document.getElementById('btnSave').onclick = function () {
+    saveCurrent();
+};
+document.getElementById('btnExport').onclick = function () {
+    if (!RECORDS.length) { showToast('暂无记录'); return; }
+    // 与 dltPickKill.md 文件内容保持一致：标题 + 每条分行明细
+    var L = ['# 大乐透 选号 / 杀号 方案记录', '',
+        '> 共 ' + RECORDS.length + ' 条 · 导出于 ' + new Date().toLocaleString('zh-CN'), ''];
+    for (var i = 0; i < RECORDS.length; i++) {
+        var r = RECORDS[i];
+        var p = recordParts(r);
+        L.push('### ' + (i + 1) + '. ' + (r.savedAt ? new Date(r.savedAt).toLocaleString('zh-CN') : '—') +
+            ' · 基于 ' + (r.basePeriod || '—') + ' 期');
+        L.push('');
+        var lines = buildPlanLines(p.fp, p.fk, p.bp, p.bk, p.fPool, p.bPool, p.bets, r.note, r);
+        for (var k = 1; k < lines.length; k++) L.push('- ' + lines[k]); // 首行是标题，已用 ### 输出
+        L.push('');
+    }
+    L.push('---');
+    L.push('');
+    L.push('> ⚠️ 大乐透每期独立随机开奖，选号 / 杀号没有任何预测效力，本文件仅用于记录与复盘。');
+    pkCopy(L.join(NL));
+};
+document.getElementById('btnOpenFile').onclick = function () {
+    if (vscodeApi) vscodeApi.postMessage({ command: 'openFile' });
+};
+document.getElementById('btnClean').onclick = function () {
+    if (vscodeApi) vscodeApi.postMessage({ command: 'cleanRecords' }); // 删掉选号不足 5/2 个的中间态
+};
+document.getElementById('btnClearRec').onclick = function () {
+    if (vscodeApi) vscodeApi.postMessage({ command: 'clearRecords' });
+};
+if (vscodeApi) {
+    vscodeApi.onDidReceiveMessage(function (msg) {
+        if (!msg || !msg.command) return;
+        if (msg.command === 'records') {
+            RECORDS = msg.data || [];
+            renderRecords();
+            return;
+        }
+        if (msg.command === 'toast') {
+            showToast(msg.text || '');
+            return;
+        }
+    });
+}
+document.getElementById('storePath').textContent = STORE_PATH ? ('Markdown 记录文件：' + STORE_PATH) : '';
+/* 初始化：恢复最近一次方案 */
+(function () {
+    if (AVAIL === 0) {
+        document.getElementById('availTip').textContent = '⚠ 未载入历史数据，历史校验不可用（选号 / 记录功能不受影响）';
+    }
+    if (RECORDS.length) loadRecord(RECORDS[0].id);
+    else { syncInputs(); renderAll(); }
+})();
+renderRecords();
 </script>
 </body>
 </html>`;

@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.8.44",
+    "version": "0.8.52",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -43,6 +43,9 @@
         "onCommand:myPlugin.kl8Miss",
         "onCommand:myPlugin.dltMiss",
         "onCommand:myPlugin.dltZone",
+        "onCommand:myPlugin.dltPickKill",
+        "onCommand:myPlugin.sortNumbers",
+        "onCommand:myPlugin.hotNumbers",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -146,6 +149,18 @@
             {
                 "command": "myPlugin.dltZone",
                 "title": "大乐透分区统计"
+            },
+            {
+                "command": "myPlugin.dltPickKill",
+                "title": "大乐透选号杀号"
+            },
+            {
+                "command": "myPlugin.sortNumbers",
+                "title": "号码排序"
+            },
+            {
+                "command": "myPlugin.hotNumbers",
+                "title": "最近10期热号"
             }
         ],
         "viewsContainers": {
