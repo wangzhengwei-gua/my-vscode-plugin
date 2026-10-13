@@ -1204,6 +1204,84 @@ function activate(context) {
     });
     context.subscriptions.push(hotNumbersDisposable);
 
+    // 快乐8 罕见形态选号（逆向思维：取形态分布尾部 + 约束，纯页面蒙特卡洛）
+    let kl8RarePickDisposable = vscode.commands.registerCommand('myPlugin.kl8RarePick', () => {
+        const panel = vscode.window.createWebviewPanel(
+            'kl8RarePick',
+            '快乐8 罕见形态选号',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getKl8RarePickHtml();
+        panel.webview.onDidReceiveMessage(async (msg) => {
+            if (msg.command === 'copyText') {
+                try { await vscode.env.clipboard.writeText(msg.text); panel.webview.postMessage({ command: 'copyOk' }); }
+                catch (e) { panel.webview.postMessage({ command: 'copyFail' }); }
+            }
+        });
+    });
+    context.subscriptions.push(kl8RarePickDisposable);
+
+    // 快乐8 爆区分析（某 10 号区 ≥ 阈值即爆区，期数可选 + 阈值可选）
+    let kl8BurstDisposable = vscode.commands.registerCommand('myPlugin.kl8Burst', async () => {
+        let history;
+        try {
+            const cfg = LOTTERY_TYPES.find(c => c.key === 'kl8');
+            if (!cfg) return;
+            history = loadLotteryData(cfg);
+            if (history.length === 0) {
+                vscode.window.showWarningMessage('快乐8数据为空，请先刷新数据');
+                return;
+            }
+        } catch (e) {
+            const choice = vscode.window.showInformationMessage(
+                '🎱 还没有快乐8数据，需要先爬取数据。是否立即爬取？',
+                '立即爬取', '稍后再说'
+            );
+            choice.then(btn => { if (btn === '立即爬取') vscode.commands.executeCommand('myPlugin.refreshData'); });
+            return;
+        }
+        // 新→旧（最新期在最前），页面内按期数下拉取前 N 期
+        const rows = history.slice().reverse();
+        const panel = vscode.window.createWebviewPanel(
+            'kl8Burst',
+            '快乐8 爆区分析',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getKl8BurstHtml(rows);
+    });
+    context.subscriptions.push(kl8BurstDisposable);
+
+    // 排列三/五 奇偶大小概率预测（每位频次 + 奇偶/大小形态 + 双方案预测 + 理论对比）
+    let pl35OeBsDisposable = vscode.commands.registerCommand('myPlugin.pl35OeBs', async () => {
+        let pl3Rows = [], pl5Rows = [];
+        try {
+            const cfg3 = LOTTERY_TYPES.find(c => c.key === 'pl3');
+            const cfg5 = LOTTERY_TYPES.find(c => c.key === 'pl5');
+            const h3 = cfg3 ? loadLotteryData(cfg3) : [];
+            const h5 = cfg5 ? loadLotteryData(cfg5) : [];
+            if (h3.length === 0 && h5.length === 0) {
+                vscode.window.showWarningMessage('排列三/排列五数据为空，请先刷新数据');
+                return;
+            }
+            // 旧→新 → 取最后 300 → 反转为新→旧
+            pl3Rows = h3.slice(-300).slice().reverse();
+            pl5Rows = h5.slice(-300).slice().reverse();
+        } catch (e) {
+            vscode.window.showErrorMessage('读取排列数据失败: ' + e.message);
+            return;
+        }
+        const panel = vscode.window.createWebviewPanel(
+            'pl35OeBs',
+            '排列三/五 奇偶大小预测',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getPl35OeBsHtml(pl3Rows, pl5Rows);
+    });
+    context.subscriptions.push(pl35OeBsDisposable);
+
     // 大乐透选号 / 杀号（可视化选号盘 + 方案持久化记录）
     let dltPickKillDisposable = vscode.commands.registerCommand('myPlugin.dltPickKill', async () => {
         let history = [];
@@ -2325,6 +2403,9 @@ class LotteryTreeDataProvider {
                 this.createItem('🎯 大乐透选号杀号', 'myPlugin.dltPickKill', '🎯'),
                 this.createItem('🔢 号码排序', 'myPlugin.sortNumbers', '🔢'),
                 this.createItem('🔥 热号统计', 'myPlugin.hotNumbers', '🔥'),
+                this.createItem('🎯 快8罕见形态选号', 'myPlugin.kl8RarePick', '🎯'),
+                this.createItem('💥 快8爆区分析', 'myPlugin.kl8Burst', '💥'),
+                this.createItem('🎯 排3/排5奇偶大小预测', 'myPlugin.pl35OeBs', '🎯'),
                 this.createItem('🛤️ 012路趋势', 'myPlugin.roadAnalysis', '🛤️'),
                 this.createItem('📜 排三口诀', 'myPlugin.pl3Formula', '📜'),
                 this.createItem('🎲 排五口诀', 'myPlugin.pl5Formula', '🎲'),
@@ -9312,6 +9393,776 @@ function render() {
     }
     sel.addEventListener('change', render);
 })();
+render();
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 快乐8 罕见形态选号 Webview HTML（逆向思维）
+ * 逻辑：任一 k 码组合命中概率恒等，"逆向"只能作用于形态——
+ *       用蒙特卡洛估计随机 k 子集的 7 维形态分布，取分布尾部的组合，并叠加约束（最大连号 / 避开生日区 / 组间分散）。
+ * 全部在页面内计算，无外部数据依赖。
+ */
+function getKl8RarePickHtml() {
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>快乐8 罕见形态选号</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
+h2 { color: #e8a87c; margin-bottom: 6px; font-size: 20px; }
+.sub { color: #aaa; margin-bottom: 10px; font-size: 12px; line-height: 1.7; }
+.ctrl { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.ctrl label { color: #8ec5ff; font-size: 12px; }
+select, input[type=number] { background: #2d2d30; color: #ddd; border: 1px solid #555; border-radius: 5px; padding: 4px 8px; font-size: 13px; }
+input[type=number] { width: 60px; }
+button { background: #0e639c; color: #fff; border: none; border-radius: 5px; padding: 7px 16px; font-size: 13px; cursor: pointer; }
+button:hover { background: #1177bb; }
+button.ghost { background: #3a3d41; }
+.calc-time { color: #feca57; font-size: 12px; margin: 6px 0 10px; }
+.out { margin-top: 8px; }
+.row { background: #252526; border: 1px solid #444; border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; }
+.row-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.row-no { color: #feca57; font-weight: bold; }
+.tags { color: #aaa; font-size: 12px; line-height: 1.8; }
+.tags b { color: #8ec5ff; }
+.balls { line-height: 2.2; }
+.zball { display: inline-block; min-width: 28px; height: 28px; line-height: 28px; text-align: center; border-radius: 50%; font-size: 12px; font-weight: 600; color: #fff; margin: 2px 3px; padding: 0 4px; }
+.zc0 { background: linear-gradient(135deg,#e67e22,#f39c12); }
+.zc1 { background: linear-gradient(135deg,#2ecc71,#27ae60); }
+.zc2 { background: linear-gradient(135deg,#3498db,#2980b9); }
+.zc3 { background: linear-gradient(135deg,#9b59b6,#8e44ad); }
+.zc4 { background: linear-gradient(135deg,#e74c3c,#c0392b); }
+.zc5 { background: linear-gradient(135deg,#16a085,#1abc9c); }
+.zc6 { background: linear-gradient(135deg,#d35400,#e67e22); }
+.zc7 { background: linear-gradient(135deg,#7f8c8d,#95a5a6); }
+.note { background: rgba(142,197,255,0.08); border: 1px solid rgba(142,197,255,0.25); border-radius: 8px; padding: 10px 14px; color: #aaa; font-size: 12px; line-height: 1.9; margin-top: 16px; }
+.note b { color: #8ec5ff; }
+.toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #2d2d30; border: 1px solid #8ec5ff; color: #fff; padding: 8px 18px; border-radius: 6px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+.toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<h2>🎯 快乐8 · 罕见形态选号（逆向思维）</h2>
+<div class="sub">
+    单注概率完全相同（任一 k 码组合 = 1/C(80,k)），"逆向"只针对<b>形态</b>：和值/跨度/奇偶/大小/尾数种类/区间覆盖/生日区，取分布尾部，叠加最大连号约束。
+</div>
+<div class="ctrl">
+    <label>玩法</label>
+    <select id="selK">
+        <option value="4">选四</option>
+        <option value="5">选五</option>
+        <option value="6" selected>选六</option>
+        <option value="7">选七</option>
+        <option value="8">选八</option>
+        <option value="9">选九</option>
+        <option value="10">选十</option>
+    </select>
+    <label>罕见强度</label>
+    <select id="selInt">
+        <option value="0.10">温和（排除 10% 极端尾）</option>
+        <option value="0.03" selected>标准（排除 3% 极端尾）</option>
+        <option value="0">极端（无限制，最罕见形态）</option>
+    </select>
+    <label>最大连号</label>
+    <select id="selRun">
+        <option value="3">≤3 连</option>
+        <option value="4" selected>≤4 连</option>
+        <option value="5">≤5 连</option>
+    </select>
+    <label><input type="checkbox" id="chkBirth"> 避开 1-31 生日区</label>
+    <label>组数</label>
+    <input type="number" id="inpN" value="20" min="5" max="50">
+    <label>组间最大重合</label>
+    <input type="number" id="inpOv" value="auto" min="0" max="10">
+    <button id="btnGen">🎲 生成</button>
+    <button id="btnCopy" class="ghost">📋 复制全部</button>
+</div>
+<div class="calc-time" id="calcTime"></div>
+<div class="out" id="out">点击「生成」开始搜索…</div>
+<div class="note">
+    <b>说明：</b><br>
+    · <b>温和</b>：排除任一形态维度落在最极端 10% 尾部的组合，结果"不寻常但不离谱"，更容易与冷门形态吻合。<br>
+    · <b>标准</b>：排除 3% 极端尾，在罕见与可玩性之间折中。<br>
+    · <b>极端</b>：完全按罕见度最大化，会出现全大/全小、尾数种类少、区间集中的极端形态（即上一版输出）。<br>
+    · <b>组间最大重合</b>：留空或填 "auto" = 默认取 floor(k×0.6)，确保 20 组彼此分散。<br>
+    · ⚠️ 任一注的中奖概率与期望收益恒等于机选（快乐8 各玩法返还率约 58%），罕见形态只影响"形态少见"，不影响"号码本身概率"。撞中冷门形态时不易与他人分摊奖金，代价是这种形态本身极少出现。
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(function () {
+    var vscode = null;
+    try { if (typeof acquireVsCodeApi === 'function') vscode = acquireVsCodeApi(); } catch (e) { vscode = null; }
+    var KEYS = ['sum', 'span', 'odd', 'big', 'tail', 'zone', 'birth'];
+    function mulberry32(seed) {
+        var t = seed >>> 0;
+        return function () {
+            t = (t + 0x6D2B79F5) >>> 0;
+            var r = Math.imul(t ^ (t >>> 15), 1 | t);
+            r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+            return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+        };
+    }
+    function maxRun(a) {
+        var best = 1, cur = 1;
+        for (var i = 1; i < a.length; i++) {
+            if (a[i] === a[i - 1] + 1) { cur++; if (cur > best) best = cur; } else cur = 1;
+        }
+        return a.length ? best : 0;
+    }
+    function feat(a) {
+        var s = a.slice().sort(function (x, y) { return x - y; });
+        var t = {}, z = {};
+        var sum = 0, odd = 0, big = 0, birth = 0, i;
+        for (i = 0; i < s.length; i++) {
+            var n = s[i];
+            sum += n; if (n % 2 === 1) odd++; if (n > 40) big++; if (n <= 31) birth++;
+            t[n % 10] = 1; z[Math.floor((n - 1) / 10)] = 1;
+        }
+        var tailN = 0, zoneN = 0;
+        for (var k in t) tailN++; for (var kk in z) zoneN++;
+        return { sum: sum, span: s[s.length - 1] - s[0], odd: odd, big: big, tail: tailN, zone: zoneN, birth: birth };
+    }
+    function sampleK(k, rnd) {
+        var pool = [];
+        for (var i = 1; i <= 80; i++) pool.push(i);
+        for (i = 79; i > 0; i--) { var j = Math.floor(rnd() * (i + 1)); var t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
+        return pool.slice(0, k).sort(function (a, b) { return a - b; });
+    }
+    // 蒙特卡洛基准：每维用 Map 存 v->{le,ge}
+    function buildBase(k, n, rnd) {
+        var cnt = {};
+        for (var i = 0; i < KEYS.length; i++) cnt[KEYS[i]] = {};
+        for (i = 0; i < n; i++) {
+            var f = feat(sampleK(k, rnd));
+            for (var j = 0; j < KEYS.length; j++) {
+                var key = KEYS[j], v = f[key];
+                cnt[key][v] = (cnt[key][v] || 0) + 1;
+            }
+        }
+        var base = {};
+        for (j = 0; j < KEYS.length; j++) {
+            var key = KEYS[j], m = cnt[key], total = 0;
+            var arr = [];
+            for (var v in m) arr.push([parseInt(v, 10), m[v]]);
+            arr.sort(function (a, b) { return a[0] - b[0]; });
+            var lookup = {}, acc = 0;
+            for (var idx = 0; idx < arr.length; idx++) {
+                var val = arr[idx][0], c = arr[idx][1];
+                acc += c / n;
+                lookup[val] = { le: acc, ge: 1 - (acc - c / n) };
+            }
+            base[key] = lookup;
+        }
+        return base;
+    }
+    function tailP(lookup, v) {
+        var e = lookup[v];
+        if (e) { var m = Math.min(e.le, e.ge); return m < 1e-4 ? 1e-4 : m; }
+        // 找最近的 key（理论上 sample 不会越界，兜底）
+        var ks = [];
+        for (var kk in lookup) ks.push(parseInt(kk, 10));
+        ks.sort(function (a, b) { return a - b; });
+        if (ks.length === 0) return 0.5;
+        if (v < ks[0]) return Math.max(lookup[ks[0]].ge, 1e-4);
+        return Math.max(lookup[ks[ks.length - 1]].le, 1e-4);
+    }
+    function score(a, base) {
+        var f = feat(a), s = 0;
+        for (var i = 0; i < KEYS.length; i++) s += -Math.log10(tailP(base[KEYS[i]], f[KEYS[i]]));
+        return s;
+    }
+    function search(k, need, opts) {
+        var rnd = mulberry32((Date.now() & 0xffffffff) >>> 0);
+        var base = buildBase(k, 60000, rnd);
+        var cands = [];
+        var tries = 120000;
+        for (var i = 0; i < tries; i++) {
+            var s = sampleK(k, rnd);
+            if (maxRun(s) > opts.runLimit) continue;
+            if (opts.avoidBirth) {
+                var hasBirth = false;
+                for (var j = 0; j < s.length; j++) if (s[j] <= 31) { hasBirth = true; break; }
+                if (hasBirth) continue;
+            }
+            var f = feat(s);
+            var gateOk = true;
+            for (j = 0; j < KEYS.length; j++) {
+                if (tailP(base[KEYS[j]], f[KEYS[j]]) < opts.floor) { gateOk = false; break; }
+            }
+            if (!gateOk) continue;
+            cands.push({ set: s, sc: score(s, base) });
+        }
+        cands.sort(function (a, b) { return b.sc - a.sc; });
+        var out = [];
+        for (var ci = 0; ci < cands.length && out.length < need; ci++) {
+            var c = cands[ci], ok = true;
+            for (var p = 0; p < out.length; p++) {
+                var ov = 0;
+                for (var q = 0; q < c.set.length; q++) if (out[p].set.indexOf(c.set[q]) >= 0) ov++;
+                if (ov > opts.overlap) { ok = false; break; }
+            }
+            if (ok) out.push(c);
+        }
+        return out;
+    }
+    function pad(n) { return n < 10 ? '0' + n : String(n); }
+    function clsOf(n) { return 'zc' + (Math.floor((n - 1) / 10) % 8); }
+    function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+    function showToast(msg) {
+        var t = document.getElementById('toast');
+        t.textContent = msg;
+        t.classList.add('show');
+        setTimeout(function () { t.classList.remove('show'); }, 1200);
+    }
+    var lastText = '';
+    function render() {
+        var k = parseInt(document.getElementById('selK').value, 10);
+        var floor = parseFloat(document.getElementById('selInt').value);
+        var runLimit = parseInt(document.getElementById('selRun').value, 10);
+        var avoidBirth = document.getElementById('chkBirth').checked;
+        var need = Math.max(5, Math.min(50, parseInt(document.getElementById('inpN').value, 10) || 20));
+        var ovRaw = document.getElementById('inpOv').value.trim().toLowerCase();
+        var overlap = ovRaw === '' || ovRaw === 'auto' ? Math.max(1, Math.floor(k * 0.6)) : Math.max(0, parseInt(ovRaw, 10));
+
+        var t0 = Date.now();
+        var res = search(k, need, { runLimit: runLimit, avoidBirth: avoidBirth, floor: floor, overlap: overlap });
+        var dt = Date.now() - t0;
+
+        if (res.length === 0) {
+            document.getElementById('out').innerHTML = '<div class="sub">⚠️ 当前约束太严，未找到足够组合。可放宽：极端强度 / 放大最大连号 / 关闭避开生日区。</div>';
+            lastText = '';
+            document.getElementById('calcTime').textContent = '⏱ 耗时 ' + dt + 'ms · 候选不足';
+            return;
+        }
+        var html = '';
+        var copyLines = [];
+        for (var i = 0; i < res.length; i++) {
+            var c = res[i];
+            var f = feat(c.set);
+            var balls = c.set.map(function (n) { return '<span class="zball ' + clsOf(n) + '">' + pad(n) + '</span>'; }).join('');
+            var line = c.set.map(pad).join(' ');
+            copyLines.push(line);
+            html += '<div class="row"><div class="row-head"><span class="row-no">#' + (i + 1) + '</span>' +
+                '<span class="tags">罕见度 <b>' + c.sc.toFixed(1) + '</b></span></div>' +
+                '<div class="balls">' + balls + '</div>' +
+                '<div class="tags">和值<b>' + f.sum + '</b> 跨度<b>' + f.span + '</b> 奇偶<b>' + f.odd + ':' + (k - f.odd) + '</b> ' +
+                '大小<b>' + f.big + ':' + (k - f.big) + '</b> 尾数<b>' + f.tail + '</b> 区间<b>' + f.zone + '</b> ≤31号<b>' + f.birth + '</b> 最大连号<b>' + maxRun(c.set) + '</b></div></div>';
+        }
+        document.getElementById('out').innerHTML = html;
+        lastText = copyLines.join('\\n');
+        document.getElementById('calcTime').textContent = '⏱ 共 ' + res.length + ' 组 · 耗时 ' + dt + 'ms · k=' + k + ' 强度=' + (floor === 0 ? '极端' : floor) + ' 连号≤' + runLimit + ' 组间重合≤' + overlap + (avoidBirth ? ' 避开1-31' : '');
+    }
+    function copyAll() {
+        if (!lastText) { showToast('⚠️ 还没有可复制的结果'); return; }
+        var ta = document.createElement('textarea');
+        ta.value = lastText;
+        ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+        document.body.removeChild(ta);
+        if (ok) { showToast('✅ 已复制 ' + lastText.split('\\n').length + ' 组'); return; }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(lastText).then(function () { showToast('✅ 已复制'); }, function () { tryHost(); });
+        } else { tryHost(); }
+    }
+    function tryHost() {
+        if (vscode) { try { vscode.postMessage({ command: 'copyText', text: lastText }); showToast('📤 交给 VSCode 复制…'); } catch (e) { showToast('⚠️ 复制失败'); } }
+        else { showToast('⚠️ 复制失败'); }
+    }
+    document.getElementById('btnGen').addEventListener('click', render);
+    document.getElementById('btnCopy').addEventListener('click', copyAll);
+    window.addEventListener('message', function (ev) {
+        var m = ev.data; if (!m) return;
+        if (m.command === 'copyOk') showToast('✅ 已复制');
+        else if (m.command === 'copyFail') showToast('⚠️ 复制失败');
+    });
+    render();
+})();
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 快乐8 爆区分析 Webview HTML
+ * 爆区 = 某 10 号区开出个数 ≥ 阈值（默认 ≥5）；8 区每区 10 个号，每期共开 20 个。
+ * @param {Array<Object>} rows - 历史（新→旧）
+ * 页面内可选期数 50/100/200/全部 与 爆区阈值 5/6/7，含理论对比（超几何 + 蒙特卡洛）。
+ */
+function getKl8BurstHtml(rows) {
+    const total = rows.length;
+    const latest = rows[0] || null;
+    const latestPeriod = latest ? latest.period : '—';
+    // 注入全部期（每期仅 period + 20 个号），约 100KB 量级，可接受
+    const dataJson = JSON.stringify(rows.map(h => ({ period: h.period, num: h.num || [] })));
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>快乐8 爆区分析 - ${latestPeriod}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
+h2 { color: #e8a87c; margin-bottom: 6px; font-size: 20px; }
+h3 { color: #8ec5ff; margin: 16px 0 8px; font-size: 15px; }
+.sub { color: #aaa; margin-bottom: 10px; font-size: 12px; line-height: 1.7; }
+.ctrl { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.ctrl label { color: #8ec5ff; font-size: 12px; }
+select { background: #2d2d30; color: #ddd; border: 1px solid #555; border-radius: 5px; padding: 4px 8px; font-size: 13px; }
+.calc-time { color: #feca57; font-size: 12px; margin: 6px 0 12px; }
+.cards { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.card { background: #252526; border: 1px solid #444; border-radius: 8px; padding: 10px 16px; min-width: 130px; }
+.card b { display: block; font-size: 22px; color: #feca57; }
+.card span { color: #aaa; font-size: 12px; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+th, td { border: 1px solid #444; padding: 5px 8px; text-align: center; font-size: 12px; }
+th { background: #2d2d30; color: #8ec5ff; }
+.zc { display: inline-block; min-width: 26px; padding: 2px 4px; border-radius: 4px; margin: 1px; font-size: 11px; }
+.burst { background: linear-gradient(135deg,#e74c3c,#c0392b); color: #fff; font-weight: bold; }
+.bigburst { background: linear-gradient(135deg,#8e44ad,#e74c3c); color: #fff; font-weight: bold; box-shadow: 0 0 4px rgba(231,76,60,0.6); }
+.normal { background: #3a3d41; color: #ccc; }
+.ok { color: #2ecc71; } .warn { color: #f39c12; } .hot { color: #e74c3c; font-weight: bold; }
+.note { background: rgba(142,197,255,0.08); border: 1px solid rgba(142,197,255,0.25); border-radius: 8px; padding: 10px 14px; color: #aaa; font-size: 12px; line-height: 1.9; margin-top: 16px; }
+.note b { color: #8ec5ff; }
+.detail-tbl td { font-family: Consolas, monospace; }
+</style>
+</head>
+<body>
+<h2>💥 快乐8 · 爆区分析</h2>
+<div class="sub">
+    8 个区 × 每区 10 个号（1-10 / 11-20 / … / 71-80）；某区开出 <b>≥ 阈值</b> 即记为「爆区」。每期共开 20 个号，区间负相关。
+</div>
+<div class="ctrl">
+    <label>统计期数</label>
+    <select id="selN">
+        <option value="50">近 50 期</option>
+        <option value="100" selected>近 100 期</option>
+        <option value="200">近 200 期</option>
+        <option value="0">全部</option>
+    </select>
+    <label>爆区阈值</label>
+    <select id="selThr">
+        <option value="5" selected>≥5（爆区）</option>
+        <option value="6">≥6（大爆）</option>
+        <option value="7">≥7（超大爆）</option>
+    </select>
+    <span class="sub" id="availTip"></span>
+</div>
+<div class="calc-time" id="calcTime"></div>
+
+<div class="cards" id="cards"></div>
+
+<h3>📊 每期最大区个数分布（实测 vs 理论）</h3>
+<div id="maxDist"></div>
+
+<h3>📈 一期出现几个爆区</h3>
+<div id="cntDist"></div>
+
+<h3>🗺️ 各区爆区次数（vs 理论期望）</h3>
+<div id="zoneStat"></div>
+
+<h3>📋 近期逐期爆区标记</h3>
+<div id="detail"></div>
+
+<div class="note">
+    <b>口径说明：</b><br>
+    · 单区理论 P(≥k) = Σ C(10,i)·C(70,20−i)/C(80,20)（超几何）。<br>
+    · 「至少一爆」理论用<b>蒙特卡洛</b> 5 万次估计（处理 8 区负相关，独立近似会高估）。<br>
+    · ⚠️ 爆区是<b>已发生结果</b>的描述，对下一期没有预测效力：每期独立随机，下一期"至少一爆"的真实概率恒等于上表理论值（阈值 ≥5 时约 46.4%）。所谓"该爆了/不该爆了"都是赌徒谬误。
+</div>
+<script>
+var HISTORY = ${dataJson};
+var AVAIL = HISTORY.length;
+function combN(n, k) {
+    if (k < 0 || k > n) return 0;
+    if (k === 0 || k === n) return 1;
+    if (k > n - k) k = n - k;
+    var r = 1;
+    for (var i = 0; i < k; i++) r = r * (n - i) / (i + 1);
+    return r;
+}
+var C80_20 = combN(80, 20);
+function zonePk(k) { return combN(10, k) * combN(70, 20 - k) / C80_20; }
+function zonePge(thr) { var s = 0; for (var k = thr; k <= 10; k++) s += zonePk(k); return s; }
+function fmtPct(x) { return (x * 100).toFixed(2) + '%'; }
+
+// 蒙特卡洛：随机一期，返回 {any, max, zoneCnt[8]}
+function mcOnce() {
+    var pool = [];
+    for (var i = 1; i <= 80; i++) pool.push(i);
+    for (i = 79; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
+    var zc = [0,0,0,0,0,0,0,0];
+    for (i = 0; i < 20; i++) zc[Math.floor((pool[i] - 1) / 10)]++;
+    return zc;
+}
+// 蒙特卡洛估计：P(至少一区≥thr) 与 最大区个数分布
+function mcTheory(thr, sims) {
+    var any = 0, maxDist = {};
+    for (var i = 0; i < sims; i++) {
+        var zc = mcOnce(), anyHit = false, mz = 0;
+        for (var z = 0; z < 8; z++) { if (zc[z] >= thr) anyHit = true; if (zc[z] > mz) mz = zc[z]; }
+        if (anyHit) any++;
+        maxDist[mz] = (maxDist[mz] || 0) + 1;
+    }
+    return { pAny: any / sims, maxDist: maxDist };
+}
+
+function zoneCounts(row) {
+    var zc = [0,0,0,0,0,0,0,0];
+    var arr = row.num || [];
+    for (var i = 0; i < arr.length; i++) zc[Math.floor((arr[i] - 1) / 10)]++;
+    return zc;
+}
+
+function render() {
+    var Nsel = parseInt(document.getElementById('selN').value, 10);
+    var N = Nsel === 0 ? AVAIL : Math.min(Nsel, AVAIL);
+    var thr = parseInt(document.getElementById('selThr').value, 10);
+    var rows = HISTORY.slice(0, N);
+    var t0 = Date.now();
+
+    // 实测统计
+    var burstAny = 0, bigAny = 0;
+    var zoneBurst = [0,0,0,0,0,0,0,0];
+    var maxDist = {};
+    var cntDist = {};
+    for (var i = 0; i < N; i++) {
+        var zc = zoneCounts(rows[i]);
+        var any = false, mz = 0, cnt = 0;
+        for (var z = 0; z < 8; z++) {
+            if (zc[z] > mz) mz = zc[z];
+            if (zc[z] >= thr) { any = true; cnt++; zoneBurst[z]++; }
+        }
+        if (any) burstAny++;
+        maxDist[mz] = (maxDist[mz] || 0) + 1;
+        cntDist[cnt] = (cntDist[cnt] || 0) + 1;
+    }
+
+    // 理论
+    var pZone = zonePge(thr);
+    var expZonePerDraw = 8 * pZone;
+    var mc = mcTheory(thr, 50000);
+    var pAnyTheory = mc.pAny;
+
+    // 卡片
+    var cards = '';
+    cards += '<div class="card"><b>' + N + '</b><span>统计期数</span></div>';
+    cards += '<div class="card"><b>' + burstAny + ' / ' + N + '</b><span>爆区期数 · 实测 ' + fmtPct(burstAny / N) + ' / 理论 ' + fmtPct(pAnyTheory) + '</span></div>';
+    cards += '<div class="card"><b>' + fmtPct(pZone) + '</b><span>单区 P(≥' + thr + ') · 期望 ' + expZonePerDraw.toFixed(3) + ' 区/期</span></div>';
+    cards += '<div class="card"><b>' + (burstAny / N / Math.max(pAnyTheory, 1e-4)).toFixed(2) + '×</b><span>实测 / 理论 比</span></div>';
+    document.getElementById('cards').innerHTML = cards;
+
+    // 最大区分布
+    var allKeys = [];
+    var seen = {};
+    for (var k in maxDist) { var kn = parseInt(k, 10); if (!seen[kn]) { seen[kn] = 1; allKeys.push(kn); } }
+    for (k in mc.maxDist) { kn = parseInt(k, 10); if (!seen[kn]) { seen[kn] = 1; allKeys.push(kn); } }
+    allKeys.sort(function(a, b) { return a - b; });
+    var mdHtml = '<table><thead><tr><th>最大区个数</th><th>实测期数</th><th>实测占比</th><th>理论占比(蒙特卡洛)</th></tr></thead><tbody>';
+    for (var mi = 0; mi < allKeys.length; mi++) {
+        var m = allKeys[mi];
+        var re = (maxDist[m] || 0) / N;
+        var th = (mc.maxDist[m] || 0) / 50000;
+        mdHtml += '<tr><td>' + m + (m >= thr ? ' 🔥' : '') + '</td><td>' + (maxDist[m] || 0) + '</td><td>' + fmtPct(re) + '</td><td style="color:#aaa;">' + fmtPct(th) + '</td></tr>';
+    }
+    mdHtml += '</tbody></table>';
+    document.getElementById('maxDist').innerHTML = mdHtml;
+
+    // 几个爆区分布
+    var cntKeys = [];
+    for (k in cntDist) cntKeys.push(parseInt(k, 10));
+    cntKeys.sort(function(a, b) { return a - b; });
+    var cdHtml = '<table><thead><tr><th>一期爆区个数</th><th>期数</th><th>占比</th></tr></thead><tbody>';
+    for (var ci = 0; ci < cntKeys.length; ci++) {
+        var c = cntKeys[ci];
+        cdHtml += '<tr><td>' + c + '</td><td>' + cntDist[c] + '</td><td>' + fmtPct(cntDist[c] / N) + '</td></tr>';
+    }
+    cdHtml += '</tbody></table>';
+    document.getElementById('cntDist').innerHTML = cdHtml;
+
+    // 各区爆区次数
+    var expZone = N * pZone;
+    var zsHtml = '<table><thead><tr><th>区间</th><th>爆区次数</th><th>实测占比</th><th>理论期望次数</th><th>偏差</th></tr></thead><tbody>';
+    for (var z = 0; z < 8; z++) {
+        var lo = z * 10 + 1, hi = (z + 1) * 10;
+        var dev = zoneBurst[z] - expZone;
+        var devCls = Math.abs(dev) > Math.sqrt(N * pZone * (1 - pZone)) * 1.5 ? 'hot' : '';
+        zsHtml += '<tr><td>' + lo + '-' + hi + '</td><td>' + zoneBurst[z] + '</td><td>' + fmtPct(zoneBurst[z] / N) + '</td>' +
+            '<td style="color:#aaa;">' + expZone.toFixed(1) + '</td><td class="' + devCls + '">' + (dev >= 0 ? '+' : '') + dev.toFixed(1) + '</td></tr>';
+    }
+    zsHtml += '</tbody></table>';
+    document.getElementById('zoneStat').innerHTML = zsHtml;
+
+    // 逐期明细（最多显示最近 min(N, 100) 期）
+    var showN = Math.min(N, 100);
+    var dHtml = '<table class="detail-tbl"><thead><tr><th>期号</th><th>1-10</th><th>11-20</th><th>21-30</th><th>31-40</th><th>41-50</th><th>51-60</th><th>61-70</th><th>71-80</th><th>最大</th></tr></thead><tbody>';
+    for (var r = 0; r < showN; r++) {
+        var row = rows[r];
+        var zc = zoneCounts(row);
+        var mz = 0;
+        dHtml += '<tr><td>' + row.period + '</td>';
+        for (z = 0; z < 8; z++) {
+            if (zc[z] > mz) mz = zc[z];
+            var cls = zc[z] >= thr ? (zc[z] >= thr + 1 ? 'bigburst' : 'burst') : 'normal';
+            dHtml += '<td><span class="zc ' + cls + '">' + zc[z] + '</span></td>';
+        }
+        dHtml += '<td class="' + (mz >= thr ? 'hot' : '') + '">' + mz + '</td></tr>';
+    }
+    dHtml += '</tbody></table>';
+    if (N > showN) dHtml += '<div class="sub">（仅显示最近 ' + showN + ' 期，统计基于全部 ' + N + ' 期）</div>';
+    document.getElementById('detail').innerHTML = dHtml;
+
+    document.getElementById('availTip').textContent = '本次实际统计 ' + N + ' 期（' + (N > 0 ? rows[N - 1].period + ' ~ ' + rows[0].period : '—') + '）';
+    document.getElementById('calcTime').textContent = '⏱ 本次计算时间：' + new Date().toLocaleString('zh-CN') + ' · 耗时 ' + (Date.now() - t0) + 'ms（蒙特卡洛 5 万次）';
+}
+document.getElementById('selN').addEventListener('change', render);
+document.getElementById('selThr').addEventListener('change', render);
+render();
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 排列三/五 奇偶大小概率预测 Webview HTML
+ * @param {Array<Object>} pl3Rows - 排列三历史（新→旧，最多 300 期）
+ * @param {Array<Object>} pl5Rows - 排列五历史（新→旧，最多 300 期）
+ * 页面内可选彩种 pl3/pl5 + 期数 100/200/300，含每位频次、奇偶/大小形态、双方案预测与理论对比。
+ */
+function getPl35OeBsHtml(pl3Rows, pl5Rows) {
+    const dataJson = JSON.stringify({
+        pl3: pl3Rows.map(h => ({ period: h.period, num: h.num || [] })),
+        pl5: pl5Rows.map(h => ({ period: h.period, num: h.num || [] }))
+    });
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>排列三/五 奇偶大小预测</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
+h2 { color: #e8a87c; margin-bottom: 6px; font-size: 20px; }
+h3 { color: #8ec5ff; margin: 16px 0 8px; font-size: 15px; }
+.sub { color: #aaa; margin-bottom: 10px; font-size: 12px; line-height: 1.7; }
+.ctrl { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.ctrl label { color: #8ec5ff; font-size: 12px; }
+select { background: #2d2d30; color: #ddd; border: 1px solid #555; border-radius: 5px; padding: 4px 8px; font-size: 13px; }
+.calc-time { color: #feca57; font-size: 12px; margin: 6px 0 12px; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+th, td { border: 1px solid #444; padding: 5px 8px; text-align: center; font-size: 12px; }
+th { background: #2d2d30; color: #8ec5ff; }
+.hot-cell { background: rgba(254,202,87,0.18); color: #feca57; font-weight: bold; }
+.pred-box { background: #252526; border: 1px solid #feca57; border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; }
+.pred-box b { color: #feca57; }
+.pred-combo { font-size: 28px; font-family: Consolas, monospace; color: #fff; letter-spacing: 4px; margin: 8px 0; }
+.ball { display: inline-block; min-width: 30px; height: 30px; line-height: 30px; border-radius: 50%; text-align: center; font-size: 14px; font-weight: 700; color: #fff; margin: 0 3px; }
+.ball-odd-big { background: linear-gradient(135deg,#e74c3c,#c0392b); }
+.ball-odd-small { background: linear-gradient(135deg,#e67e22,#f39c12); }
+.ball-even-big { background: linear-gradient(135deg,#9b59b6,#8e44ad); }
+.ball-even-small { background: linear-gradient(135deg,#3498db,#2980b9); }
+.tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; margin-left: 6px; }
+.tag-oe { background: rgba(46,204,113,0.2); color: #2ecc71; }
+.tag-bs { background: rgba(155,89,182,0.2); color: #b388ff; }
+.note { background: rgba(142,197,255,0.08); border: 1px solid rgba(142,197,255,0.25); border-radius: 8px; padding: 10px 14px; color: #aaa; font-size: 12px; line-height: 1.9; margin-top: 16px; }
+.note b { color: #8ec5ff; }
+.note .warn { color: #f39c12; }
+</style>
+</head>
+<body>
+<h2>🎯 排列三/五 · 奇偶大小概率预测</h2>
+<div class="sub">
+    口径：奇=1,3,5,7,9 / 偶=0,2,4,6,8 ；大=5-9 / 小=0-4。基于近 N 期历史频率做最大似然估计。
+</div>
+<div class="ctrl">
+    <label>彩种</label>
+    <select id="selType">
+        <option value="pl3">排列三（3 位）</option>
+        <option value="pl5">排列五（5 位）</option>
+    </select>
+    <label>统计期数</label>
+    <select id="selN">
+        <option value="100">近 100 期</option>
+        <option value="200">近 200 期</option>
+        <option value="300" selected>近 300 期</option>
+    </select>
+    <span class="sub" id="availTip"></span>
+</div>
+<div class="calc-time" id="calcTime"></div>
+<div id="content"></div>
+<div class="note">
+    <b>概率学事实（必读）：</b><br>
+    · 排列三/五每位独立等概率 10%，奇偶、大小理论上都是 50/50。表格里 13% vs 12.5%、5.3% vs 3.13% 的偏差都在<b>正常抽样波动</b>内（300 期标准误约 ±2~3 个百分点），不构成"下期更可能出现"的证据。<br>
+    · "预测组合"的真实下期命中概率仍约 <b>1/1000（排列三）/ 1/100000（排列五）</b>，所谓"经验概率"只是历史频率连乘，<b>不是中奖概率</b>。<br>
+    · 方案 A（每位最热号连乘）与方案 B（锁定最热奇偶+大小双形态后取最热号）可能给出<b>不同答案</b>，这正说明"最大似然"在不同聚合层级没有唯一真值。<br>
+    · <span class="warn">⚠️ 每期独立随机，历史频率对下一期没有预测效力。排列三返奖率约 52%，长期投注必亏，本页仅供统计参考。</span>
+</div>
+<script>
+var DATA = ${dataJson};
+var POS = { pl3: ['百', '十', '个'], pl5: ['万', '千', '百', '十', '个'] };
+function combN(n, k) { if (k < 0 || k > n) return 0; if (k === 0 || k === n) return 1; if (k > n - k) k = n - k; var r = 1; for (var i = 0; i < k; i++) r = r * (n - i) / (i + 1); return r; }
+function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function ballCls(d) {
+    var oe = d % 2 === 1 ? 'odd' : 'even';
+    var bs = d >= 5 ? 'big' : 'small';
+    return 'ball-' + oe + '-' + bs;
+}
+function render() {
+    var type = document.getElementById('selType').value;
+    var Nsel = parseInt(document.getElementById('selN').value, 10);
+    var rowsAll = DATA[type] || [];
+    var N = Math.min(Nsel, rowsAll.length);
+    var rows = rowsAll.slice(0, N);
+    var pos = POS[type];
+    var k = pos.length;
+    var t0 = Date.now();
+
+    // 每位 digit 频次
+    var digFreq = [];
+    for (var p = 0; p < k; p++) digFreq.push(new Array(10).fill(0));
+    var oePat = {}, bsPat = {}, jointPat = {};
+    for (var i = 0; i < N; i++) {
+        var nums = rows[i].num;
+        var oe = '', bs = '';
+        for (p = 0; p < k; p++) {
+            var d = nums[p];
+            digFreq[p][d]++;
+            oe += (d % 2 === 1 ? '奇' : '偶');
+            bs += (d >= 5 ? '大' : '小');
+        }
+        oePat[oe] = (oePat[oe] || 0) + 1;
+        bsPat[bs] = (bsPat[bs] || 0) + 1;
+        jointPat[oe + '/' + bs] = (jointPat[oe + '/' + bs] || 0) + 1;
+    }
+
+    var html = '';
+
+    // 1. 每位数字频次表
+    html += '<h3>📊 每位数字频次（0-9，最热号高亮）</h3><table><thead><tr><th>位\\号</th>';
+    for (var d = 0; d < 10; d++) html += '<th>' + d + '</th>';
+    html += '</tr></thead><tbody>';
+    for (p = 0; p < k; p++) {
+        var bestD = 0, bestC = -1;
+        for (d = 0; d < 10; d++) if (digFreq[p][d] > bestC) { bestC = digFreq[p][d]; bestD = d; }
+        html += '<tr><td>' + esc(pos[p]) + '</td>';
+        for (d = 0; d < 10; d++) html += '<td class="' + (d === bestD ? 'hot-cell' : '') + '">' + digFreq[p][d] + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+
+    // 2. 每位奇偶/大小
+    html += '<h3>🎲 每位 奇偶 / 大小 概率（理论 50/50）</h3><table><thead><tr><th>位</th><th>奇</th><th>偶</th><th>大</th><th>小</th></tr></thead><tbody>';
+    for (p = 0; p < k; p++) {
+        var odd = 0, big = 0;
+        for (d = 0; d < 10; d++) { if (d % 2 === 1) odd += digFreq[p][d]; if (d >= 5) big += digFreq[p][d]; }
+        html += '<tr><td>' + esc(pos[p]) + '</td>' +
+            '<td>' + (odd / N * 100).toFixed(1) + '%</td><td>' + ((N - odd) / N * 100).toFixed(1) + '%</td>' +
+            '<td>' + (big / N * 100).toFixed(1) + '%</td><td>' + ((N - big) / N * 100).toFixed(1) + '%</td></tr>';
+    }
+    html += '</tbody></table>';
+
+    // 排序辅助
+    function topEntries(obj, n) {
+        var arr = [];
+        for (var key in obj) arr.push([key, obj[key]]);
+        arr.sort(function (a, b) { return b[1] - a[1]; });
+        return arr.slice(0, n);
+    }
+    var oeArr = topEntries(oePat, 5);
+    var bsArr = topEntries(bsPat, 5);
+    var jArr = topEntries(jointPat, 3);
+    var thOe = (100 / Math.pow(2, k)).toFixed(2);
+    var thBs = thOe;
+    var thJ = (100 / Math.pow(4, k)).toFixed(4);
+
+    // 3. 形态 TOP
+    html += '<h3>🔥 奇偶形态 TOP5（理论每种 ' + thOe + '%）</h3><table><thead><tr><th>形态</th><th>次数</th><th>占比</th><th>偏差</th></tr></thead><tbody>';
+    for (i = 0; i < oeArr.length; i++) html += '<tr><td>' + esc(oeArr[i][0]) + '</td><td>' + oeArr[i][1] + '</td><td>' + (oeArr[i][1] / N * 100).toFixed(2) + '%</td><td>' + ((oeArr[i][1] / N * 100 - thOe).toFixed(2)) + '%</td></tr>';
+    html += '</tbody></table>';
+
+    html += '<h3>🔥 大小形态 TOP5（理论每种 ' + thBs + '%）</h3><table><thead><tr><th>形态</th><th>次数</th><th>占比</th><th>偏差</th></tr></thead><tbody>';
+    for (i = 0; i < bsArr.length; i++) html += '<tr><td>' + esc(bsArr[i][0]) + '</td><td>' + bsArr[i][1] + '</td><td>' + (bsArr[i][1] / N * 100).toFixed(2) + '%</td><td>' + ((bsArr[i][1] / N * 100 - thBs).toFixed(2)) + '%</td></tr>';
+    html += '</tbody></table>';
+
+    html += '<h3>🔗 联合 奇偶/大小 形态 TOP3（理论每种 ' + thJ + '%，样本稀疏仅供参考）</h3><table><thead><tr><th>奇偶/大小</th><th>次数</th><th>占比</th></tr></thead><tbody>';
+    for (i = 0; i < jArr.length; i++) html += '<tr><td>' + esc(jArr[i][0]) + '</td><td>' + jArr[i][1] + '</td><td>' + (jArr[i][1] / N * 100).toFixed(2) + '%</td></tr>';
+    html += '</tbody></table>';
+
+    // ===== 预测 =====
+    // 方案 A：每位最热号
+    var predA = [], predAP = [];
+    for (p = 0; p < k; p++) {
+        var bd = 0, bc = -1;
+        for (d = 0; d < 10; d++) if (digFreq[p][d] > bc) { bc = digFreq[p][d]; bd = d; }
+        predA.push(bd); predAP.push(bc / N);
+    }
+    var comboA = predA.join('');
+    var oeA = '', bsA = '', pAP = 1;
+    for (p = 0; p < k; p++) { oeA += (predA[p] % 2 === 1 ? '奇' : '偶'); bsA += (predA[p] >= 5 ? '大' : '小'); pAP *= predAP[p]; }
+    var histHitA = 0;
+    for (i = 0; i < N; i++) if (rows[i].num.slice(0, k).join('') === comboA) histHitA++;
+
+    // 方案 B：锁定最热奇偶形态 + 最热大小形态，每位在约束内取最热号
+    var topOe = oeArr[0][0], topBs = bsArr[0][0];
+    var predB = [];
+    for (p = 0; p < k; p++) {
+        var wantOe = topOe.charAt(p), wantBs = topBs.charAt(p);
+        var bd2 = -1, bc2 = -1;
+        for (d = 0; d < 10; d++) {
+            var isOe = d % 2 === 1 ? '奇' : '偶';
+            var isBs = d >= 5 ? '大' : '小';
+            if (isOe === wantOe && isBs === wantBs && digFreq[p][d] > bc2) { bc2 = digFreq[p][d]; bd2 = d; }
+        }
+        if (bd2 < 0) bd2 = 0; // 兜底
+        predB.push(bd2);
+    }
+    var comboB = predB.join('');
+    var oeB = '', bsB = '';
+    for (p = 0; p < k; p++) { oeB += (predB[p] % 2 === 1 ? '奇' : '偶'); bsB += (predB[p] >= 5 ? '大' : '小'); }
+
+    function predHtml(title, combo, oe, bs, pStr, extra) {
+        var balls = '';
+        for (var i = 0; i < combo.length; i++) balls += '<span class="ball ' + ballCls(parseInt(combo.charAt(i), 10)) + '">' + combo.charAt(i) + '</span>';
+        return '<div class="pred-box"><b>' + title + '</b>' +
+            '<div class="pred-combo">' + balls + '</div>' +
+            '<span class="tag tag-oe">奇偶 ' + oe + '</span><span class="tag tag-bs">大小 ' + bs + '</span>' +
+            '<div class="sub" style="margin-top:8px;">' + pStr + '</div>' + (extra || '') + '</div>';
+    }
+    html += '<h3>🔮 概率预测</h3>';
+    html += predHtml('方案 A · 每位最热号连乘（独立假设）', comboA, oeA, bsA,
+        '经验概率 = ' + (pAP * 100).toFixed(3) + '%（理论 1/' + Math.pow(10, k) + ' = ' + (100 / Math.pow(10, k)).toFixed(3) + '%） · 历史出现 ' + histHitA + ' / ' + N + ' 期',
+        '<div class="sub">每位最热号：' + predA.map(function (d, p) { return pos[p] + '=' + d + '(' + (predAP[p] * 100).toFixed(1) + '%)'; }).join('  ') + '</div>');
+    html += predHtml('方案 B · 锁定最热奇偶(' + topOe + ')+最热大小(' + topBs + ')后取最热号', comboB, oeB, bsB,
+        '约束：每位必须同时满足该位的奇偶与大小形态，再取该约束下频次最高的数字',
+        '<div class="sub">每位：' + predB.map(function (d, p) { return pos[p] + '=' + d + '(' + topOe.charAt(p) + topBs.charAt(p) + ')'; }).join('  ') + '</div>');
+
+    // 最近 10 期明细
+    html += '<h3>📋 最近 10 期</h3><table><thead><tr><th>期号</th><th>号码</th><th>奇偶</th><th>大小</th></tr></thead><tbody>';
+    var showN = Math.min(10, N);
+    for (i = 0; i < showN; i++) {
+        var r = rows[i];
+        var nums2 = r.num.slice(0, k);
+        var oe2 = '', bs2 = '';
+        for (p = 0; p < k; p++) { oe2 += (nums2[p] % 2 === 1 ? '奇' : '偶'); bs2 += (nums2[p] >= 5 ? '大' : '小'); }
+        var balls2 = '';
+        for (p = 0; p < k; p++) balls2 += '<span class="ball ' + ballCls(nums2[p]) + '">' + nums2[p] + '</span>';
+        html += '<tr><td>' + esc(r.period) + '</td><td>' + balls2 + '</td><td>' + oe2 + '</td><td>' + bs2 + '</td></tr>';
+    }
+    html += '</tbody></table>';
+
+    document.getElementById('content').innerHTML = html;
+    document.getElementById('availTip').textContent = '本次实际统计 ' + N + ' 期（' + (N > 0 ? rows[N - 1].period + ' ~ ' + rows[0].period : '—') + '）';
+    document.getElementById('calcTime').textContent = '⏱ 本次计算时间：' + new Date().toLocaleString('zh-CN') + ' · 耗时 ' + (Date.now() - t0) + 'ms';
+}
+document.getElementById('selType').addEventListener('change', render);
+document.getElementById('selN').addEventListener('change', render);
 render();
 </script>
 </body>

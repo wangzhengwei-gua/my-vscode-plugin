@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.8.52",
+    "version": "0.8.55",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -46,6 +46,9 @@
         "onCommand:myPlugin.dltPickKill",
         "onCommand:myPlugin.sortNumbers",
         "onCommand:myPlugin.hotNumbers",
+        "onCommand:myPlugin.kl8RarePick",
+        "onCommand:myPlugin.kl8Burst",
+        "onCommand:myPlugin.pl35OeBs",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -161,6 +164,18 @@
             {
                 "command": "myPlugin.hotNumbers",
                 "title": "最近10期热号"
+            },
+            {
+                "command": "myPlugin.kl8RarePick",
+                "title": "快8罕见形态选号"
+            },
+            {
+                "command": "myPlugin.kl8Burst",
+                "title": "快8爆区分析"
+            },
+            {
+                "command": "myPlugin.pl35OeBs",
+                "title": "排3/排5奇偶大小预测"
             }
         ],
         "viewsContainers": {
