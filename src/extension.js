@@ -1255,30 +1255,33 @@ function activate(context) {
 
     // 排列三/五 奇偶大小概率预测（每位频次 + 奇偶/大小形态 + 双方案预测 + 理论对比）
     let pl35OeBsDisposable = vscode.commands.registerCommand('myPlugin.pl35OeBs', async () => {
-        let pl3Rows = [], pl5Rows = [];
+        let pl3Rows = [], pl5Rows = [], fc3Rows = [];
         try {
             const cfg3 = LOTTERY_TYPES.find(c => c.key === 'pl3');
             const cfg5 = LOTTERY_TYPES.find(c => c.key === 'pl5');
+            const cfgF = LOTTERY_TYPES.find(c => c.key === 'fc3d');
             const h3 = cfg3 ? loadLotteryData(cfg3) : [];
             const h5 = cfg5 ? loadLotteryData(cfg5) : [];
-            if (h3.length === 0 && h5.length === 0) {
-                vscode.window.showWarningMessage('排列三/排列五数据为空，请先刷新数据');
+            const hF = cfgF ? loadLotteryData(cfgF) : [];
+            if (h3.length === 0 && h5.length === 0 && hF.length === 0) {
+                vscode.window.showWarningMessage('排列三/排列五/福彩3D数据为空，请先刷新数据');
                 return;
             }
             // 旧→新 → 取最后 300 → 反转为新→旧
             pl3Rows = h3.slice(-300).slice().reverse();
             pl5Rows = h5.slice(-300).slice().reverse();
+            fc3Rows = hF.slice(-300).slice().reverse();
         } catch (e) {
-            vscode.window.showErrorMessage('读取排列数据失败: ' + e.message);
+            vscode.window.showErrorMessage('读取数据失败: ' + e.message);
             return;
         }
         const panel = vscode.window.createWebviewPanel(
             'pl35OeBs',
-            '排列三/五 奇偶大小预测',
+            '排列三/五/3D 奇偶大小预测',
             vscode.ViewColumn.One,
             { enableScripts: true, retainContextWhenHidden: true }
         );
-        panel.webview.html = getPl35OeBsHtml(pl3Rows, pl5Rows);
+        panel.webview.html = getPl35OeBsHtml(pl3Rows, pl5Rows, fc3Rows);
     });
     context.subscriptions.push(pl35OeBsDisposable);
 
@@ -2405,7 +2408,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🔥 热号统计', 'myPlugin.hotNumbers', '🔥'),
                 this.createItem('🎯 快8罕见形态选号', 'myPlugin.kl8RarePick', '🎯'),
                 this.createItem('💥 快8爆区分析', 'myPlugin.kl8Burst', '💥'),
-                this.createItem('🎯 排3/排5奇偶大小预测', 'myPlugin.pl35OeBs', '🎯'),
+                this.createItem('🎯 排3/排5/3D奇偶大小预测', 'myPlugin.pl35OeBs', '🎯'),
                 this.createItem('🛤️ 012路趋势', 'myPlugin.roadAnalysis', '🛤️'),
                 this.createItem('📜 排三口诀', 'myPlugin.pl3Formula', '📜'),
                 this.createItem('🎲 排五口诀', 'myPlugin.pl5Formula', '🎲'),
@@ -9936,10 +9939,11 @@ render();
  * @param {Array<Object>} pl5Rows - 排列五历史（新→旧，最多 300 期）
  * 页面内可选彩种 pl3/pl5 + 期数 100/200/300，含每位频次、奇偶/大小形态、双方案预测与理论对比。
  */
-function getPl35OeBsHtml(pl3Rows, pl5Rows) {
+function getPl35OeBsHtml(pl3Rows, pl5Rows, fc3Rows) {
     const dataJson = JSON.stringify({
         pl3: pl3Rows.map(h => ({ period: h.period, num: h.num || [] })),
-        pl5: pl5Rows.map(h => ({ period: h.period, num: h.num || [] }))
+        pl5: pl5Rows.map(h => ({ period: h.period, num: h.num || [] })),
+        fc3: fc3Rows.map(h => ({ period: h.period, num: h.num || [] }))
     });
     return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -9980,7 +9984,7 @@ th { background: #2d2d30; color: #8ec5ff; }
 </style>
 </head>
 <body>
-<h2>🎯 排列三/五 · 奇偶大小概率预测</h2>
+<h2>🎯 排列三/五/3D · 奇偶大小概率预测</h2>
 <div class="sub">
     口径：奇=1,3,5,7,9 / 偶=0,2,4,6,8 ；大=5-9 / 小=0-4。基于近 N 期历史频率做最大似然估计。
 </div>
@@ -9989,6 +9993,7 @@ th { background: #2d2d30; color: #8ec5ff; }
     <select id="selType">
         <option value="pl3">排列三（3 位）</option>
         <option value="pl5">排列五（5 位）</option>
+        <option value="fc3">福彩3D（3 位）</option>
     </select>
     <label>统计期数</label>
     <select id="selN">
@@ -10009,7 +10014,7 @@ th { background: #2d2d30; color: #8ec5ff; }
 </div>
 <script>
 var DATA = ${dataJson};
-var POS = { pl3: ['百', '十', '个'], pl5: ['万', '千', '百', '十', '个'] };
+var POS = { pl3: ['百', '十', '个'], pl5: ['万', '千', '百', '十', '个'], fc3: ['百', '十', '个'] };
 function combN(n, k) { if (k < 0 || k > n) return 0; if (k === 0 || k === n) return 1; if (k > n - k) k = n - k; var r = 1; for (var i = 0; i < k; i++) r = r * (n - i) / (i + 1); return r; }
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function ballCls(d) {

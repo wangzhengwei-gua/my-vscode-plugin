@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.8.56",
+    "version": "0.8.57",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -175,7 +175,7 @@
             },
             {
                 "command": "myPlugin.pl35OeBs",
-                "title": "排3/排5奇偶大小预测"
+                "title": "排3/排5/3D奇偶大小预测"
             }
         ],
         "viewsContainers": {
