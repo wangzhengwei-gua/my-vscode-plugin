@@ -9971,6 +9971,9 @@ th { background: #2d2d30; color: #8ec5ff; }
 .tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; margin-left: 6px; }
 .tag-oe { background: rgba(46,204,113,0.2); color: #2ecc71; }
 .tag-bs { background: rgba(155,89,182,0.2); color: #b388ff; }
+.rv-hot { color: #e74c3c; font-weight: bold; }
+.rv-cold { color: #2ecc71; }
+.rv-cur { background: rgba(254,202,87,0.18); color: #feca57; font-weight: bold; }
 .note { background: rgba(142,197,255,0.08); border: 1px solid rgba(142,197,255,0.25); border-radius: 8px; padding: 10px 14px; color: #aaa; font-size: 12px; line-height: 1.9; margin-top: 16px; }
 .note b { color: #8ec5ff; }
 .note .warn { color: #f39c12; }
@@ -10142,6 +10145,73 @@ function render() {
     html += predHtml('方案 B · 锁定最热奇偶(' + topOe + ')+最热大小(' + topBs + ')后取最热号', comboB, oeB, bsB,
         '约束：每位必须同时满足该位的奇偶与大小形态，再取该约束下频次最高的数字',
         '<div class="sub">每位：' + predB.map(function (d, p) { return pos[p] + '=' + d + '(' + topOe.charAt(p) + topBs.charAt(p) + ')'; }).join('  ') + '</div>');
+
+    // ===== 连势反转分析 =====
+    var fwd = rows.slice().reverse(); // 旧→新，用于扫描反转率
+    function sideOf(d, prop) { return prop === 'oe' ? (d % 2 === 1 ? '奇' : '偶') : (d >= 5 ? '大' : '小'); }
+    function breakRate(prop, pp, LL) {
+        var total = 0, broke = 0;
+        for (var i = LL; i < fwd.length; i++) {
+            var s0 = sideOf(fwd[i - LL].num[pp], prop);
+            var allSame = true;
+            for (var j = i - LL + 1; j < i; j++) { if (sideOf(fwd[j].num[pp], prop) !== s0) { allSame = false; break; } }
+            if (allSame) { total++; if (sideOf(fwd[i].num[pp], prop) !== s0) broke++; }
+        }
+        return { total: total, broke: broke, rate: total >= 10 ? broke / total : null };
+    }
+    // 当前连势（rows 新→旧，rows[0] 最新，往回数连续同侧期数）
+    var curStreak = [];
+    for (var cp = 0; cp < k; cp++) {
+        var oeS = sideOf(rows[0].num[cp], 'oe'), oeL = 0;
+        for (var ci = 0; ci < rows.length; ci++) { if (sideOf(rows[ci].num[cp], 'oe') === oeS) oeL++; else break; }
+        var bsS = sideOf(rows[0].num[cp], 'bs'), bsL = 0;
+        for (ci = 0; ci < rows.length; ci++) { if (sideOf(rows[ci].num[cp], 'bs') === bsS) bsL++; else break; }
+        curStreak.push({ oe: { side: oeS, len: oeL }, bs: { side: bsS, len: bsL } });
+    }
+
+    html += '<h3>🔗 连势反转分析（连续 L 期同侧后下一期反转率，期望 50%）</h3>';
+    html += '<table><thead><tr><th>位</th><th>属性</th>';
+    for (var LL = 1; LL <= 6; LL++) html += '<th>' + LL + '连</th>';
+    html += '<th>当前连势</th></tr></thead><tbody>';
+    for (var pp = 0; pp < k; pp++) {
+        for (var pi = 0; pi < 2; pi++) {
+            var prop2 = pi === 0 ? 'oe' : 'bs';
+            var propLab = prop2 === 'oe' ? '奇偶' : '大小';
+            html += '<tr><td>' + esc(pos[pp]) + '</td><td>' + propLab + '</td>';
+            for (LL = 1; LL <= 6; LL++) {
+                var rr = breakRate(prop2, pp, LL);
+                if (rr.rate === null) { html += '<td style="color:#555;">—</td>'; }
+                else {
+                    var rvCls = rr.rate > 0.55 ? 'rv-hot' : (rr.rate < 0.45 ? 'rv-cold' : '');
+                    html += '<td class="' + rvCls + '">' + (rr.rate * 100).toFixed(0) + '%<br><span style="font-size:10px;color:#666;">n=' + rr.total + '</span></td>';
+                }
+            }
+            var cur = curStreak[pp][prop2];
+            html += '<td class="rv-cur">' + cur.len + '连' + cur.side + '</td></tr>';
+        }
+    }
+    html += '</tbody></table>';
+
+    // 方案 C：连势反转预测
+    var predC = [], infoC = [];
+    for (pp = 0; pp < k; pp++) {
+        var oeR = breakRate('oe', pp, curStreak[pp].oe.len);
+        var bsR = breakRate('bs', pp, curStreak[pp].bs.len);
+        var oeRate = (oeR.rate !== null) ? oeR.rate : 0.5;
+        var bsRate = (bsR.rate !== null) ? bsR.rate : 0.5;
+        var predOeC = oeRate > 0.5 ? (curStreak[pp].oe.side === '奇' ? '偶' : '奇') : curStreak[pp].oe.side;
+        var predBsC = bsRate > 0.5 ? (curStreak[pp].bs.side === '大' ? '小' : '大') : curStreak[pp].bs.side;
+        var bdC = -1, bcC = -1;
+        for (var dC = 0; dC < 10; dC++) if (sideOf(dC, 'oe') === predOeC && sideOf(dC, 'bs') === predBsC && digFreq[pp][dC] > bcC) { bcC = digFreq[pp][dC]; bdC = dC; }
+        if (bdC < 0) bdC = 0;
+        predC.push(bdC);
+        infoC.push(pos[pp] + '=' + bdC + '(' + predOeC + predBsC + ') oe反转' + (oeRate * 100).toFixed(0) + '% bs反转' + (bsRate * 100).toFixed(0) + '%');
+    }
+    var comboC = predC.join(''), oeCstr = '', bsCstr = '';
+    for (pp = 0; pp < k; pp++) { oeCstr += sideOf(predC[pp], 'oe'); bsCstr += sideOf(predC[pp], 'bs'); }
+    html += predHtml('方案 C · 连势反转（每位取反转率>50%则翻侧，否则延续；再取该侧历史最热号）', comboC, oeCstr, bsCstr,
+        '每位：' + infoC.join('  '),
+        '<div class="sub">⚠️ 反转率多数接近 50%（抽样噪声内），此方案无统计优势；连 L 期后下期反转概率仍约 50%</div>');
 
     // 最近 10 期明细
     html += '<h3>📋 最近 10 期</h3><table><thead><tr><th>期号</th><th>号码</th><th>奇偶</th><th>大小</th></tr></thead><tbody>';
