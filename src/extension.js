@@ -9978,6 +9978,7 @@ th { background: #2d2d30; color: #8ec5ff; }
 .rv-hot { color: #e74c3c; font-weight: bold; }
 .rv-cold { color: #2ecc71; }
 .rv-cur { background: rgba(254,202,87,0.18); color: #feca57; font-weight: bold; }
+code { background: #1e1e1e; padding: 1px 5px; border-radius: 3px; color: #feca57; font-family: Consolas, monospace; }
 .note { background: rgba(142,197,255,0.08); border: 1px solid rgba(142,197,255,0.25); border-radius: 8px; padding: 10px 14px; color: #aaa; font-size: 12px; line-height: 1.9; margin-top: 16px; }
 .note b { color: #8ec5ff; }
 .note .warn { color: #f39c12; }
@@ -10000,6 +10001,13 @@ th { background: #2d2d30; color: #8ec5ff; }
         <option value="100">近 100 期</option>
         <option value="200">近 200 期</option>
         <option value="300" selected>近 300 期</option>
+    </select>
+    <label>每位选号数</label>
+    <select id="selM">
+        <option value="1">1（单注）</option>
+        <option value="2" selected>2（复式 2×…×2）</option>
+        <option value="3">3（复式 3×…×3）</option>
+        <option value="4">4（复式 4×…×4）</option>
     </select>
     <span class="sub" id="availTip"></span>
 </div>
@@ -10103,53 +10111,77 @@ function render() {
     for (i = 0; i < jArr.length; i++) html += '<tr><td>' + esc(jArr[i][0]) + '</td><td>' + jArr[i][1] + '</td><td>' + (jArr[i][1] / N * 100).toFixed(2) + '%</td></tr>';
     html += '</tbody></table>';
 
-    // ===== 预测 =====
-    // 方案 A：每位最热号
-    var predA = [], predAP = [];
-    for (p = 0; p < k; p++) {
-        var bd = 0, bc = -1;
-        for (d = 0; d < 10; d++) if (digFreq[p][d] > bc) { bc = digFreq[p][d]; bd = d; }
-        predA.push(bd); predAP.push(bc / N);
-    }
-    var comboA = predA.join('');
-    var oeA = '', bsA = '', pAP = 1;
-    for (p = 0; p < k; p++) { oeA += (predA[p] % 2 === 1 ? '奇' : '偶'); bsA += (predA[p] >= 5 ? '大' : '小'); pAP *= predAP[p]; }
-    var histHitA = 0;
-    for (i = 0; i < N; i++) if (rows[i].num.slice(0, k).join('') === comboA) histHitA++;
-
-    // 方案 B：锁定最热奇偶形态 + 最热大小形态，每位在约束内取最热号
-    var topOe = oeArr[0][0], topBs = bsArr[0][0];
-    var predB = [];
-    for (p = 0; p < k; p++) {
-        var wantOe = topOe.charAt(p), wantBs = topBs.charAt(p);
-        var bd2 = -1, bc2 = -1;
-        for (d = 0; d < 10; d++) {
-            var isOe = d % 2 === 1 ? '奇' : '偶';
-            var isBs = d >= 5 ? '大' : '小';
-            if (isOe === wantOe && isBs === wantBs && digFreq[p][d] > bc2) { bc2 = digFreq[p][d]; bd2 = d; }
+    // ===== 预测（每位选 m 个号 → 复式） =====
+    var m = Math.max(1, Math.min(4, parseInt(document.getElementById('selM').value, 10) || 1));
+    // 分档取该位前 m 个号：tier0 同时满足奇偶+大小，tier1 仅奇偶，tier2 仅大小，tier3 无约束；同档按频次降序
+    function pickTopN(p, wantOe, wantBs) {
+        var tiers = [[], [], [], []];
+        for (var d = 0; d < 10; d++) {
+            var oe = d % 2 === 1 ? '奇' : '偶';
+            var bs = d >= 5 ? '大' : '小';
+            var t = 3;
+            if (oe === wantOe && bs === wantBs) t = 0;
+            else if (oe === wantOe) t = 1;
+            else if (bs === wantBs) t = 2;
+            tiers[t].push({ d: d, c: digFreq[p][d] });
         }
-        if (bd2 < 0) bd2 = 0; // 兜底
-        predB.push(bd2);
+        var out = [];
+        for (var ti = 0; ti < 4 && out.length < m; ti++) {
+            tiers[ti].sort(function (a, b) { return b.c - a.c; });
+            for (var j = 0; j < tiers[ti].length && out.length < m; j++) out.push(tiers[ti][j].d);
+        }
+        return out.sort(function (a, b) { return a - b; });
     }
-    var comboB = predB.join('');
-    var oeB = '', bsB = '';
-    for (p = 0; p < k; p++) { oeB += (predB[p] % 2 === 1 ? '奇' : '偶'); bsB += (predB[p] >= 5 ? '大' : '小'); }
-
-    function predHtml(title, combo, oe, bs, pStr, extra) {
-        var balls = '';
-        for (var i = 0; i < combo.length; i++) balls += '<span class="ball ' + ballCls(parseInt(combo.charAt(i), 10)) + '">' + combo.charAt(i) + '</span>';
+    function countZ(sets) { var z = 1; for (var i = 0; i < sets.length; i++) z *= sets[i].length; return z; }
+    function histCover(sets) {
+        var c = 0;
+        for (var i = 0; i < N; i++) {
+            var ok = true;
+            for (var p = 0; p < k; p++) if (sets[p].indexOf(rows[i].num[p]) < 0) { ok = false; break; }
+            if (ok) c++;
+        }
+        return c;
+    }
+    function covProb(sets) {
+        var c = 1;
+        for (var p = 0; p < k; p++) { var s = 0; for (var i = 0; i < sets[p].length; i++) s += digFreq[p][sets[p][i]]; c *= s / N; }
+        return c;
+    }
+    function predHtmlM(title, sets, note, extra) {
+        var ballsRow = '', comboStr = '';
+        for (var p = 0; p < sets.length; p++) {
+            var cells = '';
+            for (var i = 0; i < sets[p].length; i++) cells += '<span class="ball ' + ballCls(sets[p][i]) + '">' + sets[p][i] + '</span>';
+            ballsRow += '<div style="margin:4px 0;"><span style="color:#8ec5ff;">' + esc(pos[p]) + '</span> ' + cells + '</div>';
+            comboStr += (p ? ' ' : '') + sets[p].join('');
+        }
+        var z = countZ(sets);
         return '<div class="pred-box"><b>' + title + '</b>' +
-            '<div class="pred-combo">' + balls + '</div>' +
-            '<span class="tag tag-oe">奇偶 ' + oe + '</span><span class="tag tag-bs">大小 ' + bs + '</span>' +
-            '<div class="sub" style="margin-top:8px;">' + pStr + '</div>' + (extra || '') + '</div>';
+            '<div style="margin:8px 0;">' + ballsRow + '</div>' +
+            '<span class="tag tag-oe">复式 ' + sets.map(function (s) { return s.length; }).join('×') + ' = ' + z + ' 注</span>' +
+            '<span class="tag tag-bs">金额 ' + (z * 2) + ' 元</span>' +
+            '<span class="tag tag-oe">历史覆盖 ' + histCover(sets) + '/' + N + ' 期</span>' +
+            '<span class="tag tag-bs">覆盖概率≈' + (covProb(sets) * 100).toFixed(2) + '%</span>' +
+            '<div class="sub" style="margin-top:8px;">' + note + '</div>' +
+            '<div class="sub">复制格式（每位连写，位间空格）：<code>' + comboStr + '</code></div>' +
+            (extra || '') + '</div>';
     }
-    html += '<h3>🔮 概率预测</h3>';
-    html += predHtml('方案 A · 每位最热号连乘（独立假设）', comboA, oeA, bsA,
-        '经验概率 = ' + (pAP * 100).toFixed(3) + '%（理论 1/' + Math.pow(10, k) + ' = ' + (100 / Math.pow(10, k)).toFixed(3) + '%） · 历史出现 ' + histHitA + ' / ' + N + ' 期',
-        '<div class="sub">每位最热号：' + predA.map(function (d, p) { return pos[p] + '=' + d + '(' + (predAP[p] * 100).toFixed(1) + '%)'; }).join('  ') + '</div>');
-    html += predHtml('方案 B · 锁定最热奇偶(' + topOe + ')+最热大小(' + topBs + ')后取最热号', comboB, oeB, bsB,
-        '约束：每位必须同时满足该位的奇偶与大小形态，再取该约束下频次最高的数字',
-        '<div class="sub">每位：' + predB.map(function (d, p) { return pos[p] + '=' + d + '(' + topOe.charAt(p) + topBs.charAt(p) + ')'; }).join('  ') + '</div>');
+    html += '<h3>🔮 概率预测 · ' + (m === 1 ? '单注' : '复式 ' + m + '×…×' + m) + '</h3>';
+
+    // 方案 A：每位最热号（无约束，top m）
+    var setsA = [];
+    for (p = 0; p < k; p++) setsA.push(pickTopN(p, null, null));
+    html += predHtmlM('方案 A · 每位最热 ' + m + ' 号（无约束，按频次）', setsA,
+        '覆盖概率（独立连乘）≈ ' + (covProb(setsA) * 100).toFixed(2) + '%　理论 ' + (Math.pow(m / 10, k) * 100).toFixed(2) + '%',
+        '<div class="sub">每位：' + setsA.map(function (s, p) { return pos[p] + '=' + s.join('/'); }).join('  ') + '</div>');
+
+    // 方案 B：锁定最热奇偶形态 + 最热大小形态，分档取前 m 号
+    var topOe = oeArr[0][0], topBs = bsArr[0][0];
+    var setsB = [];
+    for (p = 0; p < k; p++) setsB.push(pickTopN(p, topOe.charAt(p), topBs.charAt(p)));
+    html += predHtmlM('方案 B · 锁定最热奇偶(' + topOe + ')+最热大小(' + topBs + ')后取前 ' + m + ' 号', setsB,
+        '约束优先级：同时满足奇偶+大小 > 仅奇偶 > 仅大小 > 无约束；同档内按频次降序',
+        '<div class="sub">每位：' + setsB.map(function (s, p) { return pos[p] + '=' + s.join('/'); }).join('  ') + '</div>');
 
     // ===== 连势反转分析 =====
     var fwd = rows.slice().reverse(); // 旧→新，用于扫描反转率
@@ -10199,6 +10231,7 @@ function render() {
 
     // 方案 C：连势反转预测
     var predC = [], infoC = [];
+    var setsC = [];
     for (pp = 0; pp < k; pp++) {
         var oeR = breakRate('oe', pp, curStreak[pp].oe.len);
         var bsR = breakRate('bs', pp, curStreak[pp].bs.len);
@@ -10206,15 +10239,10 @@ function render() {
         var bsRate = (bsR.rate !== null) ? bsR.rate : 0.5;
         var predOeC = oeRate > 0.5 ? (curStreak[pp].oe.side === '奇' ? '偶' : '奇') : curStreak[pp].oe.side;
         var predBsC = bsRate > 0.5 ? (curStreak[pp].bs.side === '大' ? '小' : '大') : curStreak[pp].bs.side;
-        var bdC = -1, bcC = -1;
-        for (var dC = 0; dC < 10; dC++) if (sideOf(dC, 'oe') === predOeC && sideOf(dC, 'bs') === predBsC && digFreq[pp][dC] > bcC) { bcC = digFreq[pp][dC]; bdC = dC; }
-        if (bdC < 0) bdC = 0;
-        predC.push(bdC);
-        infoC.push(pos[pp] + '=' + bdC + '(' + predOeC + predBsC + ') oe反转' + (oeRate * 100).toFixed(0) + '% bs反转' + (bsRate * 100).toFixed(0) + '%');
+        setsC.push(pickTopN(pp, predOeC, predBsC));
+        infoC.push(pos[pp] + '=' + setsC[pp].join('/') + '(' + predOeC + predBsC + ') oe反转' + (oeRate * 100).toFixed(0) + '% bs反转' + (bsRate * 100).toFixed(0) + '%');
     }
-    var comboC = predC.join(''), oeCstr = '', bsCstr = '';
-    for (pp = 0; pp < k; pp++) { oeCstr += sideOf(predC[pp], 'oe'); bsCstr += sideOf(predC[pp], 'bs'); }
-    html += predHtml('方案 C · 连势反转（每位取反转率>50%则翻侧，否则延续；再取该侧历史最热号）', comboC, oeCstr, bsCstr,
+    html += predHtmlM('方案 C · 连势反转（每位取反转率>50%则翻侧否则延续；分档取前 ' + m + ' 号）', setsC,
         '每位：' + infoC.join('  '),
         '<div class="sub">⚠️ 反转率多数接近 50%（抽样噪声内），此方案无统计优势；连 L 期后下期反转概率仍约 50%</div>');
 
@@ -10238,6 +10266,7 @@ function render() {
 }
 document.getElementById('selType').addEventListener('change', render);
 document.getElementById('selN').addEventListener('change', render);
+document.getElementById('selM').addEventListener('change', render);
 render();
 </script>
 </body>
