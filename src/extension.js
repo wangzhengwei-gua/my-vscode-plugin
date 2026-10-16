@@ -2,6 +2,9 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const crawler = require('./crawler');
+const bazi = require('./bazi');
+// 八字/梅花易数核心算法源码，注入到 Webview 的内联脚本中执行（与 Node 端共用同一份文件）
+const BZ_CORE_SRC = fs.readFileSync(path.join(__dirname, 'bazi.js'), 'utf-8');
 
 // 插件安装目录下的 data/（兜底，用于彩票历史数据）
 const PLUGIN_DATA_DIR = path.join(__dirname, '..', 'data');
@@ -1285,6 +1288,82 @@ function activate(context) {
     });
     context.subscriptions.push(pl35OeBsDisposable);
 
+    // 八字起卦推 3 位 / 5 位数字（梅花易数 + 生辰八字）
+    let bzDigitsDisposable = vscode.commands.registerCommand('myPlugin.bzDigits', () => {
+        const panel = vscode.window.createWebviewPanel(
+            'bzDigits',
+            '八字起卦 · 推 3/5 位数字',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getBzDigitsHtml();
+        panel.webview.onDidReceiveMessage((msg) => {
+            if (msg.command !== 'compute') return;
+            try {
+                let y = parseInt(msg.y, 10), m = parseInt(msg.m, 10), d = parseInt(msg.d, 10);
+                const hourZhi = parseInt(msg.h, 10);
+                let isLeap = !!msg.leap;
+                if (!y || !m || !d || isNaN(hourZhi) || hourZhi < 0 || hourZhi > 11) {
+                    panel.webview.postMessage({ command: 'error', msg: '请填写完整农历年月日与时辰' });
+                    return;
+                }
+                // 农历表仅支持 1900-2100，超范围先夹取；日期超出该月天数则取月末
+                if (y < 1900) y = 1900;
+                if (y > 2100) y = 2100;
+                if (m < 1) m = 1;
+                if (m > 12) m = 12;
+                if (isLeap && bazi.bzLeapMonth(y) !== m) isLeap = false;
+                const maxDay = isLeap ? bazi.bzLeapDays(y) : bazi.bzMonthDays(y, m);
+                if (d < 1) d = 1;
+                if (d > maxDay) d = maxDay;
+                const solar = bazi.bzLunar2Solar(y, m, d, isLeap);
+                const fp = bazi.bzFourPillars(solar, hourZhi);
+                const wx = bazi.bzWxCount(fp);
+                const order = bazi.BZ_WX_ORDER;
+                let yongShen = null, minC = 99;
+                order.forEach(k => { if (wx[k] < minC) { minC = wx[k]; yongShen = k; } });
+                const xiShen = order.find(k => bazi.BZ_SHENG[k] === yongShen);
+                const jiShen = order.find(k => bazi.BZ_KE[k] === yongShen);
+                const g = bazi.bzGua(y, m, d, hourZhi);
+                const tiGua = g.mv <= 3 ? g.up : g.dn;
+                const yongGua = g.mv <= 3 ? g.dn : g.up;
+                const tiWX = bazi.BZ_GUA_WX[tiGua], yongWX = bazi.BZ_GUA_WX[yongGua];
+                const rel = bazi.bzRelation(tiWX, yongWX);
+                const d3 = '' + bazi.BZ_GUA_HOUTIAN[tiGua] + bazi.BZ_WX_TAIL[yongShen][0] + bazi.BZ_WX_TAIL[xiShen][0];
+                const d5 = d3 + bazi.BZ_GUA_HOUTIAN[yongGua] + g.mv;
+                const d3b = '' + tiGua + bazi.BZ_WX_TAIL[yongShen][0] + bazi.BZ_WX_TAIL[xiShen][0];
+                const d5b = d3b + yongGua + g.mv;
+                panel.webview.postMessage({
+                    command: 'result',
+                    data: {
+                        solar: solar.y + '-' + solar.m + '-' + solar.d,
+                        pillars: { year: fp.year, month: fp.month, day: fp.day, hour: fp.hour, dayMaster: bazi.BZ_GAN[fp.dStem] + '(' + bazi.BZ_GAN_WX[fp.dStem] + ')' },
+                        wx: wx, yongShen, xiShen, jiShen,
+                        gua: {
+                            up: bazi.BZ_GUA_NAME[g.up], dn: bazi.BZ_GUA_NAME[g.dn], mv: g.mv,
+                            ben: g.ben, hu: g.hu, bian: g.bianName,
+                            ti: bazi.BZ_GUA_NAME[tiGua] + '(' + tiWX + ')', yong: bazi.BZ_GUA_NAME[yongGua] + '(' + yongWX + ')',
+                            rel: rel.t, relDesc: rel.d
+                        },
+                        digits: {
+                            d3, d5, d3b, d5b,
+                            src: [
+                                { d: bazi.BZ_GUA_HOUTIAN[tiGua], s: '体卦「' + bazi.BZ_GUA_NAME[tiGua] + '」后天八卦数' },
+                                { d: bazi.BZ_WX_TAIL[yongShen][0], s: '用神「' + yongShen + '」河图尾数' },
+                                { d: bazi.BZ_WX_TAIL[xiShen][0], s: '喜神「' + xiShen + '」河图尾数' },
+                                { d: bazi.BZ_GUA_HOUTIAN[yongGua], s: '用卦「' + bazi.BZ_GUA_NAME[yongGua] + '」后天八卦数' },
+                                { d: g.mv, s: '动爻数' }
+                            ]
+                        }
+                    }
+                });
+            } catch (e) {
+                panel.webview.postMessage({ command: 'error', msg: '计算失败: ' + e.message });
+            }
+        });
+    });
+    context.subscriptions.push(bzDigitsDisposable);
+
     // 大乐透选号 / 杀号（可视化选号盘 + 方案持久化记录）
     let dltPickKillDisposable = vscode.commands.registerCommand('myPlugin.dltPickKill', async () => {
         let history = [];
@@ -2119,6 +2198,22 @@ function activate(context) {
         const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
         if (!cfg) return;
 
+        // 选择最近形态表显示期数
+        const periodPick = await vscode.window.showQuickPick(
+            [
+                { label: '📅 20 期', value: 20, description: '显示最近 20 期形态' },
+                { label: '📅 30 期', value: 30, description: '显示最近 30 期形态' },
+                { label: '📅 50 期', value: 50, description: '显示最近 50 期形态' },
+                { label: '📅 100 期', value: 100, description: '显示最近 100 期形态' },
+                { label: '📅 150 期', value: 150, description: '显示最近 150 期形态' },
+                { label: '📅 200 期', value: 200, description: '显示最近 200 期形态' },
+                { label: '📋 全部期', value: 0, description: '显示全部可用期数' }
+            ],
+            { placeHolder: '选择最近形态表显示期数（频率统计与转移矩阵仍基于全部历史，不受此影响）' }
+        );
+        if (!periodPick) return;
+        const displayCount = periodPick.value;
+
         let history;
         try {
             history = loadLotteryData(cfg);
@@ -2141,7 +2236,7 @@ function activate(context) {
             vscode.ViewColumn.One,
             { enableScripts: true, retainContextWhenHidden: true }
         );
-        panel.webview.html = getZhiHeHtml(cfg.name, posLabels, allNumbers, periods);
+        panel.webview.html = getZhiHeHtml(cfg.name, posLabels, allNumbers, periods, displayCount);
     });
     context.subscriptions.push(zhiHeDisposable);
 
@@ -2409,6 +2504,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🎯 快8罕见形态选号', 'myPlugin.kl8RarePick', '🎯'),
                 this.createItem('💥 快8爆区分析', 'myPlugin.kl8Burst', '💥'),
                 this.createItem('🎯 排3/排5/3D奇偶大小预测', 'myPlugin.pl35OeBs', '🎯'),
+                this.createItem('🔮 八字起卦推号', 'myPlugin.bzDigits', '🔮'),
                 this.createItem('🛤️ 012路趋势', 'myPlugin.roadAnalysis', '🛤️'),
                 this.createItem('📜 排三口诀', 'myPlugin.pl3Formula', '📜'),
                 this.createItem('🎲 排五口诀', 'myPlugin.pl5Formula', '🎲'),
@@ -3610,7 +3706,7 @@ h2 { color:#8ec5ff;font-weight:500;margin-bottom:8px; }
  * 质数: 2,3,5,7  合数: 0,1,4,6,8,9（0和1归合数便于统计）
  * 每位统计质合频率 + 形态分布 + 预测
  */
-function getZhiHeHtml(name, posLabels, allNumbers, periods) {
+function getZhiHeHtml(name, posLabels, allNumbers, periods, displayCount = 10) {
     const nPos = posLabels.length;
     const N = Math.min(300, allNumbers[0].length);
     const periodsSliced = periods.slice(-N);
@@ -3647,9 +3743,10 @@ function getZhiHeHtml(name, posLabels, allNumbers, periods) {
         return t;
     });
 
-    // 最近10期形态
+    // 最近形态表显示期数（0 表示全部）
+    const recentN = displayCount > 0 ? Math.min(displayCount, N) : N;
     const recentForms = [];
-    for (let i = N - 10; i < N; i++) {
+    for (let i = N - recentN; i < N; i++) {
         const form = posData.map(pd => classify(pd.data[i])).join('');
         recentForms.push({ period: periodsSliced[i], form, nums: posData.map(pd => pd.data[i]) });
     }
@@ -3663,7 +3760,7 @@ function getZhiHeHtml(name, posLabels, allNumbers, periods) {
         return zhiNext >= heNext ? '质' : '合';
     }).join('');
 
-    const dataJson = JSON.stringify({ posLabels, posData, forms: sortedForms, transData, recentForms, predForm, N, lastPeriod: periodsSliced[periodsSliced.length - 1] });
+    const dataJson = JSON.stringify({ posLabels, posData, forms: sortedForms, transData, recentForms, predForm, N, recentN, lastPeriod: periodsSliced[periodsSliced.length - 1] });
 
     return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -3677,7 +3774,7 @@ h2 { color: #8ec5ff; margin-bottom: 4px; }
 .meta { color: #888; font-size: 12px; margin-bottom: 16px; }
 .pred-result { padding: 16px; background: rgba(46,204,113,0.08); border: 1px solid rgba(46,204,113,0.3); border-radius: 8px; margin: 16px 0; text-align: center; }
 .pred-form { font-size: 32px; font-weight: bold; color: #2ecc71; letter-spacing: 8px; margin: 8px 0; }
-.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; max-width: 900px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; max-width: 1400px; }
 .panel { background: rgba(20,30,50,0.5); border: 1px solid rgba(120,180,255,0.15); border-radius: 8px; padding: 14px; }
 .panel h3 { color: #feca57; font-size: 14px; margin-bottom: 10px; }
 .bar-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
@@ -3691,17 +3788,21 @@ h2 { color: #8ec5ff; margin-bottom: 4px; }
 .form-label { color: #8ec5ff; font-weight: bold; }
 .form-count { color: #feca57; }
 .form-pct { color: #888; font-size: 11px; }
-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-th, td { padding: 4px 8px; text-align: center; border: 1px solid rgba(255,255,255,0.08); }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { padding: 8px 14px; text-align: center; border: 1px solid rgba(255,255,255,0.08); }
 th { background: rgba(0,0,0,0.3); color: #8ec5ff; }
 .zhi { color: #5ad2ff; font-weight: bold; }
 .he { color: #feca57; font-weight: bold; }
-.recent-table th { font-size: 11px; }
+.recent-table th { font-size: 13px; }
+.recent-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.03); }
+.recent-table tbody tr:hover { background: rgba(90,210,255,0.1); }
+.recent-scroll { max-height: 640px; overflow-y: auto; border: 1px solid rgba(120,180,255,0.1); border-radius: 6px; }
+.recent-scroll thead th { position: sticky; top: 0; z-index: 1; }
 </style>
 </head>
 <body>
 <h2>📐 ${name} · 质合形态分析</h2>
-<div class="meta">历史 ${N} 期 · 最新 ${periodsSliced[periodsSliced.length-1] || '?'} · 质数=2,3,5,7 · 合数=0,1,4,6,8,9</div>
+<div class="meta">分析 ${N} 期（全部用于统计/转移矩阵）· 最近形态表显示 ${recentN} 期 · 最新 ${periodsSliced[periodsSliced.length-1] || '?'} · 质数=2,3,5,7 · 合数=0,1,4,6,8,9</div>
 
 <div class="pred-result">
     <div style="color:#888;font-size:12px">下期形态预测（基于转移矩阵）</div>
@@ -3727,11 +3828,13 @@ th { background: rgba(0,0,0,0.3); color: #8ec5ff; }
         <div class="legend">行=上期质合 · 列=本期质合</div>
     </div>
     <div class="panel" style="grid-column: span 2;">
-        <h3>📅 最近10期形态</h3>
-        <table class="recent-table">
-            <thead><tr><th>期号</th>${posLabels.map(l => '<th>' + l + '</th>').join('')}<th>形态</th></tr></thead>
-            <tbody id="recentBody"></tbody>
-        </table>
+        <h3>📅 最近形态表（${recentN} 期）</h3>
+        <div class="recent-scroll">
+            <table class="recent-table">
+                <thead><tr><th>期号</th>${posLabels.map(l => '<th>' + l + '</th>').join('')}<th>形态</th></tr></thead>
+                <tbody id="recentBody"></tbody>
+            </table>
+        </div>
     </div>
 </div>
 
@@ -4777,6 +4880,16 @@ h2 { color: #8ec5ff; margin-bottom: 8px; }
 
 .copy-btn { background: #0e639c; color: #fff; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; margin-top: 8px; }
 .copy-btn:hover { background: #1177bb; }
+.digit-tbl { table-layout: fixed; max-width: 680px; border-collapse: collapse; }
+.digit-tbl th, .digit-tbl td { border: 1px solid #444; padding: 9px 10px; font-size: 14px; text-align: center; }
+.digit-tbl td { line-height: 1.9; }
+.digit-tbl th { font-size: 14px; }
+.digit-tbl th:nth-child(1), .digit-tbl td:nth-child(1) { width: 16%; }
+.digit-tbl th:nth-child(2), .digit-tbl td:nth-child(2) { width: 21%; }
+.digit-tbl th:nth-child(3), .digit-tbl td:nth-child(3) { width: 23%; }
+.digit-tbl th:nth-child(4), .digit-tbl td:nth-child(4) { width: 20%; }
+.digit-tbl th:nth-child(5), .digit-tbl td:nth-child(5) { width: 20%; }
+.dg-ball { display: inline-block; width: 30px; height: 30px; line-height: 30px; border-radius: 50%; background: #3a3d41; color: #fff; font-size: 16px; font-weight: bold; text-align: center; }
 </style>
 </head>
 <body>
@@ -4787,6 +4900,69 @@ h2 { color: #8ec5ff; margin-bottom: 8px; }
     识别 10 种典型均线形态。
 </div>
 <div id="content"></div>
+<script>
+var DATA = ${dataJson};
+function mEsc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+var CATALOG=[
+{name:'多头排列',signal:'bull',desc:'短期均线在最上、长期在最下，三条同时向上，看涨'},
+{name:'空头排列',signal:'bear',desc:'长期在最上、短期在最下，三条同时向下，看跌'},
+{name:'黄金交叉',signal:'bull',desc:'短期均线由下向上穿越长期均线，看涨'},
+{name:'死亡交叉',signal:'bear',desc:'短期均线由上向下穿越长期均线，看跌'},
+{name:'银山谷',signal:'bull',desc:'短中期均线先后上穿长期均线形成向上三角形，见底上涨'},
+{name:'死亡谷',signal:'bear',desc:'短中期均线先后下穿长期均线形成向下三角形，看跌'},
+{name:'粘合向上发散',signal:'bull',desc:'均线缠绕后向上发散，强烈买入信号'},
+{name:'粘合向下发散',signal:'bear',desc:'均线缠绕后向下发散，下跌警告信号'},
+{name:'上山爬坡形',signal:'bull',desc:'三条均线沿坡度上移，看涨做多'},
+{name:'下山滑坡形',signal:'bear',desc:'三条均线沿坡度下移，后市看跌'}
+];
+(function(){var d=DATA,h='';
+h+='<div class="summary-section"><div class="summary-title">📊 总览（基于最近 20 期）</div><div class="summary-stats">';
+h+='<div class="summary-stat bull"><div class="summary-stat-num">'+d.summary.bullCount+'</div><div class="summary-stat-label">看涨形态</div></div>';
+h+='<div class="summary-stat bear"><div class="summary-stat-num">'+d.summary.bearCount+'</div><div class="summary-stat-label">看跌形态</div></div>';
+h+='<div class="summary-stat all"><div class="summary-stat-num">'+(d.summary.bullCount+d.summary.bearCount)+'</div><div class="summary-stat-label">形态总数</div></div></div>';
+h+='<div>识别到的形态：'+(d.summary.patternNames.length?d.summary.patternNames.map(function(n){return '<span class="pattern-badge">'+mEsc(n)+'</span>';}).join(''):'<span class="pos-empty">无</span>')+'</div></div>';
+d.posResults.forEach(function(pr){
+h+='<div class="pos-section"><div class="pos-title"><span class="pos-name">'+mEsc(pr.label)+'</span><span class="pattern-badge">'+(pr.patterns||[]).length+' 个形态触发</span></div>';
+if(pr.error){h+='<div class="pos-empty">'+mEsc(pr.error)+'</div>';h+='</div>';return;}
+var cv=(pr.maData&&pr.maData.currentValues)||{ma5:null,ma10:null,ma20:null};
+function r2(v){return (v==null||v===undefined)?'—':(Math.round(v*10)/10);}
+h+='<div class="pattern-numbers"><span class="pattern-numbers-label">当前均线：</span>';
+h+='<span class="num-ball"><span class="num-ball-label">MA5≈</span><span class="num-ball-value">'+r2(cv.ma5)+'</span></span>';
+h+='<span class="num-ball"><span class="num-ball-label">MA10≈</span><span class="num-ball-value">'+r2(cv.ma10)+'</span></span>';
+h+='<span class="num-ball"><span class="num-ball-label">MA20≈</span><span class="num-ball-value">'+r2(cv.ma20)+'</span></span></div>';
+var detected={};(pr.patterns||[]).forEach(function(p){detected[p.name]=p;});
+h+='<div style="margin:8px 0;"><span class="pattern-numbers-label">10 种形态清单：</span>';
+CATALOG.forEach(function(c){var on=!!detected[c.name];var sg=c.signal==='bull'?'bull':'bear';
+h+='<span class="pattern-badge '+(on?sg:'')+'" style="'+(on?'':'opacity:0.4;')+'">'+mEsc(c.name)+(on?' ✓':' ✗')+'</span>';});
+h+='</div>';
+var ser=(pr.maData&&pr.maData.series)||[];
+var expPD=ser.length/10;
+h+='<div style="margin:8px 0;"><span class="pattern-numbers-label">号码 0-9 形态（近 '+ser.length+' 期热温冷，理论 '+expPD.toFixed(1)+' 次/号）：</span></div>';
+h+='<table class="src-tbl digit-tbl" style="margin-top:4px;width:100%;"><thead><tr><th>号码</th><th>出现</th><th>当前遗漏</th><th>频次比</th><th>形态</th></tr></thead><tbody>';
+for(var dg=0;dg<10;dg++){var cnt2=0,gap2=0,found2=false;
+for(var si=ser.length-1;si>=0;si--){if(ser[si]===dg){if(!found2){gap2=ser.length-1-si;found2=true;}cnt2++;}}
+if(!found2)gap2=ser.length;
+var rat2=expPD>0?cnt2/expPD:0;
+var st2,sc2;
+if(cnt2===0){st2='极冷';sc2='color:#5dade2;';}
+else if(rat2>=1.25){st2='热号';sc2='color:#ff6b5e;font-weight:bold;';}
+else if(rat2<=0.8){st2='冷号';sc2='color:#5dade2;';}
+else{st2='温号';sc2='color:#f1c40f;';}
+h+='<tr><td><span class="dg-ball">'+dg+'</span></td><td>'+cnt2+' / '+ser.length+'</td><td>'+gap2+' 期</td><td>'+rat2.toFixed(2)+'</td><td style="'+sc2+'">'+st2+'</td></tr>';}
+h+='</tbody></table>';
+if(!pr.patterns.length){h+='<div class="pos-empty">最近 20 期未触发任何典型形态（均线走势平淡）</div>';}
+else{pr.patterns.forEach(function(p){var sg=p.signal==='bull'?'bull':'bear';
+h+='<div class="pattern-detail"><div class="name '+sg+'">'+mEsc(p.name)+' <span class="pattern-badge '+sg+'">'+(p.signal==='bull'?'看涨':'看跌')+'</span></div><div class="desc-text">'+mEsc(p.desc)+'</div>';
+if(p.numbers&&p.numbers.length){h+='<div class="pattern-numbers"><span class="pattern-numbers-label">相关号码：</span>';p.numbers.forEach(function(n,idx){var lb=p.numbersLabel?p.numbersLabel[idx]:'';h+='<span class="num-ball '+sg+(idx===p.numbers.length-1?' latest':'')+'">'+(lb?'<span class="num-ball-label">'+mEsc(lb)+'</span>':'')+'<span class="num-ball-value">'+n+'</span></span>';});h+='</div>';}
+h+='</div>';});}
+h+='</div>';});
+var bn=[];d.posResults.forEach(function(pr){pr.patterns.forEach(function(p){if(p.signal==='bull'&&p.numbers)p.numbers.forEach(function(n){if(bn.indexOf(n)<0)bn.push(n);});});});
+h+='<div class="suggest-section"><div class="suggest-title">🎯 均线看涨形态相关号码（仅供参考）</div><div class="suggest-hint">由各位"看涨"形态号码汇总去重；均线形态基于历史序列，对下期无预测效力。</div>';
+if(bn.length){h+='<div class="suggest-row bull"><span class="suggest-row-label">看涨号码</span><div class="suggest-nums">';bn.sort(function(a,b){return a-b;}).forEach(function(n){h+='<span class="suggest-big-ball bull">'+n+'</span>';});h+='</div></div>';}
+else{h+='<div class="suggest-empty">最近 20 期未识别到看涨形态号码</div>';}
+h+='</div>';
+document.getElementById('content').innerHTML=h;})();
+</script>
 <script>
 (function(){
     try { window.vscodeApi = acquireVsCodeApi(); } catch(e) { console.error('vscode api error:', e); }
@@ -7188,179 +7364,9 @@ function renderZoneHot() {
         renderZoneHot._timer = setTimeout(function() { btnZ.textContent = '🔥 统计热区'; }, 1500);
     }
 }
-// ===== ⑨ 梅花易数 · 生辰八字起卦选号 =====
-// 农历数据表 1900-2100：低4位=闰月月份(0无闰)，0x10000=闰月大小，0x8000~0x8 依次表示正~腊月大小(1为30天)
-var BZ_LUNAR = [0x04bd8, 0x04ae0, 0x0a570, 0x054d5, 0x0d260, 0x0d950, 0x16554, 0x056a0, 0x09ad0, 0x055d2,
-0x04ae0, 0x0a5b6, 0x0a4d0, 0x0d250, 0x1d255, 0x0b540, 0x0d6a0, 0x0ada2, 0x095b0, 0x14977,
-0x04970, 0x0a4b0, 0x0b4b5, 0x06a50, 0x06d40, 0x1ab54, 0x02b60, 0x09570, 0x052f2, 0x04970,
-0x06566, 0x0d4a0, 0x0ea50, 0x06e95, 0x05ad0, 0x02b60, 0x186e3, 0x092e0, 0x1c8d7, 0x0c950,
-0x0d4a0, 0x1d8a6, 0x0b550, 0x056a0, 0x1a5b4, 0x025d0, 0x092d0, 0x0d2b2, 0x0a950, 0x0b557,
-0x06ca0, 0x0b550, 0x15355, 0x04da0, 0x0a5b0, 0x14573, 0x052b0, 0x0a9a8, 0x0e950, 0x06aa0,
-0x0aea6, 0x0ab50, 0x04b60, 0x0aae4, 0x0a570, 0x05260, 0x0f263, 0x0d950, 0x05b57, 0x056a0,
-0x096d0, 0x04dd5, 0x04ad0, 0x0a4d0, 0x0d4d4, 0x0d250, 0x0d558, 0x0b540, 0x0b6a0, 0x195a6,
-0x095b0, 0x049b0, 0x0a974, 0x0a4b0, 0x0b27a, 0x06a50, 0x06d40, 0x0af46, 0x0ab60, 0x09570,
-0x04af5, 0x04970, 0x064b0, 0x074a3, 0x0ea50, 0x06b58, 0x055c0, 0x0ab60, 0x096d5, 0x092e0,
-0x0c960, 0x0d954, 0x0d4a0, 0x0da50, 0x07552, 0x056a0, 0x0abb7, 0x025d0, 0x092d0, 0x0cab5,
-0x0a950, 0x0b4a0, 0x0baa4, 0x0ad50, 0x055d9, 0x04ba0, 0x0a5b0, 0x15176, 0x052b0, 0x0a930,
-0x07954, 0x06aa0, 0x0ad50, 0x05b52, 0x04b60, 0x0a6e6, 0x0a4e0, 0x0d260, 0x0ea65, 0x0d530,
-0x05aa0, 0x076a3, 0x096d0, 0x04afb, 0x04ad0, 0x0a4d0, 0x1d0b6, 0x0d250, 0x0d520, 0x0dd45,
-0x0b5a0, 0x056d0, 0x055b2, 0x049b0, 0x0a577, 0x0a4b0, 0x0aa50, 0x1b255, 0x06d20, 0x0ada0,
-0x14b63, 0x09370, 0x049f8, 0x04970, 0x064b0, 0x168a6, 0x0ea50, 0x06b20, 0x1a6c4, 0x0aae0,
-0x0a2e0, 0x0d2e3, 0x0c960, 0x0d557, 0x0d4a0, 0x0da50, 0x05d55, 0x056a0, 0x0a6d0, 0x055d4,
-0x052d0, 0x0a9b8, 0x0a950, 0x0b4a0, 0x0b6a6, 0x0ad50, 0x055a0, 0x0aba4, 0x0a5b0, 0x052b0,
-0x0b273, 0x06930, 0x07337, 0x06aa0, 0x0ad50, 0x14b55, 0x04b60, 0x0a570, 0x054e4, 0x0d160,
-0x0e968, 0x0d520, 0x0daa0, 0x16aa6, 0x056d0, 0x04ae0, 0x0a9d4, 0x0a2d0, 0x0d150, 0x0f252,
-0x0d520];
-var BZ_TERM = [0, 21208, 42467, 63836, 85337, 107014, 128867, 150921, 173149, 195551, 218072, 240693,
-263343, 285989, 308563, 331033, 353350, 375494, 397447, 419210, 440795, 462224, 483532, 504758];
-var BZ_TERM_BASE = Date.UTC(1900, 0, 6, 2, 5, 0);
-var BZ_GAN = ['甲', '乙', '丙', '丁', '戊', '己', '庚', '辛', '壬', '癸'];
-var BZ_ZHI = ['子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥'];
-var BZ_GAN_WX = ['木', '木', '火', '火', '土', '土', '金', '金', '水', '水'];
-var BZ_ZHI_WX = ['水', '土', '木', '木', '土', '火', '火', '土', '金', '金', '土', '水'];
-var BZ_JIE_ZHI = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0]; // 小寒→丑、立春→寅 …… 大雪→子（对应 sTermInfo 偶数下标）
-var BZ_JIE_NAME = ['小寒', '立春', '惊蛰', '清明', '立夏', '芒种', '小暑', '立秋', '白露', '寒露', '立冬', '大雪'];
-// 先天卦数 1乾 2兑 3离 4震 5巽 6坎 7艮 8坤
-var BZ_GUA_NAME = ['', '乾', '兑', '离', '震', '巽', '坎', '艮', '坤'];
-var BZ_GUA_SYM = ['', '☰', '☱', '☲', '☳', '☴', '☵', '☶', '☷'];
-var BZ_GUA_YAO = ['', '111', '110', '101', '100', '011', '010', '001', '000']; // 爻序：初→上
-var BZ_GUA_WX = ['', '金', '金', '火', '木', '木', '水', '土', '土'];
-var BZ_GUA_HOUTIAN = ['', 6, 7, 9, 3, 4, 1, 8, 2];
-var BZ_WX_ORDER = ['金', '水', '木', '火', '土'];
-var BZ_WX_TAIL = { '金': [4, 9], '水': [1, 6], '木': [3, 8], '火': [2, 7], '土': [5, 0] };
-var BZ_GUA64 = ['乾为天', '天泽履', '天火同人', '天雷无妄', '天风姤', '天水讼', '天山遁', '天地否',
-'泽天夬', '兑为泽', '泽火革', '泽雷随', '泽风大过', '泽水困', '泽山咸', '泽地萃',
-'火天大有', '火泽睽', '离为火', '火雷噬嗑', '火风鼎', '火水未济', '火山旅', '火地晋',
-'雷天大壮', '雷泽归妹', '雷火丰', '震为雷', '雷风恒', '雷水解', '雷山小过', '雷地豫',
-'风天小畜', '风泽中孚', '风火家人', '风雷益', '巽为风', '风水涣', '风山渐', '风地观',
-'水天需', '水泽节', '水火既济', '水雷屯', '水风井', '坎为水', '水山蹇', '水地比',
-'山天大畜', '山泽损', '山火贲', '山雷颐', '山风蛊', '山水蒙', '艮为山', '山地剥',
-'地天泰', '地泽临', '地火明夷', '地雷复', '地风升', '地水师', '地山谦', '坤为地'];
-function bzLeapMonth(y) { return BZ_LUNAR[y - 1900] & 0xf; }
-function bzLeapDays(y) { return bzLeapMonth(y) ? ((BZ_LUNAR[y - 1900] & 0x10000) ? 30 : 29) : 0; }
-function bzMonthDays(y, m) { return (BZ_LUNAR[y - 1900] & (0x10000 >> m)) ? 30 : 29; }
-function bzYearDays(y) {
-    var sum = 348;
-    for (var i = 0x8000; i > 0x8; i >>= 1) sum += (BZ_LUNAR[y - 1900] & i) ? 1 : 0;
-    return sum + bzLeapDays(y);
-}
-// 农历 → 公历（1900-2100）
-function bzLunar2Solar(y, m, d, isLeap) {
-    var offset = 0, i;
-    for (i = 1900; i < y; i++) offset += bzYearDays(i);
-    var leap = bzLeapMonth(y);
-    for (i = 1; i < m; i++) {
-        offset += bzMonthDays(y, i);
-        if (leap > 0 && i === leap) offset += bzLeapDays(y);
-    }
-    if (isLeap && leap === m) offset += bzMonthDays(y, m);
-    offset += d - 1;
-    var dt = new Date(Date.UTC(1900, 0, 31) + offset * 86400000);
-    return { y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate() };
-}
-// 儒略日 → 用于日柱（干支序号：0=甲子）
-function bzJdn(y, m, d) {
-    var a = Math.floor((14 - m) / 12), yy = y + 4800 - a, mm = m + 12 * a - 3;
-    return d + Math.floor((153 * mm + 2) / 5) + 365 * yy + Math.floor(yy / 4) - Math.floor(yy / 100) + Math.floor(yy / 400) - 32045;
-}
-function bzTermDate(y, n) {
-    var off = 525948.76 * (y - 1900) + BZ_TERM[n];
-    var dt = new Date(BZ_TERM_BASE + off * 60000);
-    return { y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate() };
-}
-function bzCmpDate(a, b) { return (a.y - b.y) || (a.m - b.m) || (a.d - b.d); }
-// 求某公历日的月令：返回 { jieIdx, zhi }（jieIdx 为 12 节顺序，0=小寒/丑月）
-function bzMonthOrder(solar) {
-    var cands = [{ t: bzTermDate(solar.y - 1, 22), jie: 11 }], k; // 上一年大雪 → 子月
-    for (k = 0; k < 12; k++) cands.push({ t: bzTermDate(solar.y, k * 2), jie: k });
-    cands.push({ t: bzTermDate(solar.y + 1, 0), jie: 0 }); // 次年小寒 → 丑月
-    var best = null;
-    for (k = 0; k < cands.length; k++) {
-        if (bzCmpDate(cands[k].t, solar) <= 0) {
-            if (!best || bzCmpDate(cands[k].t, best.t) >= 0) best = cands[k];
-        }
-    }
-    return best;
-}
-// 四柱排盘：公历日期 + 时辰地支序号(0=子) → 干支
-function bzFourPillars(solar, hourZhi) {
-    var term2 = bzTermDate(solar.y, 2); // 立春
-    var yearY = bzCmpDate(solar, term2) >= 0 ? solar.y : solar.y - 1;
-    var yIdx = ((yearY - 4) % 60 + 60) % 60;
-    var mo = bzMonthOrder(solar);
-    var mZhi = BZ_JIE_ZHI[mo.jie];
-    var yStem = yIdx % 10;
-    var yinStem = (yStem % 5) * 2 + 2;
-    var mStem = (yinStem + ((mZhi - 2 + 12) % 12)) % 10;
-    var dIdx = (bzJdn(solar.y, solar.m, solar.d) + 49) % 60;
-    var dStem = dIdx % 10;
-    var subStem = (dStem % 5) * 2;
-    var hStem = (subStem + hourZhi) % 10;
-    return {
-        solar: solar, yearY: yearY, jieIdx: mo.jie,
-        year: BZ_GAN[yIdx % 10] + BZ_ZHI[yIdx % 12],
-        month: BZ_GAN[mStem] + BZ_ZHI[mZhi],
-        day: BZ_GAN[dStem] + BZ_ZHI[dIdx % 12],
-        hour: BZ_GAN[hStem] + BZ_ZHI[hourZhi],
-        yIdx: yIdx, mStem: mStem, mZhi: mZhi, dIdx: dIdx, dStem: dStem, hStem: hStem,
-        yStem: yStem, hourZhi: hourZhi
-    };
-}
-// 五行统计（天干 + 地支，各计 1）
-function bzWxCount(fp) {
-    var c = { '金': 0, '水': 0, '木': 0, '火': 0, '土': 0 };
-    c[BZ_GAN_WX[fp.yIdx % 10]]++;
-    c[BZ_GAN_WX[fp.mStem]]++;
-    c[BZ_GAN_WX[fp.dStem]]++;
-    c[BZ_GAN_WX[fp.hStem]]++;
-    c[BZ_ZHI_WX[fp.yIdx % 12]]++;
-    c[BZ_ZHI_WX[fp.mZhi]]++;
-    c[BZ_ZHI_WX[fp.dIdx % 12]]++;
-    c[BZ_ZHI_WX[fp.hourZhi]]++;
-    return c;
-}
-// 梅花易数起卦：农历年支数 + 月 + 日 + 时支数
-function bzGua(lunarY, lunarM, lunarD, hourZhi) {
-    var nian = ((lunarY - 4) % 12 + 12) % 12 + 1; // 子=1 …… 亥=12
-    var shi = hourZhi + 1;
-    var s1 = nian + lunarM + lunarD;
-    var s2 = s1 + shi;
-    var up = s1 % 8; if (up === 0) up = 8;
-    var dn = s2 % 8; if (dn === 0) dn = 8;
-    var mv = s2 % 6; if (mv === 0) mv = 6;
-    var yao = (BZ_GUA_YAO[dn] + BZ_GUA_YAO[up]).split(''); // 初 → 上
-    var bian = yao.slice();
-    bian[mv - 1] = bian[mv - 1] === '1' ? '0' : '1';
-    function pat2gua(p) { for (var i = 1; i <= 8; i++) if (BZ_GUA_YAO[i] === p) return i; return 8; }
-    var huUp = pat2gua(yao.slice(2, 5).join('')), huDn = pat2gua(yao.slice(1, 4).join(''));
-    var biUp = pat2gua(bian.slice(3, 6).join('')), biDn = pat2gua(bian.slice(0, 3).join(''));
-    return {
-        nian: nian, shi: shi, s1: s1, s2: s2, up: up, dn: dn, mv: mv,
-        yao: yao, bian: bian,
-        ben: BZ_GUA64[(up - 1) * 8 + (dn - 1)],
-        huUp: huUp, huDn: huDn, hu: BZ_GUA64[(huUp - 1) * 8 + (huDn - 1)],
-        biUp: biUp, biDn: biDn, bianName: BZ_GUA64[(biUp - 1) * 8 + (biDn - 1)]
-    };
-}
-// 确定性伪随机（Park-Miller），保证同一八字每次结果一致
-function bzSeedSeq(seed, count) {
-    var s = Math.floor(Math.abs(seed)) % 2147483647;
-    if (s <= 0) s += 2147483646;
-    var out = [];
-    for (var i = 0; i < count; i++) { s = (s * 16807) % 2147483647; out.push(s / 2147483647); }
-    return out;
-}
-// 起卦选号：五行生克 / 渲染 / 复制
-var BZ_SHENG = { '木': '火', '火': '土', '土': '金', '金': '水', '水': '木' };
-var BZ_KE = { '木': '土', '土': '水', '水': '火', '火': '金', '金': '木' };
-var BZ_WX_CLS = { '金': 'jin', '水': 'shui', '木': 'mu', '火': 'huo', '土': 'tu' };
-function bzRelation(ti, yong) {
-    if (ti === yong) return { t: '体用比和', d: '同气相求，谋事顺遂', cls: 'sim-ok' };
-    if (BZ_SHENG[yong] === ti) return { t: '用生体', d: '外力相助，最为有利', cls: 'sim-ok' };
-    if (BZ_SHENG[ti] === yong) return { t: '体生用', d: '我方付出，略耗心神', cls: '' };
-    if (BZ_KE[ti] === yong) return { t: '体克用', d: '事可为，须主动争取', cls: '' };
-    return { t: '用克体', d: '受制于外，宜守不宜进', cls: 'sim-bad' };
-}
+// ===== ⑨ 梅花易数 · 生辰八字起卦选号（核心算法来自 src/js，与 Node 端共用同一份源码）=====
+${BZ_CORE_SRC}
+// 起卦选号：渲染 / 复制
 function bzPad2(n) { return n < 10 ? '0' + n : '' + n; }
 function bzBallHtml(n, cls) {
     return '<span class="kball ' + (cls || kballClsOf(n)) + '">' + bzPad2(n) + '</span>';
@@ -10268,6 +10274,147 @@ document.getElementById('selType').addEventListener('change', render);
 document.getElementById('selN').addEventListener('change', render);
 document.getElementById('selM').addEventListener('change', render);
 render();
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 八字起卦 · 推 3 位 / 5 位数字 Webview HTML（梅花易数 + 生辰八字）
+ * 页面填农历生辰 → postMessage 给扩展 → 扩展用 BZ_* 模块算四柱/五行/用神/喜神/卦象/体用 → 回传渲染。
+ */
+function getBzDigitsHtml() {
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>八字起卦 · 推 3/5 位数字</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
+h2 { color: #e8a87c; margin-bottom: 6px; font-size: 20px; }
+h3 { color: #8ec5ff; margin: 14px 0 8px; font-size: 15px; }
+.sub { color: #aaa; font-size: 12px; line-height: 1.7; margin-bottom: 10px; }
+.form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.form label { color: #8ec5ff; font-size: 12px; }
+input[type=number], select { background: #2d2d30; color: #ddd; border: 1px solid #555; border-radius: 5px; padding: 4px 8px; font-size: 13px; width: 70px; }
+select { width: auto; }
+button { background: #0e639c; color: #fff; border: none; border-radius: 5px; padding: 7px 18px; font-size: 13px; cursor: pointer; }
+button:hover { background: #1177bb; }
+.card { background: #252526; border: 1px solid #444; border-radius: 8px; padding: 12px 16px; margin-bottom: 10px; }
+.card b { color: #feca57; }
+.row { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 6px; }
+.row span { color: #aaa; }
+.big-combo { font-size: 30px; font-family: Consolas, monospace; letter-spacing: 6px; color: #fff; margin: 10px 0; }
+.ball { display: inline-block; min-width: 30px; height: 30px; line-height: 30px; border-radius: 50%; text-align: center; font-size: 14px; font-weight: 700; color: #fff; margin: 0 4px; background: linear-gradient(135deg,#9b59b6,#8e44ad); }
+.src-tbl th, .src-tbl td { border: 1px solid #444; padding: 5px 10px; text-align: center; font-size: 12px; }
+.src-tbl th { background: #2d2d30; color: #8ec5ff; }
+.tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; margin: 2px; }
+.tag-y { background: rgba(254,202,87,0.2); color: #feca57; }
+.tag-x { background: rgba(46,204,113,0.2); color: #2ecc71; }
+.tag-j { background: rgba(231,76,60,0.2); color: #e74c3c; }
+.tag-ok { background: rgba(46,204,113,0.2); color: #2ecc71; }
+.note { background: rgba(142,197,255,0.08); border: 1px solid rgba(142,197,255,0.25); border-radius: 8px; padding: 10px 14px; color: #aaa; font-size: 12px; line-height: 1.9; margin-top: 16px; }
+.note b { color: #8ec5ff; }
+.warn { color: #f39c12; }
+</style>
+</head>
+<body>
+<h2>🔮 八字起卦 · 推 3/5 位数字</h2>
+<div class="sub">输入农历生辰 → 梅花易数起卦（年支+月+日+时支）+ 八字用神/喜神 → 推出对你最有利的 3 位 / 5 位数字</div>
+<div class="form">
+    <label>农历年</label><input type="number" id="inY" value="1996" min="1900" max="2100">
+    <label>月</label><input type="number" id="inM" value="2" min="1" max="12">
+    <label>日</label><input type="number" id="inD" value="23" min="1" max="31">
+    <label>时辰</label>
+    <select id="inH">
+        <option value="0">子(23-1)</option><option value="1">丑(1-3)</option><option value="2">寅(3-5)</option>
+        <option value="3">卯(5-7)</option><option value="4">辰(7-9)</option><option value="5">巳(9-11)</option>
+        <option value="6" selected>午(11-13)</option><option value="7">未(13-15)</option><option value="8">申(15-17)</option>
+        <option value="9">酉(17-19)</option><option value="10">戌(19-21)</option><option value="11">亥(21-23)</option>
+    </select>
+    <label><input type="checkbox" id="inLeap"> 闰月</label>
+    <button id="btnCalc">🔮 起卦</button>
+</div>
+<div id="result"><div class="sub">填好后点「起卦」（默认已填你的生辰：农历 1996 年 2 月 23 日 午时）</div></div>
+<div class="note">
+    <b>说明：</b><br>
+    · 用神 = 四柱最弱五行（并列按 金水木火土 取前）；喜神 = 生用神之五行；忌神 = 克用神之五行。<br>
+    · 梅花易数：上卦 = (年支数+月+日) mod 8，下卦 = +时支数 mod 8，动爻 = 总和 mod 6。动爻所在卦为"用"，另一为"体"。<br>
+    · 3 位 = 体卦后天数 + 用神尾数 + 喜神尾数；5 位在此基础上 + 用卦后天数 + 动爻数。<br>
+    · <span class="warn">⚠️ 梅花易数/八字是传统文化推演，不是概率学；彩票每期独立随机，这些数字对中奖没有预测效力，仅供娱乐参考。</span>
+</div>
+<script>
+(function () {
+    var vscode = null;
+    try { if (typeof acquireVsCodeApi === 'function') vscode = acquireVsCodeApi(); } catch (e) { vscode = null; }
+    function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+    function ballRow(combo) {
+        var h = '';
+        for (var i = 0; i < combo.length; i++) h += '<span class="ball">' + combo.charAt(i) + '</span>';
+        return h;
+    }
+    function render(data) {
+        var wxArr = ['金', '水', '木', '火', '土'];
+        var wxLine = wxArr.map(function (k) { return k + ' ' + data.wx[k]; }).join('　');
+        var h = '';
+        h += '<div class="card"><b>📅 公历：</b>' + esc(data.solar) + '</div>';
+        h += '<div class="card"><b>🏯 四柱：</b>' + esc(data.pillars.year) + ' ' + esc(data.pillars.month) + ' ' + esc(data.pillars.day) + ' ' + esc(data.pillars.hour) +
+            '　·　日主 ' + esc(data.pillars.dayMaster) + '</div>';
+        h += '<div class="card"><b>五行：</b>' + esc(wxLine) +
+            '　<span class="tag tag-y">用神 ' + esc(data.yongShen) + '</span>' +
+            '<span class="tag tag-x">喜神 ' + esc(data.xiShen) + '</span>' +
+            '<span class="tag tag-j">忌神 ' + esc(data.jiShen) + '</span></div>';
+        h += '<div class="card"><b>卦象：</b>上卦 ' + esc(data.gua.up) + ' · 下卦 ' + esc(data.gua.dn) + ' · 动爻 ' + data.gua.mv +
+            '<br>本卦 ' + esc(data.gua.ben) + '　互卦 ' + esc(data.gua.hu) + '　变卦 ' + esc(data.gua.bian) +
+            '<br>体卦 ' + esc(data.gua.ti) + '　用卦 ' + esc(data.gua.yong) +
+            '　<span class="tag tag-ok">' + esc(data.gua.rel) + '</span> ' + esc(data.gua.relDesc) + '</div>';
+
+        h += '<h3>🎯 最有利的数字</h3>';
+        h += '<div class="card"><b>3 位（体/用神/喜神）</b><div class="big-combo">' + ballRow(data.digits.d3) + '</div>复制：<code>' + data.digits.d3 + '</code></div>';
+        h += '<div class="card"><b>5 位（体/用神/喜神/用卦/动爻）</b><div class="big-combo">' + ballRow(data.digits.d5) + '</div>复制：<code>' + data.digits.d5 + '</code></div>';
+        h += '<div class="card"><b>备选 3 位（先天卦数）</b><code>' + data.digits.d3b + '</code>　<b>备选 5 位</b><code>' + data.digits.d5b + '</code></div>';
+
+        h += '<h3>每位数字来源</h3>';
+        h += '<table class="src-tbl"><thead><tr><th>5 位顺序</th><th>数字</th><th>来源</th></tr></thead><tbody>';
+        for (var i = 0; i < data.digits.src.length; i++) {
+            var s = data.digits.src[i];
+            h += '<tr><td>第 ' + (i + 1) + ' 位</td><td><span class="ball">' + s.d + '</span></td><td>' + esc(s.s) + '</td></tr>';
+        }
+        h += '</tbody></table>';
+        document.getElementById('result').innerHTML = h;
+    }
+    document.getElementById('btnCalc').addEventListener('click', function () {
+        var msg = {
+            command: 'compute',
+            y: document.getElementById('inY').value,
+            m: document.getElementById('inM').value,
+            d: document.getElementById('inD').value,
+            h: document.getElementById('inH').value,
+            leap: document.getElementById('inLeap').checked
+        };
+        if (vscode) {
+            document.getElementById('result').innerHTML = '<div class="sub">⏳ 起卦中…</div>';
+            vscode.postMessage(msg);
+        } else {
+            document.getElementById('result').innerHTML = '<div class="sub">⚠️ 无法获取 VSCode API</div>';
+        }
+    });
+    window.addEventListener('message', function (ev) {
+        var m = ev.data;
+        if (!m) return;
+        if (m.command === 'result') {
+            try {
+                render(m.data);
+            } catch (e) {
+                document.getElementById('result').innerHTML = '<div class="sub">⚠️ 渲染失败: ' + esc(e && e.message ? e.message : e) + '</div>';
+            }
+        } else if (m.command === 'error') {
+            document.getElementById('result').innerHTML = '<div class="sub">⚠️ ' + esc(m.msg) + '</div>';
+        }
+    });
+    document.getElementById('btnCalc').click();
+})();
 </script>
 </body>
 </html>`;
