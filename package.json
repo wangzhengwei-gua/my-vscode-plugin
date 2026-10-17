@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.8.28",
+    "version": "0.8.66",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -42,6 +42,14 @@
         "onCommand:myPlugin.drawMachine",
         "onCommand:myPlugin.kl8Miss",
         "onCommand:myPlugin.dltMiss",
+        "onCommand:myPlugin.dltZone",
+        "onCommand:myPlugin.dltPickKill",
+        "onCommand:myPlugin.sortNumbers",
+        "onCommand:myPlugin.hotNumbers",
+        "onCommand:myPlugin.kl8RarePick",
+        "onCommand:myPlugin.kl8Burst",
+        "onCommand:myPlugin.pl35OeBs",
+        "onCommand:myPlugin.bzDigits",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -141,6 +149,38 @@
             {
                 "command": "myPlugin.dltMiss",
                 "title": "大乐透遗漏分层"
+            },
+            {
+                "command": "myPlugin.dltZone",
+                "title": "大乐透分区统计"
+            },
+            {
+                "command": "myPlugin.dltPickKill",
+                "title": "大乐透选号杀号"
+            },
+            {
+                "command": "myPlugin.sortNumbers",
+                "title": "号码排序"
+            },
+            {
+                "command": "myPlugin.hotNumbers",
+                "title": "最近10期热号"
+            },
+            {
+                "command": "myPlugin.kl8RarePick",
+                "title": "快8罕见形态选号"
+            },
+            {
+                "command": "myPlugin.kl8Burst",
+                "title": "快8爆区分析"
+            },
+            {
+                "command": "myPlugin.pl35OeBs",
+                "title": "排3/排5/3D奇偶大小预测"
+            },
+            {
+                "command": "myPlugin.bzDigits",
+                "title": "八字起卦推号"
             }
         ],
         "viewsContainers": {
