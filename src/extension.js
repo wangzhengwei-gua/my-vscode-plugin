@@ -1364,6 +1364,60 @@ function activate(context) {
     });
     context.subscriptions.push(bzDigitsDisposable);
 
+    // 历史跟随：输入号码 → 找历史中出现该组合的期 → 显示对应的下一期
+    let histFollowDisposable = vscode.commands.registerCommand('myPlugin.histFollow', async () => {
+        let pl3 = [], fc3 = [], pl5 = [], kl8 = [];
+        try {
+            const c3 = LOTTERY_TYPES.find(c => c.key === 'pl3');
+            const cf = LOTTERY_TYPES.find(c => c.key === 'fc3d');
+            const c5 = LOTTERY_TYPES.find(c => c.key === 'pl5');
+            const ck = LOTTERY_TYPES.find(c => c.key === 'kl8');
+            pl3 = c3 ? loadLotteryData(c3) : [];
+            fc3 = cf ? loadLotteryData(cf) : [];
+            pl5 = c5 ? loadLotteryData(c5) : [];
+            kl8 = ck ? loadLotteryData(ck) : [];
+            if (!pl3.length && !fc3.length && !pl5.length && !kl8.length) {
+                vscode.window.showWarningMessage('排列三/福彩3D/排列五/快乐8数据为空，请先刷新数据');
+                return;
+            }
+        } catch (e) {
+            vscode.window.showErrorMessage('读取数据失败: ' + e.message);
+            return;
+        }
+        const panel = vscode.window.createWebviewPanel(
+            'histFollow',
+            '历史跟随 · 号码追溯下一期',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getHistFollowHtml(pl3, fc3, pl5, kl8);
+    });
+    context.subscriptions.push(histFollowDisposable);
+
+    // 快乐8 历史跟随（独立按钮，输入最多 20 个号）
+    let kl8FollowDisposable = vscode.commands.registerCommand('myPlugin.kl8Follow', async () => {
+        let kl8 = [];
+        try {
+            const cfg = LOTTERY_TYPES.find(c => c.key === 'kl8');
+            kl8 = cfg ? loadLotteryData(cfg) : [];
+            if (!kl8.length) {
+                vscode.window.showWarningMessage('快乐8数据为空，请先刷新数据');
+                return;
+            }
+        } catch (e) {
+            vscode.window.showErrorMessage('读取数据失败: ' + e.message);
+            return;
+        }
+        const panel = vscode.window.createWebviewPanel(
+            'kl8Follow',
+            '快乐8 历史跟随 · 号码追溯下一期',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getKl8FollowHtml(kl8);
+    });
+    context.subscriptions.push(kl8FollowDisposable);
+
     // 大乐透选号 / 杀号（可视化选号盘 + 方案持久化记录）
     let dltPickKillDisposable = vscode.commands.registerCommand('myPlugin.dltPickKill', async () => {
         let history = [];
@@ -2240,6 +2294,45 @@ function activate(context) {
     });
     context.subscriptions.push(zhiHeDisposable);
 
+    // 奇偶 + 大小 形态分析（独立功能）
+    let oeBsDisposable = vscode.commands.registerCommand('myPlugin.oeBsAnalysis', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎯 排列三', value: 'pl3', description: '3位 奇偶+大小形态' },
+                { label: '🎁 福彩3D', value: 'fc3d', description: '3位 奇偶+大小形态' },
+                { label: '🎰 排列五', value: 'pl5', description: '5位 奇偶+大小形态' }
+            ],
+            { placeHolder: '选择彩种' }
+        );
+        if (!pick) return;
+        const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+        if (!cfg) return;
+        const periodPick = await vscode.window.showQuickPick(
+            [
+                { label: '📅 20 期', value: 20 }, { label: '📅 30 期', value: 30 },
+                { label: '📅 50 期', value: 50 }, { label: '📅 100 期', value: 100 },
+                { label: '📅 150 期', value: 150 }, { label: '📅 200 期', value: 200 },
+                { label: '📋 全部期', value: 0 }
+            ],
+            { placeHolder: '选择最近形态表显示期数（频率/转移矩阵仍基于全部历史）' }
+        );
+        if (!periodPick) return;
+        let history;
+        try {
+            history = loadLotteryData(cfg);
+            if (history.length < 50) { vscode.window.showWarningMessage('数据不足（需 ≥50 期），请先刷新数据'); return; }
+        } catch (e) { vscode.window.showErrorMessage('读取数据失败: ' + e.message); return; }
+        const posLabels = cfg.positions.map(p => p.label + '位');
+        const allNumbers = cfg.positions.map(p => history.map(h => p.pick(h)));
+        const periods = history.map(h => h.period);
+        const panel = vscode.window.createWebviewPanel(
+            'oeBsAnalysis', '⚖️ 奇偶/大小形态 - ' + cfg.name,
+            vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getOeBsAnalysisHtml(cfg.name, posLabels, allNumbers, periods, periodPick.value);
+    });
+    context.subscriptions.push(oeBsDisposable);
+
     // ===== 状态栏时间 + 每日温馨话语（hover tooltip） =====
     // 在状态栏显示 🕐 HH:MM:SS 图标，鼠标悬停显示日期 + 温馨话语
     // 不影响代码阅读区域，完全在状态栏里
@@ -2505,6 +2598,8 @@ class LotteryTreeDataProvider {
                 this.createItem('💥 快8爆区分析', 'myPlugin.kl8Burst', '💥'),
                 this.createItem('🎯 排3/排5/3D奇偶大小预测', 'myPlugin.pl35OeBs', '🎯'),
                 this.createItem('🔮 八字起卦推号', 'myPlugin.bzDigits', '🔮'),
+                this.createItem('🔁 历史跟随下一期', 'myPlugin.histFollow', '🔁'),
+                this.createItem('🎱 快8历史跟随', 'myPlugin.kl8Follow', '🎱'),
                 this.createItem('🛤️ 012路趋势', 'myPlugin.roadAnalysis', '🛤️'),
                 this.createItem('📜 排三口诀', 'myPlugin.pl3Formula', '📜'),
                 this.createItem('🎲 排五口诀', 'myPlugin.pl5Formula', '🎲'),
@@ -2517,6 +2612,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🐦 群鸟生命游戏', 'myPlugin.boidsLife', '🐦'),
                 this.createItem('🎲 群鸟号码模拟', 'myPlugin.boidsNumber', '🎲'),
                 this.createItem('📐 质合形态分析', 'myPlugin.zhiHeAnalysis', '📐'),
+                this.createItem('⚖️ 奇偶/大小形态', 'myPlugin.oeBsAnalysis', '⚖️'),
                 this.createItem('🔮 预测记录', 'myPlugin.showPredictions', '🔮'),
                 this.createItem('🕐 显示当前时间', 'myPlugin.showTime', '🕐'),
                 this.createItem('🕙 时间背景水印', 'myPlugin.toggleTimeBackground', '🕙'),
@@ -3760,7 +3856,30 @@ function getZhiHeHtml(name, posLabels, allNumbers, periods, displayCount = 10) {
         return zhiNext >= heNext ? '质' : '合';
     }).join('');
 
-    const dataJson = JSON.stringify({ posLabels, posData, forms: sortedForms, transData, recentForms, predForm, N, recentN, lastPeriod: periodsSliced[periodsSliced.length - 1] });
+    // 每期形态序列
+    const formSeries = [];
+    for (let i = 0; i < N; i++) { formSeries.push(posData.map(pd => classify(pd.data[i])).join('')); }
+    // 当前形态（最新一期）→ 下一期形态分布
+    const currentForm = formSeries[N - 1];
+    const curFormOccur = formSeries.filter(f => f === currentForm).length;
+    const nextFormCounts = {};
+    const nextSamples = [];
+    for (let i = 0; i < N - 1; i++) {
+        if (formSeries[i] === currentForm) {
+            const nf = formSeries[i + 1];
+            nextFormCounts[nf] = (nextFormCounts[nf] || 0) + 1;
+            nextSamples.push({ period: periodsSliced[i + 1], form: nf, nums: posData.map(pd => pd.data[i + 1]) });
+        }
+    }
+    const nextDist = Object.entries(nextFormCounts).sort((a, b) => b[1] - a[1]);
+    const nextTotal = nextSamples.length;
+
+    const dataJson = JSON.stringify({
+        posLabels, posData, forms: sortedForms, transData, recentForms, predForm, N, recentN,
+        lastPeriod: periodsSliced[periodsSliced.length - 1],
+        currentForm, curFormOccur, nextDist, nextTotal,
+        nextSamples: nextSamples.slice(-50)
+    });
 
     return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -3826,6 +3945,18 @@ th { background: rgba(0,0,0,0.3); color: #8ec5ff; }
         <h3>🔢 每位转移矩阵</h3>
         <div id="transTables"></div>
         <div class="legend">行=上期质合 · 列=本期质合</div>
+    </div>
+    <div class="panel" style="grid-column: span 2;">
+        <h3>🔮 当前形态「<span id="curFormTag"></span>」的下一期形态分布</h3>
+        <div id="nextFormInfo" class="legend"></div>
+        <div id="nextFormList"></div>
+        <div class="recent-scroll" style="margin-top:10px;max-height:320px;">
+            <table class="recent-table">
+                <thead><tr><th>下一期期号</th>${posLabels.map(l => '<th>' + l + '</th>').join('')}<th>下一期形态</th></tr></thead>
+                <tbody id="nextFormBody"></tbody>
+            </table>
+        </div>
+        <div class="legend">⚠️ 每期独立随机，历史频次对下期无预测效力，仅供统计参考。明细最多显示最近 50 条。</div>
     </div>
     <div class="panel" style="grid-column: span 2;">
         <h3>📅 最近形态表（${recentN} 期）</h3>
@@ -3895,6 +4026,33 @@ th { background: rgba(0,0,0,0.3); color: #8ec5ff; }
         recentEl.appendChild(tr);
     });
 
+    // ============ 当前形态 → 下一期形态分布 ============
+    const colorize = f => f.split('').map(c => '<span class="' + (c === '质' ? 'zhi' : 'he') + '">' + c + '</span>').join('');
+    document.getElementById('curFormTag').innerHTML = colorize(D.currentForm);
+    document.getElementById('nextFormInfo').textContent =
+        '历史中出现「' + D.currentForm + '」共 ' + D.curFormOccur + ' 次，其中有下一期记录 ' + D.nextTotal + ' 次；以下为这些下一期的形态分布（按概率降序）';
+    const nfEl = document.getElementById('nextFormList');
+    const maxCnt = D.nextDist.length ? D.nextDist[0][1] : 1;
+    D.nextDist.forEach(([f, cnt]) => {
+        const pct = (cnt / D.nextTotal * 100).toFixed(1);
+        const row = document.createElement('div');
+        row.className = 'form-row';
+        row.innerHTML =
+            '<span class="form-label" style="min-width:90px">' + colorize(f) + '</span>' +
+            '<span style="flex:1;margin:0 10px;"><div class="bar-track"><div class="bar-fill" style="width:' + (cnt / maxCnt * 100) + '%;background:#2ecc71;opacity:0.7;"></div></div></span>' +
+            '<span class="form-count">' + cnt + '次</span><span class="form-pct">' + pct + '%</span>';
+        nfEl.appendChild(row);
+    });
+    if (!D.nextDist.length) {
+        nfEl.innerHTML = '<div class="form-pct">历史上该形态没有下一期记录。</div>';
+    }
+    const nfBody = document.getElementById('nextFormBody');
+    D.nextSamples.slice().reverse().forEach(r => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + r.period + '</td>' + r.nums.map(n => '<td>' + n + '</td>').join('') + '<td>' + colorize(r.form) + '</td>';
+        nfBody.appendChild(tr);
+    });
+
     // ============ 预测显示 ============
     function showPred() {
         const el = document.getElementById('predForm');
@@ -3912,6 +4070,150 @@ th { background: rgba(0,0,0,0.3); color: #8ec5ff; }
         el.innerHTML = noisy.split('').map(c => '<span style="color:' + (c === '质' ? '#5ad2ff' : '#feca57') + '">' + c + '</span>').join('');
     });
 })();
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 奇偶 + 大小 形态分析 Webview HTML（独立功能）
+ * 同一页面对每位做奇偶形态、大小形态分析：频率、形态分布、转移矩阵、下期预测、最近形态表。
+ */
+function getOeBsAnalysisHtml(name, posLabels, allNumbers, periods, displayCount = 10) {
+    const nPos = posLabels.length;
+    const N = Math.min(300, allNumbers[0].length);
+    const periodsSliced = periods.slice(-N);
+    const recentN = displayCount > 0 ? Math.min(displayCount, N) : N;
+
+    function buildAnalysis(classify) {
+        const posData = allNumbers.map((nums, p) => {
+            const data = nums.slice(-N);
+            let a = 0, b = 0;
+            for (const d of data) { if (classify(d) === 'A') a++; else b++; }
+            return { data, aCnt: a, bCnt: b, aPct: a / N * 100, bPct: b / N * 100 };
+        });
+        const forms = {};
+        for (let i = 0; i < N; i++) {
+            const f = posData.map(pd => classify(pd.data[i])).join('');
+            forms[f] = (forms[f] || 0) + 1;
+        }
+        const sortedForms = Object.entries(forms).sort((a, b) => b[1] - a[1]);
+        const transData = posData.map(pd => {
+            const t = { AA: 0, AB: 0, BA: 0, BB: 0 };
+            for (let i = 0; i < N - 1; i++) { const k = classify(pd.data[i]) + classify(pd.data[i + 1]); t[k]++; }
+            return t;
+        });
+        const recentForms = [];
+        for (let i = N - recentN; i < N; i++) {
+            const f = posData.map(pd => classify(pd.data[i])).join('');
+            recentForms.push({ period: periodsSliced[i], form: f, nums: posData.map(pd => pd.data[i]) });
+        }
+        const pred = posData.map((pd, i) => {
+            const last = classify(pd.data[N - 1]);
+            const t = transData[i];
+            const aNext = last === 'A' ? t.AA : t.BA;
+            const bNext = last === 'A' ? t.AB : t.BB;
+            return aNext >= bNext ? 'A' : 'B';
+        }).join('');
+        return { posData, forms: sortedForms, transData, recentForms, pred };
+    }
+
+    // 奇偶：奇=A 偶=B；大小：大(≥5)=A 小=B
+    const oe = buildAnalysis(n => (n % 2 === 1 ? 'A' : 'B'));
+    const bs = buildAnalysis(n => (n >= 5 ? 'A' : 'B'));
+    const lastPeriod = periodsSliced[periodsSliced.length - 1];
+    const dataJson = JSON.stringify({
+        posLabels, N, recentN, lastPeriod: periodsSliced[periodsSliced.length - 1], oe, bs
+    });
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>⚖️ 奇偶/大小形态 - ${name}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; padding: 16px; }
+h2 { color: #8ec5ff; margin-bottom: 4px; }
+.meta { color: #888; font-size: 12px; margin-bottom: 12px; }
+h3.sec { color: #feca57; font-size: 16px; margin: 20px 0 8px; border-left: 4px solid #feca57; padding-left: 10px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; max-width: 1400px; }
+.panel { background: rgba(20,30,50,0.5); border: 1px solid rgba(120,180,255,0.15); border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+.panel h4 { color: #8ec5ff; font-size: 14px; margin-bottom: 10px; }
+.bar-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
+.bar-label { width: 50px; text-align: center; font-weight: bold; }
+.bar-track { flex: 1; height: 22px; background: rgba(0,0,0,0.3); border-radius: 4px; }
+.bar-fill { height: 100%; border-radius: 4px; }
+.bar-val { width: 90px; font-size: 12px; color: #aaa; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 6px 10px; text-align: center; border: 1px solid rgba(255,255,255,0.08); }
+th { background: rgba(0,0,0,0.3); color: #8ec5ff; }
+.form-row { display: flex; justify-content: space-between; padding: 3px 8px; margin: 2px 0; border-radius: 4px; font-size: 13px; }
+.form-row:nth-child(odd) { background: rgba(255,255,255,0.03); }
+.form-label { color: #8ec5ff; font-weight: bold; }
+.form-count { color: #feca57; }
+.form-pct { color: #888; font-size: 11px; }
+.cls-A { color: #ff6b5e; font-weight: bold; }
+.cls-B { color: #5dade2; font-weight: bold; }
+.pred { padding: 12px; background: rgba(46,204,113,0.08); border: 1px solid rgba(46,204,113,0.3); border-radius: 8px; margin: 10px 0; text-align: center; }
+.pred-form { font-size: 26px; font-weight: bold; color: #2ecc71; letter-spacing: 6px; margin: 6px 0; }
+.note { color: #666; font-size: 11px; margin-top: 10px; line-height: 1.7; }
+</style>
+</head>
+<body>
+<h2>⚖️ ${name} · 奇偶 / 大小 形态分析</h2>
+<div class="meta">基于最近 ${N} 期 · 最新期号 ${lastPeriod} · 显示最近 ${recentN} 期形态表</div>
+<div id="oe"></div>
+<div id="bs"></div>
+<div class="note">⚠️ 每期独立随机，奇偶/大小理论上均为 50/50；转移矩阵预测基于历史频率，对下期无预测效力，仅供统计参考。</div>
+<script>
+var D = ${dataJson};
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function renderSection(containerId, title, A, B, clsA, clsB, sec){
+    var d = D[sec];
+    var h = '<h3 class="sec">'+title+'（<span class="'+clsA+'">'+A+'</span> / <span class="'+clsB+'">'+B+'）</h3>';
+    // 每位频率
+    h += '<div class="panel"><h4>每位频率</h4>';
+    D.posLabels.forEach(function(lbl, p){
+        var pd = d.posData[p];
+        h += '<div class="bar-row"><span class="bar-label">'+esc(lbl)+'</span>';
+        h += '<div class="bar-track"><div class="bar-fill" style="width:'+pd.aPct+'%;background:#e74c3c;"></div></div>';
+        h += '<span class="bar-val"><span class="'+clsA+'">'+A+' '+pd.aCnt+' ('+pd.aPct.toFixed(1)+'%)</span> / <span class="'+clsB+'">'+B+' '+pd.bCnt+' ('+pd.bPct.toFixed(1)+'%)</span></span>';
+        h += '</div>';
+    });
+    h += '</div>';
+    // 形态分布 top + 转移矩阵
+    h += '<div class="grid">';
+    h += '<div class="panel"><h4>形态分布 TOP8</h4>';
+    d.forms.slice(0, 8).forEach(function(f){
+        var pct = (f[1] / D.N * 100).toFixed(2);
+        h += '<div class="form-row"><span class="form-label">'+esc(f[0].replace(/A/g, A).replace(/B/g, B))+'</span><span><span class="form-count">'+f[1]+' 次</span> <span class="form-pct">'+pct+'%</span></span></div>';
+    });
+    h += '</div>';
+    h += '<div class="panel"><h4>转移矩阵（每位）</h4>';
+    h += '<table><thead><tr><th>位</th><th>'+A+'→'+A+'</th><th>'+A+'→'+B+'</th><th>'+B+'→'+A+'</th><th>'+B+'→'+B+'</th></tr></thead><tbody>';
+    D.posLabels.forEach(function(lbl, p){
+        var t = d.transData[p];
+        h += '<tr><td>'+esc(lbl)+'</td><td>'+t.AA+'</td><td>'+t.AB+'</td><td>'+t.BA+'</td><td>'+t.BB+'</td></tr>';
+    });
+    h += '</tbody></table></div>';
+    h += '</div>';
+    // 预测
+    var predDisp = d.pred.replace(/A/g, A).replace(/B/g, B);
+    h += '<div class="pred"><div style="color:#aaa;font-size:12px;">下期预测（按转移矩阵最大概率）</div><div class="pred-form">'+predDisp+'</div><div style="color:#888;font-size:11px;">每位取该位当前态→转移概率更大的一侧</div></div>';
+    // 最近形态表
+    h += '<div class="panel"><h4>最近 '+D.recentN+' 期形态</h4>';
+    h += '<table><thead><tr><th>期号</th><th>形态</th><th>号码</th></tr></thead><tbody>';
+    for(var ri=d.recentForms.length-1;ri>=0;ri--){var r=d.recentForms[ri];
+        var formDisp = r.form.replace(/A/g, '<span class="'+clsA+'">'+A+'</span>').replace(/B/g, '<span class="'+clsB+'">'+B+'</span>');
+        var nums = r.nums.map(function(n){return '<span style="display:inline-block;min-width:20px;padding:1px 4px;border-radius:3px;background:rgba(255,255,255,0.06);">'+n+'</span>';}).join(' ');
+        h += '<tr><td>'+esc(r.period)+'</td><td>'+formDisp+'</td><td>'+nums+'</td></tr>';
+    }
+    h += '</tbody></table></div>';
+    document.getElementById(containerId).innerHTML = h;
+}
+renderSection('oe', '奇偶形态', '奇', '偶', 'cls-A', 'cls-B', 'oe');
+renderSection('bs', '大小形态', '大', '小', 'cls-A', 'cls-B', 'bs');
 </script>
 </body>
 </html>`;
@@ -10429,6 +10731,442 @@ button:hover { background: #1177bb; }
     });
     document.getElementById('btnCalc').click();
 })();
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 历史跟随 Webview HTML：输入号码 → 在历史中找出现该组合的期 → 显示对应的下一期
+ * @param {Array<Object>} pl3 - 排列三历史（旧→新）
+ * @param {Array<Object>} fc3 - 福彩3D历史（旧→新）
+ * @param {Array<Object>} pl5 - 排列五历史（旧→新）
+ * 页面内可选彩种 pl3/fc3d/pl5 + 匹配模式（组合/直选），列出所有命中及其下一期。
+ */
+function getHistFollowHtml(pl3, fc3, pl5, kl8) {
+    const dataJson = JSON.stringify({
+        pl3: pl3.map(h => ({ period: h.period, num: h.num || [] })),
+        fc3: fc3.map(h => ({ period: h.period, num: h.num || [] })),
+        pl5: pl5.map(h => ({ period: h.period, num: h.num || [] })),
+        kl8: kl8.map(h => ({ period: h.period, num: h.num || [] }))
+    });
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>历史跟随 · 号码追溯下一期</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
+h2 { color: #e8a87c; margin-bottom: 6px; font-size: 20px; }
+h3 { color: #8ec5ff; margin: 14px 0 8px; font-size: 15px; }
+.sub { color: #aaa; font-size: 12px; line-height: 1.7; margin-bottom: 10px; }
+.ctrl { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.ctrl label { color: #8ec5ff; font-size: 12px; }
+select, input[type=text] { background: #2d2d30; color: #ddd; border: 1px solid #555; border-radius: 5px; padding: 5px 9px; font-size: 13px; }
+input[type=text] { width: 130px; font-family: Consolas, monospace; letter-spacing: 2px; }
+button { background: #0e639c; color: #fff; border: none; border-radius: 5px; padding: 7px 18px; font-size: 13px; cursor: pointer; }
+button:hover { background: #1177bb; }
+.calc-time { color: #feca57; font-size: 12px; margin: 6px 0 10px; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+th, td { border: 1px solid #444; padding: 6px 10px; text-align: center; font-size: 12px; }
+th { background: #2d2d30; color: #8ec5ff; }
+.ball { display: inline-block; min-width: 24px; height: 24px; line-height: 24px; border-radius: 50%; text-align: center; font-size: 12px; font-weight: 700; color: #fff; margin: 0 2px; padding: 0 4px; background: linear-gradient(135deg,#3498db,#2980b9); }
+.ball.hit { background: linear-gradient(135deg,#e74c3c,#c0392b); }
+.ball.next { background: linear-gradient(135deg,#2ecc71,#27ae60); }
+.stat { color: #feca57; font-size: 13px; margin: 8px 0; }
+.note { background: rgba(142,197,255,0.08); border: 1px solid rgba(142,197,255,0.25); border-radius: 8px; padding: 10px 14px; color: #aaa; font-size: 12px; line-height: 1.9; margin-top: 16px; }
+.note b { color: #8ec5ff; }
+.warn { color: #f39c12; }
+</style>
+</head>
+<body>
+<h2>🔁 历史跟随 · 号码追溯下一期</h2>
+<div class="sub">输入一注号码（如 278）→ 在所选彩种历史里找出<b>出现过该组合</b>的所有期 → 列出每一期对应的<b>下一期</b>开奖号码。</div>
+<div class="ctrl">
+    <label>彩种</label>
+    <select id="selType">
+        <option value="pl3" selected>排列三</option>
+        <option value="fc3">福彩3D</option>
+        <option value="pl5">排列五</option>
+    </select>
+    <label>模式</label>
+    <select id="selMode">
+        <option value="combo" selected>全注组合（任意顺序）</option>
+        <option value="exact">全注直选（同位置）</option>
+        <option value="pos">按位跟随</option>
+    </select>
+    <span id="posWrap" style="display:none;">
+        <label>位置</label>
+        <select id="selPos"></select>
+    </span>
+    <label id="numLabel">输入号码</label>
+    <input type="text" id="inNum" placeholder="如 278" maxlength="5">
+    <label>统计期数</label>
+    <select id="selN">
+        <option value="50">近 50 期</option>
+        <option value="100" selected>近 100 期</option>
+        <option value="200">近 200 期</option>
+        <option value="0">全部</option>
+    </select>
+    <button id="btnSearch">🔍 搜索</button>
+</div>
+<div class="calc-time" id="calcTime"></div>
+<div id="result"><div class="sub">输入号码后点「搜索」</div></div>
+<div class="note">
+    <b>说明：</b><br>
+    · <b>全注组合</b>：忽略位置，号码集合一致即命中（如输入 278，开出 872 也算）。<br>
+    · <b>全注直选</b>：按位完全一致（278 只匹配 278）。<br>
+    · <b>按位跟随</b>：只看指定某一位是否等于输入数字（如百位=2），列出所有命中期及下一期，并统计下一期每位号码分布。<br>
+    · <b>统计期数</b>：只在该窗口内搜索（取最近 N 期）；下一期 = 命中期之后的下一期，命中期是最新一期则标"已最新"。<br>
+    · <span class="warn">⚠️ 每期独立随机，"出现过几次后的下一期"对下期没有预测效力，样本少时尤其不可信，仅供统计参考。</span>
+</div>
+<script>
+var DATA = ${dataJson};
+var POSL={pl3:['百','十','个'],fc3:['百','十','个'],pl5:['万','千','百','十','个']};
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function sortedSig(arr){return arr.slice().sort(function(a,b){return a-b;}).join('');}
+function balls(arr, hitSet){
+    var h='';
+    for(var i=0;i<arr.length;i++){var cls=hitSet&&hitSet.indexOf(arr[i])>=0?'hit':'';h+='<span class="ball '+cls+'">'+arr[i]+'</span>';}
+    return h;
+}
+function pad2(n){return n<10?'0'+n:''+n;}
+function kballs(arr, hitSet){
+    var h='';
+    for(var i=0;i<arr.length;i++){var cls=hitSet&&hitSet.indexOf(arr[i])>=0?'hit':'';h+='<span class="ball '+cls+'">'+pad2(arr[i])+'</span>';}
+    return h;
+}
+function updatePosOptions(){
+    var type=document.getElementById('selType').value;
+    var labels=POSL[type]||[];
+    var sel=document.getElementById('selPos');
+    sel.innerHTML='';
+    for(var i=0;i<labels.length;i++){var o=document.createElement('option');o.value=i;o.textContent=labels[i]+'位';sel.appendChild(o);}
+}
+function onModeChange(){
+    var mode=document.getElementById('selMode').value;
+    document.getElementById('posWrap').style.display='none';
+    document.getElementById('numLabel').textContent='输入号码';
+    document.getElementById('inNum').placeholder='如 278';
+}
+function onTypeChange(){
+    var type=document.getElementById('selType').value;
+    var isKl8=(type==='kl8');
+    document.getElementById('selMode').style.display=isKl8?'none':'';
+    document.getElementById('posWrap').style.display='none';
+    // 隐藏模式前面的 label
+    var lbls=document.querySelectorAll('.ctrl label');
+    document.getElementById('numLabel').textContent='输入号码';
+    document.getElementById('inNum').placeholder=isKl8?'如 05 12 27':'如 278';
+    document.getElementById('inNum').maxLength=isKl8?5:5;
+}
+function search(){
+    var type=document.getElementById('selType').value;
+    var raw=document.getElementById('inNum').value.trim();
+    var mode=document.getElementById('selMode').value;
+    var Nsel=parseInt(document.getElementById('selN').value,10);
+    var all=DATA[type]||[];
+    if(type==='kl8'){
+        var knums=[];var kcur='';
+        for(var ki=0;ki<=raw.length;ki++){var kc=ki<raw.length?raw.charAt(ki):' ';if(kc>='0'&&kc<='9')kcur+=kc;else{if(kcur){var kv=parseInt(kcur,10);if(kv>=1&&kv<=80)knums.push(kv);kcur='';}}}
+        if(knums.length<1){document.getElementById('result').innerHTML='<div class="sub">⚠️ 请输入至少 1 个号码（1-80，空格/逗号分隔）</div>';document.getElementById('calcTime').textContent='';return;}
+        var kt0=Date.now();
+        var kwin=Nsel===0?all.length:Math.min(Nsel,all.length);
+        var kstart=all.length-kwin;
+        var khits=[];
+        for(var kr=kstart;kr<all.length;kr++){
+            var kn=all[kr].num||[];
+            var kallIn=true;
+            for(var kj=0;kj<knums.length;kj++){if(kn.indexOf(knums[kj])<0){kallIn=false;break;}}
+            if(kallIn){var knext=(kr+1<all.length)?all[kr+1]:null;khits.push({row:all[kr],next:knext});}
+        }
+        var kh='<div class="stat">命中 '+khits.length+' 次（窗口 '+kwin+' 期，共 '+all.length+' 期历史） · 快乐8 · 输入 '+knums.length+' 个号码：'+knums.map(pad2).join(' ')+'</div>';
+        if(!khits.length){kh+='<div class="sub">窗口内未出现同时包含这些号码的期。</div>';}
+        else{
+            kh+='<table><thead><tr><th>#</th><th>命中期号</th><th>该期号码</th><th>下一期期号</th><th>下一期号码</th></tr></thead><tbody>';
+            for(var ki=0;ki<khits.length;ki++){var khh=khits[ki];
+                kh+='<tr><td>'+(ki+1)+'</td><td>'+esc(khh.row.period)+'</td><td>'+kballs(khh.row.num,knums)+'</td>';
+                if(khh.next){kh+='<td>'+esc(khh.next.period)+'</td><td>'+kballs(khh.next.num,null)+'</td>';}
+                else{kh+='<td colspan="2" style="color:#feca57;">已最新</td>';}
+                kh+='</tr>';}
+            kh+='</tbody></table>';
+            var kfreq={};
+            for(var ki=0;ki<khits.length;ki++){if(!khits[ki].next)continue;var knn=khits[ki].next.num||[];for(var kj=0;kj<knn.length;kj++){kfreq[knn[kj]]=(kfreq[knn[kj]]||0)+1;}}
+            var kfarr=[];for(var d=1;d<=80;d++)if(kfreq[d])kfarr.push({d:d,c:kfreq[d]});
+            kfarr.sort(function(a,b){return b.c-a.c||a.d-b.d;});
+            var knsamp=khits.filter(function(x){return x.next;}).length;
+            if(kfarr.length){
+                kh+='<h3>📊 下一期号码频次（'+knsamp+' 个下一期样本，取前 20）</h3>';
+                kh+='<div style="line-height:2;">';
+                for(var ki=0;ki<Math.min(20,kfarr.length);ki++){kh+='<span class="ball next">'+pad2(kfarr[ki].d)+'</span><span style="color:#aaa;font-size:12px;margin-right:10px;">×'+kfarr[ki].c+'</span>';}
+                kh+='</div>';
+            }
+            kh+='<div class="sub">⚠️ 样本量通常很小，频次在抽样噪声内，无预测效力。快乐8每期20个号，下一期号码频次为20个样本的合计。</div>';
+        }
+        document.getElementById('result').innerHTML=kh;
+        document.getElementById('calcTime').textContent='⏱ 本次计算时间：'+new Date().toLocaleString('zh-CN')+' · 耗时 '+(Date.now()-kt0)+'ms';
+        return;
+    }
+    var k={pl3:3,fc3:3,pl5:5}[type];
+    var nums=[];
+    for(var i=0;i<raw.length;i++){var c=raw.charAt(i);if(c>='0'&&c<='9')nums.push(parseInt(c,10));}
+    var sig='';
+    if(mode==='pos'){
+        if(nums.length!==k){document.getElementById('result').innerHTML='<div class="sub">⚠️ 按位跟随请输入 '+k+' 个数字（每位各自统计，当前 '+nums.length+' 个）</div>';document.getElementById('calcTime').textContent='';return;}
+    }else{
+        if(nums.length!==k){document.getElementById('result').innerHTML='<div class="sub">⚠️ 请输入 '+k+' 个数字（当前 '+nums.length+' 个）</div>';document.getElementById('calcTime').textContent='';return;}
+        sig=sortedSig(nums);
+    }
+    var t0=Date.now();
+    var win=Nsel===0?all.length:Math.min(Nsel,all.length);
+    var startFrom=all.length-win;
+    var h='';
+    if(mode==='pos'){
+        h+='<div class="stat">按位跟随 · '+nums.join(' ')+' · 窗口 '+win+' 期（共 '+all.length+' 期历史） · 各位按其数字分别统计下一期</div>';
+        for(var p=0;p<k;p++){
+            var dg=nums[p];
+            var phits=[];
+            for(var r=startFrom;r<all.length;r++){
+                var n=all[r].num||[];
+                if(n.length<k)continue;
+                if(n[p]===dg){var next=(r+1<all.length)?all[r+1]:null;phits.push({row:all[r],next:next});}
+            }
+            h+='<h3>'+POSL[type][p]+'位 = '+dg+'（命中 '+phits.length+' 次）</h3>';
+            var pfreq={};for(var d=0;d<10;d++)pfreq[d]=0;
+            var psamp=0;
+            for(var i=0;i<phits.length;i++){if(!phits[i].next)continue;psamp++;var v=phits[i].next.num[p];if(v>=0&&v<=9)pfreq[v]++;}
+            var parr=[];for(var d=0;d<10;d++)if(pfreq[d]>0)parr.push({d:d,c:pfreq[d]});
+            parr.sort(function(a,b){return b.c-a.c||a.d-b.d;});
+            if(parr.length){
+                h+='<div style="line-height:2;margin:6px 0;"><span style="color:#aaa;font-size:12px;">下一期 '+POSL[type][p]+'位 频次（'+psamp+' 样本）：</span>';
+                for(var i=0;i<parr.length;i++){h+='<span class="ball next">'+parr[i].d+'</span><span style="color:#aaa;font-size:12px;margin-right:10px;">×'+parr[i].c+'</span>';}
+                h+='</div>';
+            }else{h+='<div class="sub">无下一期样本。</div>';}
+            if(phits.length){
+                h+='<table><thead><tr><th>#</th><th>命中期号</th><th>该期号码</th><th>下一期期号</th><th>下一期号码</th></tr></thead><tbody>';
+                var shown=0;
+                for(var i=0;i<phits.length&&shown<15;i++){var hh=phits[i];
+                    h+='<tr><td>'+(i+1)+'</td><td>'+esc(hh.row.period)+'</td><td>'+balls(hh.row.num.slice(0,k),[dg])+'</td>';
+                    if(hh.next){h+='<td>'+esc(hh.next.period)+'</td><td>'+balls(hh.next.num.slice(0,k),null)+'</td>';}
+                    else{h+='<td colspan="2" style="color:#feca57;">已最新</td>';}
+                    h+='</tr>';shown++;}
+                h+='</tbody></table>';
+                if(phits.length>15)h+='<div class="sub">仅显示前 15 条，共 '+phits.length+' 次命中。</div>';
+            }
+        }
+        h+='<div class="sub">⚠️ 样本量通常很小，频次在抽样噪声内，无预测效力。</div>';
+    }else{
+        var hits=[];
+        for(var r=startFrom;r<all.length;r++){
+            var n=all[r].num||[];
+            if(n.length<k)continue;
+            var match=(mode==='exact')?(n.slice(0,k).join('')===nums.join('')):(sortedSig(n.slice(0,k))===sig);
+            if(match){var next=(r+1<all.length)?all[r+1]:null;hits.push({row:all[r],next:next});}
+        }
+        var hitSet=nums;
+        var modeName=mode==='exact'?'全注直选':'全注组合';
+        h+='<div class="stat">命中 '+hits.length+' 次（窗口 '+win+' 期，共 '+all.length+' 期历史） · 模式：'+modeName+'</div>';
+        if(!hits.length){
+            h+='<div class="sub">窗口内未出现该'+(mode==='exact'?'直选组合':'组合')+'。</div>';
+        }else{
+            h+='<table><thead><tr><th>#</th><th>命中期号</th><th>该期号码</th><th>下一期期号</th><th>下一期号码</th></tr></thead><tbody>';
+            for(var i=0;i<hits.length;i++){var hh=hits[i];
+                h+='<tr><td>'+(i+1)+'</td><td>'+esc(hh.row.period)+'</td><td>'+balls(hh.row.num.slice(0,k),hitSet)+'</td>';
+                if(hh.next){h+='<td>'+esc(hh.next.period)+'</td><td>'+balls(hh.next.num.slice(0,k),null)+'</td>';}
+                else{h+='<td colspan="2" style="color:#feca57;">已最新（无下一期）</td>';}
+                h+='</tr>';}
+            h+='</tbody></table>';
+            var freq={};
+            for(var i=0;i<hits.length;i++){if(!hits[i].next)continue;var nn=hits[i].next.num.slice(0,k);for(var j=0;j<nn.length;j++){freq[nn[j]]=(freq[nn[j]]||0)+1;}}
+            var farr=[];for(var d=0;d<10;d++)if(freq[d])farr.push({d:d,c:freq[d]});
+            farr.sort(function(a,b){return b.c-a.c;});
+            var nsamp=hits.filter(function(x){return x.next;}).length;
+            if(farr.length){
+                h+='<h3>📊 下一期号码总频次（'+nsamp+' 个下一期样本，各位合计）</h3>';
+                h+='<div style="line-height:2;">';
+                for(var i=0;i<farr.length;i++){h+='<span class="ball next">'+farr[i].d+'</span><span style="color:#aaa;font-size:12px;margin-right:10px;">×'+farr[i].c+'</span>';}
+                h+='</div>';
+            }
+            h+='<h3>📋 按位 · 下一期号码分布（每位数字降序）</h3>';
+            h+='<table><thead><tr><th>位</th><th>下一期该位号码频次（数字×次数，降序）</th></tr></thead><tbody>';
+            for(var p=0;p<k;p++){
+                var pf={};for(var d=0;d<10;d++)pf[d]=0;
+                for(var i=0;i<hits.length;i++){if(!hits[i].next)continue;var v=hits[i].next.num[p];if(v>=0&&v<=9)pf[v]++;}
+                var parr2=[];for(var d=0;d<10;d++)if(pf[d]>0)parr2.push({d:d,c:pf[d]});
+                parr2.sort(function(a,b){return b.c-a.c||a.d-b.d;});
+                var cells='';
+                for(var i=0;i<parr2.length;i++){cells+='<span class="ball next">'+parr2[i].d+'</span><span style="color:#aaa;font-size:12px;margin-right:10px;">×'+parr2[i].c+'</span>';}
+                if(!parr2.length)cells='<span class="sub">无样本</span>';
+                h+='<tr><td><b>'+POSL[type][p]+'位</b></td><td style="text-align:left;">'+cells+'</td></tr>';
+            }
+            h+='</tbody></table>';
+            h+='<div class="sub">⚠️ 样本量通常很小，频次在抽样噪声内，无预测效力。</div>';
+        }
+    }
+    document.getElementById('result').innerHTML=h;
+    document.getElementById('calcTime').textContent='⏱ 本次计算时间：'+new Date().toLocaleString('zh-CN')+' · 耗时 '+(Date.now()-t0)+'ms';
+}
+updatePosOptions();
+onModeChange();
+onTypeChange();
+document.getElementById('btnSearch').addEventListener('click',search);
+document.getElementById('inNum').addEventListener('keydown',function(e){if(e.key==='Enter')search();});
+document.getElementById('selType').addEventListener('change',function(){updatePosOptions();onTypeChange();search();});
+document.getElementById('selMode').addEventListener('change',function(){onModeChange();search();});
+document.getElementById('selPos').addEventListener('change',search);
+document.getElementById('selN').addEventListener('change',search);
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 快乐8 历史跟随 Webview HTML（独立按钮）
+ * @param {Array<Object>} kl8 - 快乐8历史（旧→新）
+ * 输入最多 20 个号 → 找同时包含这些号的期 → 显示下一期 + 频次。
+ */
+function getKl8FollowHtml(kl8) {
+    const dataJson = JSON.stringify(kl8.map(h => ({ period: h.period, num: h.num || [] })));
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>快乐8 历史跟随 · 号码追溯下一期</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
+h2 { color: #e8a87c; margin-bottom: 6px; font-size: 20px; }
+h3 { color: #8ec5ff; margin: 14px 0 8px; font-size: 15px; }
+.sub { color: #aaa; font-size: 12px; line-height: 1.7; margin-bottom: 10px; }
+.ctrl { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.ctrl label { color: #8ec5ff; font-size: 12px; }
+select { background: #2d2d30; color: #ddd; border: 1px solid #555; border-radius: 5px; padding: 4px 8px; font-size: 13px; }
+textarea { width: 100%; min-height: 60px; background: #252526; color: #ddd; border: 1px solid #555; border-radius: 6px; padding: 8px; font-size: 13px; font-family: Consolas, monospace; resize: vertical; }
+textarea:focus { outline: none; border-color: #8ec5ff; }
+button { background: #0e639c; color: #fff; border: none; border-radius: 5px; padding: 7px 18px; font-size: 13px; cursor: pointer; }
+button:hover { background: #1177bb; }
+.calc-time { color: #feca57; font-size: 12px; margin: 6px 0 10px; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+th, td { border: 1px solid #444; padding: 5px 8px; text-align: center; font-size: 12px; }
+th { background: #2d2d30; color: #8ec5ff; }
+.ball { display: inline-block; min-width: 24px; height: 24px; line-height: 24px; border-radius: 50%; text-align: center; font-size: 11px; font-weight: 700; color: #fff; margin: 1px 2px; padding: 0 3px; background: linear-gradient(135deg,#3498db,#2980b9); }
+.ball.hit { background: linear-gradient(135deg,#e74c3c,#c0392b); }
+.ball.next { background: linear-gradient(135deg,#2ecc71,#27ae60); }
+.zc0 { background: linear-gradient(135deg,#e67e22,#f39c12); }
+.zc1 { background: linear-gradient(135deg,#2ecc71,#27ae60); }
+.zc2 { background: linear-gradient(135deg,#3498db,#2980b9); }
+.zc3 { background: linear-gradient(135deg,#9b59b6,#8e44ad); }
+.zc4 { background: linear-gradient(135deg,#e74c3c,#c0392b); }
+.zc5 { background: linear-gradient(135deg,#16a085,#1abc9c); }
+.zc6 { background: linear-gradient(135deg,#d35400,#e67e22); }
+.zc7 { background: linear-gradient(135deg,#7f8c8d,#95a5a6); }
+.zone-legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: #aaa; margin: 4px 0 8px; line-height: 1.8; }
+.zone-legend span.dot { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 3px; vertical-align: middle; }
+.stat { color: #feca57; font-size: 13px; margin: 8px 0; }
+.note { background: rgba(142,197,255,0.08); border: 1px solid rgba(142,197,255,0.25); border-radius: 8px; padding: 10px 14px; color: #aaa; font-size: 12px; line-height: 1.9; margin-top: 16px; }
+.note b { color: #8ec5ff; }
+.warn { color: #f39c12; }
+</style>
+</head>
+<body>
+<h2>🔁 快乐8 · 历史跟随</h2>
+<div class="sub">输入号码（1-80，最多 20 个，空格/逗号/换行分隔）→ <b>每个号码各自追溯</b>：找出该号出现过的所有期，统计其下一期开了什么号。</div>
+<div class="ctrl">
+    <label>统计期数</label>
+    <select id="selN">
+        <option value="50">近 50 期</option>
+        <option value="100" selected>近 100 期</option>
+        <option value="200">近 200 期</option>
+        <option value="0">全部</option>
+    </select>
+    <button id="btnSearch">🔍 搜索</button>
+    <button id="btnClear" style="background:#3a3d41;">🧹 清空</button>
+</div>
+<textarea id="inNum" placeholder="如：05 12 27 41 58 63 70  （最多 20 个，1-80）"></textarea>
+<div class="calc-time" id="calcTime"></div>
+<div id="result"><div class="sub">输入号码后点「搜索」</div></div>
+<div class="note">
+    <b>说明：</b><br>
+    · 匹配规则：<b>每个输入号码各自追溯</b>——找出该号在窗口内出现过的所有期，统计其下一期开出的号码（快乐8每期20个号，整注完全重复几乎不可能，故按单号跟随）。<br>
+    · 下一期 = 命中期之后的下一期；命中期是最新一期则不计入下一期样本。<br>
+    · 每个输入号一块：下一期号码频次（取前20）+ 其他输入号在下一期出现次数 + 前10条下一期明细。<br>
+    · <span class="warn">⚠️ 每期独立随机，"出现过几次后的下一期"对下期没有预测效力，样本少时尤其不可信，仅供统计参考。</span>
+</div>
+<script>
+var DATA = ${dataJson};
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function pad2(n){return n<10?'0'+n:''+n;}
+function zcls(n){return 'zc'+Math.floor((n-1)/10);}
+function zoneLegend(){
+    var names=['1-10','11-20','21-30','31-40','41-50','51-60','61-70','71-80'];
+    var h='<div class="zone-legend">';
+    for(var i=0;i<8;i++){h+='<span><span class="dot zc'+i+'"></span>'+names[i]+'</span>';}
+    h+='</div>';
+    return h;
+}
+function kballs(arr, hitSet){
+    var h='';
+    for(var i=0;i<arr.length;i++){var cls=hitSet&&hitSet.indexOf(arr[i])>=0?'hit':'';h+='<span class="ball '+cls+'">'+pad2(arr[i])+'</span>';}
+    return h;
+}
+function parseNums(raw){
+    var out=[],cur='';
+    for(var i=0;i<=raw.length;i++){
+        var c=i<raw.length?raw.charAt(i):' ';
+        if(c>='0'&&c<='9')cur+=c;
+        else{if(cur){var v=parseInt(cur,10);if(v>=1&&v<=80&&out.indexOf(v)<0)out.push(v);cur='';}}
+    }
+    return out;
+}
+function search(){
+    var raw=document.getElementById('inNum').value;
+    var Nsel=parseInt(document.getElementById('selN').value,10);
+    var all=DATA;
+    var nums=parseNums(raw);
+    if(nums.length<1){document.getElementById('result').innerHTML='<div class="sub">⚠️ 请输入至少 1 个号码（1-80）</div>';document.getElementById('calcTime').textContent='';return;}
+    if(nums.length>20){document.getElementById('result').innerHTML='<div class="sub">⚠️ 最多 20 个号码（当前 '+nums.length+' 个，已截断）</div>';nums=nums.slice(0,20);}
+    var t0=Date.now();
+    var win=Nsel===0?all.length:Math.min(Nsel,all.length);
+    var startFrom=all.length-win;
+    var h='';
+    h+='<div class="stat">快乐8 按号码跟随 · 窗口 '+win+' 期（共 '+all.length+' 期历史） · 输入 '+nums.length+' 个号码：'+nums.map(pad2).join(' ')+' · 每个号各自追溯其下一期</div>';
+    for(var ni=0;ni<nums.length;ni++){
+        var X=nums[ni];
+        var hits=[];
+        for(var r=startFrom;r<all.length;r++){
+            var n=all[r].num||[];
+            if(n.indexOf(X)>=0){var next=(r+1<all.length)?all[r+1]:null;hits.push({row:all[r],next:next});}
+        }
+        var nsamp=hits.filter(function(x){return x.next;}).length;
+        h+='<h3>号码 '+pad2(X)+'（命中 '+hits.length+' 次，下一期样本 '+nsamp+'）</h3>';
+        if(!nsamp){h+='<div class="sub">无下一期样本。</div>';continue;}
+        var freq={};
+        for(var i=0;i<hits.length;i++){if(!hits[i].next)continue;var nn=hits[i].next.num||[];for(var j=0;j<nn.length;j++){freq[nn[j]]=(freq[nn[j]]||0)+1;}}
+        var farr=[];for(var d=1;d<=80;d++)if(freq[d])farr.push({d:d,c:freq[d]});
+        farr.sort(function(a,b){return b.c-a.c||a.d-b.d;});
+        h+='<div style="line-height:2;margin:6px 0;"><span style="color:#aaa;font-size:12px;">下一期号码频次（取前 20，按区着色）：</span>';
+        h+=zoneLegend();
+        for(var i=0;i<Math.min(20,farr.length);i++){h+='<span class="ball '+zcls(farr[i].d)+'">'+pad2(farr[i].d)+'</span><span style="color:#aaa;font-size:12px;margin-right:8px;">×'+farr[i].c+'</span>';}
+        h+='</div>';
+        h+='<div style="margin:6px 0;"><span style="color:#aaa;font-size:12px;">其他输入号在下一期出现：</span>';
+        for(var oi=0;oi<nums.length;oi++){if(nums[oi]===X)continue;var cnt=0;for(var j=0;j<hits.length;j++){if(!hits[j].next)continue;if((hits[j].next.num||[]).indexOf(nums[oi])>=0)cnt++;}h+='<span class="ball hit">'+pad2(nums[oi])+'</span><span style="color:#aaa;font-size:12px;margin-right:8px;">'+cnt+'/'+nsamp+'</span>';}
+        h+='</div>';
+        h+='<table><thead><tr><th>#</th><th>命中期号</th><th>下一期期号</th><th>下一期号码</th></tr></thead><tbody>';
+        var shown=0;
+        for(var i=0;i<hits.length&&shown<10;i++){if(!hits[i].next)continue;var hh=hits[i];
+            h+='<tr><td>'+(shown+1)+'</td><td>'+esc(hh.row.period)+' <span class="ball hit">'+pad2(X)+'</span></td><td>'+esc(hh.next.period)+'</td><td>'+kballs(hh.next.num,null)+'</td></tr>';shown++;}
+        h+='</tbody></table>';
+        if(nsamp>10)h+='<div class="sub">仅显示前 10 条下一期，共 '+nsamp+' 个样本。</div>';
+    }
+    h+='<div class="sub">⚠️ 快乐8每期开 20 个号，每号每期理论概率 25%；样本量大时频次会趋近 25%，无预测效力。</div>';
+    document.getElementById('result').innerHTML=h;
+    document.getElementById('calcTime').textContent='⏱ 本次计算时间：'+new Date().toLocaleString('zh-CN')+' · 耗时 '+(Date.now()-t0)+'ms';
+}
+document.getElementById('btnSearch').addEventListener('click',search);
+document.getElementById('btnClear').addEventListener('click',function(){document.getElementById('inNum').value='';document.getElementById('result').innerHTML='<div class="sub">已清空</div>';document.getElementById('calcTime').textContent='';});
+document.getElementById('inNum').addEventListener('keydown',function(e){if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();search();}});
+document.getElementById('selN').addEventListener('change',search);
 </script>
 </body>
 </html>`;

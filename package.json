@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.8.66",
+    "version": "0.8.79",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -38,6 +38,7 @@
         "onCommand:myPlugin.boidsLife",
         "onCommand:myPlugin.boidsNumber",
         "onCommand:myPlugin.zhiHeAnalysis",
+        "onCommand:myPlugin.oeBsAnalysis",
         "onCommand:myPlugin.toggleTimeBackground",
         "onCommand:myPlugin.drawMachine",
         "onCommand:myPlugin.kl8Miss",
@@ -50,6 +51,8 @@
         "onCommand:myPlugin.kl8Burst",
         "onCommand:myPlugin.pl35OeBs",
         "onCommand:myPlugin.bzDigits",
+        "onCommand:myPlugin.histFollow",
+        "onCommand:myPlugin.kl8Follow",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -135,6 +138,10 @@
                 "title": "Zhi-He Analysis"
             },
             {
+                "command": "myPlugin.oeBsAnalysis",
+                "title": "奇偶/大小形态"
+            },
+            {
                 "command": "myPlugin.toggleTimeBackground",
                 "title": "Toggle Time Background"
             },
@@ -181,6 +188,14 @@
             {
                 "command": "myPlugin.bzDigits",
                 "title": "八字起卦推号"
+            },
+            {
+                "command": "myPlugin.histFollow",
+                "title": "历史跟随下一期"
+            },
+            {
+                "command": "myPlugin.kl8Follow",
+                "title": "快8历史跟随"
             }
         ],
         "viewsContainers": {
