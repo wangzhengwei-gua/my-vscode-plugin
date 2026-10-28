@@ -1418,6 +1418,60 @@ function activate(context) {
     });
     context.subscriptions.push(kl8FollowDisposable);
 
+    // 快乐8 热温冷分析 + 智能选号（热度Z分数 + 重号延续 + 8区均衡 + 形态约束）
+    let kl8HotColdDisposable = vscode.commands.registerCommand('myPlugin.kl8HotCold', async () => {
+        let history = [];
+        try {
+            const cfg = LOTTERY_TYPES.find(c => c.key === 'kl8');
+            if (cfg) history = loadLotteryData(cfg);
+        } catch (e) {
+            history = [];
+        }
+        if (!history.length) {
+            vscode.window.showWarningMessage('快乐8数据为空，请先刷新数据');
+            return;
+        }
+        const panel = vscode.window.createWebviewPanel(
+            'kl8HotCold',
+            '快乐8 热温冷 · 智能选号',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getKl8HotColdHtml(history);
+
+        panel.webview.onDidReceiveMessage(async (msg) => {
+            if (!msg || !msg.command) return;
+            if (msg.command === 'copy') {
+                await vscode.env.clipboard.writeText(String(msg.text || ''));
+                panel.webview.postMessage({ command: 'copySuccess' });
+            }
+        });
+    });
+    context.subscriptions.push(kl8HotColdDisposable);
+
+    // 大乐透前区区间形态分析（1-12/13-24/25-35 三区，形态如 221）
+    let dltZoneFormDisposable = vscode.commands.registerCommand('myPlugin.dltZoneForm', async () => {
+        let history = [];
+        try {
+            const cfg = LOTTERY_TYPES.find(c => c.key === 'dlt');
+            if (cfg) history = loadLotteryData(cfg);
+        } catch (e) {
+            history = [];
+        }
+        if (!history.length) {
+            vscode.window.showWarningMessage('大乐透数据为空，请先刷新数据');
+            return;
+        }
+        const panel = vscode.window.createWebviewPanel(
+            'dltZoneForm',
+            '大乐透 前区区间形态 · 下一期形态统计',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getDltZoneFormHtml(history);
+    });
+    context.subscriptions.push(dltZoneFormDisposable);
+
     // 大乐透选号 / 杀号（可视化选号盘 + 方案持久化记录）
     let dltPickKillDisposable = vscode.commands.registerCommand('myPlugin.dltPickKill', async () => {
         let history = [];
@@ -2592,6 +2646,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🎯 大乐透遗漏分层', 'myPlugin.dltMiss', '🎯'),
                 this.createItem('🧮 大乐透分区统计', 'myPlugin.dltZone', '🧮'),
                 this.createItem('🎯 大乐透选号杀号', 'myPlugin.dltPickKill', '🎯'),
+                this.createItem('🧩 大乐透区间形态', 'myPlugin.dltZoneForm', '🧩'),
                 this.createItem('🔢 号码排序', 'myPlugin.sortNumbers', '🔢'),
                 this.createItem('🔥 热号统计', 'myPlugin.hotNumbers', '🔥'),
                 this.createItem('🎯 快8罕见形态选号', 'myPlugin.kl8RarePick', '🎯'),
@@ -2600,6 +2655,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🔮 八字起卦推号', 'myPlugin.bzDigits', '🔮'),
                 this.createItem('🔁 历史跟随下一期', 'myPlugin.histFollow', '🔁'),
                 this.createItem('🎱 快8历史跟随', 'myPlugin.kl8Follow', '🎱'),
+                this.createItem('🔥 快8热温冷选号', 'myPlugin.kl8HotCold', '🔥'),
                 this.createItem('🛤️ 012路趋势', 'myPlugin.roadAnalysis', '🛤️'),
                 this.createItem('📜 排三口诀', 'myPlugin.pl3Formula', '📜'),
                 this.createItem('🎲 排五口诀', 'myPlugin.pl5Formula', '🎲'),
@@ -11180,6 +11236,577 @@ document.getElementById('selN').addEventListener('change',search);
  * @param {Array<Object>} records - 已保存的方案记录
  * @param {string} storePath - 记录文件绝对路径
  */
+/**
+ * 大乐透 前区区间形态分析（独立功能）
+ * 前区 1-12 一区 / 13-24 二区 / 25-35 三区；形态 = 三区出号个数（如 221）
+ * 统计：历史中出现某形态时，其下一期形态的分布（按概率降序）
+ */
+function getDltZoneFormHtml(history) {
+    const N = Math.min(500, history.length);
+    const rows = history.slice(-N); // 旧→新
+    const zoneOf = n => (n <= 12 ? 0 : (n <= 24 ? 1 : 2));
+    function formOf(front) {
+        const c = [0, 0, 0];
+        for (const n of front) { if (n >= 1 && n <= 35) c[zoneOf(n)]++; }
+        return c.join('');
+    }
+    const periods = rows.map(r => r.period);
+    const fronts = rows.map(r => (r.front || []).slice());
+    const forms = fronts.map(formOf);
+    const curForm = forms[forms.length - 1];
+
+    const formCount = {};
+    for (const f of forms) formCount[f] = (formCount[f] || 0) + 1;
+    const formNext = {};
+    const samples = {};
+    for (let i = 0; i < forms.length - 1; i++) {
+        const f = forms[i], g = forms[i + 1];
+        if (!formNext[f]) { formNext[f] = {}; samples[f] = []; }
+        formNext[f][g] = (formNext[f][g] || 0) + 1;
+        samples[f].push({ period: periods[i + 1], front: fronts[i + 1], form: g });
+    }
+    // 每个形态只保留最近 60 条样本
+    for (const f in samples) { if (samples[f].length > 60) samples[f] = samples[f].slice(-60); }
+
+    const dataJson = JSON.stringify({
+        periods, fronts, forms, curForm, formCount, formNext, samples, N,
+        lastPeriod: periods[periods.length - 1],
+        lastFront: fronts[fronts.length - 1]
+    });
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>大乐透 前区区间形态</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; padding: 16px; }
+h2 { color: #8ec5ff; margin-bottom: 4px; }
+.meta { color: #888; font-size: 12px; margin-bottom: 14px; }
+.panel { background: rgba(20,30,50,0.5); border: 1px solid rgba(120,180,255,0.15); border-radius: 8px; padding: 14px; margin-bottom: 14px; max-width: 1200px; }
+.panel h3 { color: #feca57; font-size: 15px; margin-bottom: 10px; }
+select { background: #2d2d30; color: #ddd; border: 1px solid #555; border-radius: 5px; padding: 5px 10px; font-size: 14px; }
+.ball { display: inline-block; min-width: 26px; height: 26px; line-height: 26px; border-radius: 50%; text-align: center; font-size: 12px; font-weight: 700; color: #fff; margin: 2px; padding: 0 4px; }
+.z0 { background: linear-gradient(135deg,#e67e22,#f39c12); }
+.z1 { background: linear-gradient(135deg,#2ecc71,#27ae60); }
+.z2 { background: linear-gradient(135deg,#3498db,#2980b9); }
+.zone-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: #aaa; margin: 8px 0; }
+.zone-legend span.dot { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 4px; vertical-align: middle; }
+.form-row { display: flex; align-items: center; padding: 4px 8px; margin: 3px 0; border-radius: 4px; font-size: 13px; }
+.form-row:nth-child(odd) { background: rgba(255,255,255,0.03); }
+.form-tag { font-weight: bold; font-size: 16px; letter-spacing: 2px; color: #8ec5ff; width: 90px; }
+.bar-track { flex: 1; height: 20px; background: rgba(0,0,0,0.3); border-radius: 4px; margin: 0 12px; }
+.bar-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg,#2ecc71,#27ae60); }
+.form-count { color: #feca57; width: 60px; text-align: right; }
+.form-pct { color: #888; font-size: 12px; width: 70px; text-align: right; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 6px 10px; text-align: center; border: 1px solid rgba(255,255,255,0.08); }
+th { background: rgba(0,0,0,0.3); color: #8ec5ff; }
+.form-cell { font-weight: bold; letter-spacing: 2px; color: #8ec5ff; }
+.note { color: #666; font-size: 11px; line-height: 1.7; margin-top: 10px; }
+.scroll { max-height: 320px; overflow-y: auto; border: 1px solid rgba(120,180,255,0.1); border-radius: 6px; }
+.scroll thead th { position: sticky; top: 0; }
+</style>
+</head>
+<body>
+<h2>🎲 大乐透 · 前区区间形态分析</h2>
+<div class="meta">基于最近 ${N} 期 · 最新 ${periods[periods.length - 1]} · 一区 1-12 / 二区 13-24 / 三区 25-35 · 形态 = 三区出号个数（合计 5）</div>
+
+<div class="panel">
+    <h3>当前形态</h3>
+    <div id="curBox"></div>
+    <div class="zone-legend">
+        <span><span class="dot z0"></span>一区 1-12</span>
+        <span><span class="dot z1"></span>二区 13-24</span>
+        <span><span class="dot z2"></span>三区 25-35</span>
+    </div>
+</div>
+
+<div class="panel">
+    <h3>形态 → 下一期形态分布</h3>
+    <div style="margin-bottom:10px;">选择形态：
+        <select id="selForm"></select>
+        <span id="formInfo" style="color:#aaa;font-size:12px;margin-left:10px;"></span>
+    </div>
+    <div id="distBox"></div>
+    <div class="scroll" style="margin-top:10px;">
+        <table>
+            <thead><tr><th>下一期期号</th><th>前区号码</th><th>形态</th></tr></thead>
+            <tbody id="sampleBody"></tbody>
+        </table>
+    </div>
+    <div class="note">⚠️ 每期独立随机，历史频次对下期无预测效力，仅供统计参考。明细最多显示最近 60 条。</div>
+</div>
+
+<div class="panel">
+    <h3>全部形态出现频次（TOP）</h3>
+    <div id="allForms"></div>
+</div>
+
+<script>
+var D = ${dataJson};
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function zc(n){return n<=12?'z0':(n<=24?'z1':'z2');}
+function balls(arr){
+    return arr.slice().sort(function(a,b){return a-b;}).map(function(n){return '<span class="ball '+zc(n)+'">'+(n<10?'0'+n:''+n)+'</span>';}).join('');
+}
+// 当前形态
+document.getElementById('curBox').innerHTML =
+    '<div style="font-size:13px;color:#aaa;">最新期号 '+esc(D.lastPeriod)+'</div>' +
+    '<div style="margin:6px 0;">'+balls(D.lastFront)+'</div>' +
+    '<div>形态：<span class="form-cell" style="font-size:22px;">'+D.curForm+'</span>' +
+    '<span style="color:#888;font-size:12px;margin-left:10px;">（一区 '+D.curForm[0]+' / 二区 '+D.curForm[1]+' / 三区 '+D.curForm[2]+'）</span></div>';
+// 形态下拉
+var formKeys = Object.keys(D.formCount).sort(function(a,b){return D.formCount[b]-D.formCount[a];});
+var sel = document.getElementById('selForm');
+formKeys.forEach(function(f){
+    var o = document.createElement('option');
+    o.value = f; o.textContent = f + '（出现 ' + D.formCount[f] + ' 次）';
+    if (f === D.curForm) o.selected = true;
+    sel.appendChild(o);
+});
+function render(form){
+    var nx = D.formNext[form] || {};
+    var arr = Object.keys(nx).map(function(g){return {g:g,c:nx[g]};}).sort(function(a,b){return b.c-a.c;});
+    var total = arr.reduce(function(s,x){return s+x.c;},0);
+    var occur = D.formCount[form] || 0;
+    document.getElementById('formInfo').textContent = '历史中出现「'+form+'」共 '+occur+' 次，有下一期记录 '+total+' 次';
+    var h = '';
+    if(!arr.length){ h = '<div style="color:#888;">该形态在历史中没有下一期记录。</div>'; }
+    else{
+        var max = arr[0].c;
+        arr.forEach(function(x){
+            var pct = (x.c/total*100).toFixed(1);
+            h += '<div class="form-row"><span class="form-tag">'+x.g+'</span>' +
+                 '<span class="bar-track"><span class="bar-fill" style="display:block;width:'+(x.c/max*100)+'%;"></span></span>' +
+                 '<span class="form-count">'+x.c+' 次</span><span class="form-pct">'+pct+'%</span></div>';
+        });
+    }
+    document.getElementById('distBox').innerHTML = h;
+    var sm = (D.samples[form] || []).slice().reverse();
+    var tb = '';
+    sm.forEach(function(r){
+        tb += '<tr><td>'+esc(r.period)+'</td><td>'+balls(r.front)+'</td><td class="form-cell">'+r.form+'</td></tr>';
+    });
+    document.getElementById('sampleBody').innerHTML = tb || '<tr><td colspan="3" style="color:#888;">无样本</td></tr>';
+}
+sel.addEventListener('change', function(){ render(sel.value); });
+render(D.curForm);
+// 全部形态频次
+var allH = '';
+formKeys.forEach(function(f){
+    var pct = (D.formCount[f]/D.N*100).toFixed(1);
+    allH += '<div class="form-row"><span class="form-tag">'+f+'</span>' +
+            '<span class="bar-track"><span class="bar-fill" style="display:block;width:'+(D.formCount[f]/D.formCount[formKeys[0]]*100)+'%;"></span></span>' +
+            '<span class="form-count">'+D.formCount[f]+' 次</span><span class="form-pct">'+pct+'%</span></div>';
+});
+document.getElementById('allForms').innerHTML = allH;
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 快乐8 热温冷分析 + 智能选号（独立功能）
+ * 算法（热号追踪 + 重号延续 + 8区均衡 + 形态约束）：
+ *   1) 热度分：近 N 期出号次数做 Z 标准化（二项分布 n=N,p=0.25）
+ *   2) 重号分：上期出过的号加权（快乐8每期20号，上期号下期再现概率 25%，是唯一有统计依据的延续性）
+ *   3) 近期趋势：最近10期出号频次偏离
+ *   4) 8区均衡：80号分8区，每期平均每区2.5个，按热度给各区分配名额，区内取高分号
+ *   5) 形态约束：奇偶比 0.3~0.7、质数占比 0.1~0.5、每区不超过上限，不满足则重抽
+ */
+function getKl8HotColdHtml(history) {
+    const rows = history.slice(-100); // 旧→新
+    const periods = rows.map(r => r.period);
+    const draws = rows.map(r => (r.num || []).slice());
+    const dataJson = JSON.stringify({ periods, draws });
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>快乐8 热温冷 · 智能选号</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; padding: 16px; }
+h2 { color: #8ec5ff; margin-bottom: 4px; }
+.meta { color: #888; font-size: 12px; margin-bottom: 12px; }
+h3 { color: #feca57; font-size: 15px; margin-bottom: 10px; }
+.panel { background: rgba(20,30,50,0.5); border: 1px solid rgba(120,180,255,0.15); border-radius: 8px; padding: 14px; margin-bottom: 14px; max-width: 1300px; }
+.ctrl { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.ctrl span.lb { color: #8ec5ff; font-size: 12px; }
+select, input[type=number] { background: #2d2d30; color: #ddd; border: 1px solid #555; border-radius: 5px; padding: 4px 8px; font-size: 13px; }
+button { background: #0e639c; color: #fff; border: none; border-radius: 5px; padding: 7px 16px; font-size: 13px; cursor: pointer; }
+button:hover { background: #1177bb; }
+.temp-sum { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; }
+.temp-box { background: rgba(0,0,0,0.25); border-radius: 6px; padding: 8px 12px; min-width: 200px; flex: 1; }
+.temp-box .t { font-size: 13px; font-weight: bold; margin-bottom: 6px; }
+.temp-box .t.hot { color: #ff6b5e; }
+.temp-box .t.warm { color: #feca57; }
+.temp-box .t.cold { color: #5dade2; }
+.zone-row { display: flex; align-items: center; margin: 4px 0; }
+.zone-name { width: 72px; font-size: 11px; color: #888; }
+.cell { width: 46px; height: 40px; border-radius: 5px; margin: 2px; text-align: center; font-size: 12px; font-weight: bold; padding-top: 3px; }
+.cell .c { display: block; font-size: 10px; font-weight: normal; opacity: 0.85; }
+.hot { background: rgba(231,76,60,0.35); color: #ff9b91; border: 1px solid rgba(231,76,60,0.6); }
+.warm { background: rgba(254,202,87,0.25); color: #feca57; border: 1px solid rgba(254,202,87,0.5); }
+.cold { background: rgba(93,173,226,0.25); color: #9fd0f0; border: 1px solid rgba(93,173,226,0.5); }
+.ball { display: inline-block; min-width: 26px; height: 26px; line-height: 26px; border-radius: 50%; text-align: center; font-size: 12px; font-weight: 700; color: #fff; margin: 2px; padding: 0 3px; }
+.zc0 { background: linear-gradient(135deg,#e67e22,#f39c12); }
+.zc1 { background: linear-gradient(135deg,#2ecc71,#27ae60); }
+.zc2 { background: linear-gradient(135deg,#3498db,#2980b9); }
+.zc3 { background: linear-gradient(135deg,#9b59b6,#8e44ad); }
+.zc4 { background: linear-gradient(135deg,#e74c3c,#c0392b); }
+.zc5 { background: linear-gradient(135deg,#16a085,#1abc9c); }
+.zc6 { background: linear-gradient(135deg,#d35400,#e67e22); }
+.zc7 { background: linear-gradient(135deg,#7f8c8d,#95a5a6); }
+.res { background: rgba(0,0,0,0.25); border-radius: 6px; padding: 10px; margin-bottom: 10px; }
+.res .line { margin: 4px 0; font-size: 12px; color: #aaa; }
+.res .line b { color: #ddd; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { padding: 5px 8px; text-align: center; border: 1px solid rgba(255,255,255,0.08); }
+th { background: rgba(0,0,0,0.3); color: #8ec5ff; }
+.kv { color: #aaa; font-size: 12px; }
+.note { color: #666; font-size: 11px; line-height: 1.8; margin-top: 10px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.cp { background: #3a3d41; font-size: 11px; padding: 3px 10px; margin-top: 6px; }
+.cp:hover { background: #4a4d51; }
+.cp.ok { background: #2ecc71; }
+.toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); background: rgba(46,204,113,0.95); color: #fff; padding: 8px 18px; border-radius: 6px; font-size: 13px; z-index: 99; display: none; }
+.toast.show { display: block; }
+</style>
+</head>
+<body>
+<h2>🔥 快乐8 · 热温冷分析 + 智能选号</h2>
+<div class="meta" id="meta"></div>
+<div class="toast" id="toast">✅ 已复制到剪贴板</div>
+
+<div class="panel">
+    <h3>⚙️ 选号设置</h3>
+    <div class="ctrl">
+        <span class="lb">统计期数</span>
+        <select id="selN"><option value="30">近30期</option><option value="50" selected>近50期</option><option value="100">近100期</option></select>
+        <span class="lb">策略</span>
+        <select id="selStrat">
+            <option value="hot" selected>热号为主（追热门）</option>
+            <option value="cold">冷号回补（博冷门）</option>
+            <option value="balance">均衡（温度居中）</option>
+        </select>
+        <span class="lb">玩法</span>
+        <select id="selPlay">
+            <option value="10" selected>选十</option><option value="9">选九</option><option value="8">选八</option>
+            <option value="7">选七</option><option value="6">选六</option><option value="5">选五</option>
+            <option value="4">选四</option><option value="3">选三</option><option value="2">选二</option><option value="1">选一</option>
+        </select>
+        <span class="lb">方式</span>
+        <select id="selType"><option value="single" selected>单式</option><option value="multi">复式</option></select>
+        <span class="lb" id="lbCount">注数</span>
+        <input type="number" id="inCount" value="5" min="1" max="20" style="width:60px;">
+        <span class="lb">倍数</span>
+        <input type="number" id="inMult" value="1" min="0" max="100" style="width:60px;">
+        <button id="btnGen">🎯 生成号码</button>
+    </div>
+    <div class="kv">单式=生成指定注数（每注 X 个号）；复式=生成 Y 个号的复式（注数=C(Y,X)） · 金额 = 注数 × 2 元 × 倍数（倍数 0-100）</div>
+</div>
+
+<div class="panel">
+    <h3>🌡️ 热温冷分布</h3>
+    <div class="temp-sum" id="tempSum"></div>
+    <div id="grid"></div>
+    <div class="kv" style="margin-top:8px;">格子内为号码 / 出现次数 · <span style="color:#ff9b91">红=热</span> · <span style="color:#feca57">黄=温</span> · <span style="color:#9fd0f0">蓝=冷</span>（按 Z 分数判定，期望值见上方说明）</div>
+</div>
+
+<div class="grid2">
+    <div class="panel">
+        <h3>🔥 热号 TOP15</h3>
+        <table><thead><tr><th>#</th><th>号</th><th>出现</th><th>当前遗漏</th><th>Z</th></tr></thead><tbody id="hotBody"></tbody></table>
+    </div>
+    <div class="panel">
+        <h3>❄️ 冷号 TOP15</h3>
+        <table><thead><tr><th>#</th><th>号</th><th>出现</th><th>当前遗漏</th><th>Z</th></tr></thead><tbody id="coldBody"></tbody></table>
+    </div>
+</div>
+
+<div class="panel">
+    <h3>🔁 上期号码与重号参考</h3>
+    <div id="lastBox"></div>
+</div>
+
+<div class="panel">
+    <h3>🎯 推荐号码</h3>
+    <div id="resultBox"><div class="kv">点「生成号码」开始</div></div>
+    <div class="note">⚠️ 快乐8每期开20个号，每号每期概率恒定 25%；热冷只是历史统计，对下期无预测效力。重号（上期号下期再现）客观概率同为 25%。本工具仅供统计参考与娱乐，请理性购彩。</div>
+</div>
+
+<script>
+var D = ${dataJson};
+var PRIMES = [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79];
+var PLAYCN = ['','选一','选二','选三','选四','选五','选六','选七','选八','选九','选十'];
+var PRIMESET = {}; PRIMES.forEach(function(p){PRIMESET[p]=1;});
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function pad2(n){return n<10?'0'+n:''+n;}
+function zc(n){return 'zc'+Math.floor((n-1)/10);}
+function zcls(n){return 'ball '+zc(n);}
+function zoneOf(n){return Math.floor((n-1)/10);}
+
+// 统计：cnt 出现次数，miss 当前遗漏，z 标准分
+function compute(N){
+    var rows = D.draws.slice(-N);
+    var cnt = {}, miss = {};
+    for(var n=1;n<=80;n++){cnt[n]=0;miss[n]=0;}
+    rows.forEach(function(d){d.forEach(function(x){if(x>=1&&x<=80)cnt[x]++;});});
+    for(var n=1;n<=80;n++){var m=0;for(var i=rows.length-1;i>=0;i--){if(rows[i].indexOf(n)>=0)break;m++;}miss[n]=m;}
+    var exp = N*20/80, sd = Math.sqrt(N*0.25*0.75);
+    var z = {};
+    for(var n=1;n<=80;n++)z[n]=(cnt[n]-exp)/sd;
+    // 最近10期频次
+    var r10 = {}; for(var n=1;n<=80;n++)r10[n]=0;
+    rows.slice(-10).forEach(function(d){d.forEach(function(x){if(x>=1&&x<=80)r10[x]++;});});
+    // 与上期重号数
+    var rep = 0, repCnt = 0;
+    for(var i=1;i<rows.length;i++){var c=0;rows[i].forEach(function(x){if(rows[i-1].indexOf(x)>=0)c++;});rep+=c;repCnt++;}
+    return {rows:rows, cnt:cnt, miss:miss, z:z, exp:exp, sd:sd, r10:r10, avgRep: repCnt? rep/repCnt : 0,
+            last: rows[rows.length-1]||[]};
+}
+function tempOf(zz){return zz>0.5?'hot':(zz<-0.5?'cold':'warm');}
+
+function render(){
+    var N = parseInt(document.getElementById('selN').value,10);
+    var S = compute(N);
+    document.getElementById('meta').textContent =
+        '基于最近 '+N+' 期 · 每期20号 · 每号期望出现 '+(S.exp).toFixed(1)+' 次（标准差 '+S.sd.toFixed(2)+'） · 理论概率 25%';
+    // 温度分布
+    var hot=[], warm=[], cold=[];
+    for(var n=1;n<=80;n++){var t=tempOf(S.z[n]); (t==='hot'?hot:(t==='cold'?cold:warm)).push(n);}
+    document.getElementById('tempSum').innerHTML =
+        tbox('hot','🔥 热号 '+hot.length+' 个', hot) + tbox('warm','🌤 温号 '+warm.length+' 个', warm) + tbox('cold','❄️ 冷号 '+cold.length+' 个', cold);
+    // 8区温度盘
+    var gh='';
+    for(var zi=0;zi<8;zi++){
+        gh+='<div class="zone-row"><span class="zone-name">'+(zi+1)+'区 '+(zi*10+1)+'-'+((zi+1)*10)+'</span>';
+        for(var k=0;k<10;k++){var n=zi*10+k+1; var t=tempOf(S.z[n]);
+            gh+='<div class="cell '+t+'" title="'+pad2(n)+' 出现'+S.cnt[n]+'次 遗漏'+S.miss[n]+' Z='+S.z[n].toFixed(2)+'">'+pad2(n)+'<span class="c">'+S.cnt[n]+'</span></div>';
+        }
+        gh+='</div>';
+    }
+    document.getElementById('grid').innerHTML=gh;
+    // TOP 表
+    var arr=[]; for(var n=1;n<=80;n++)arr.push(n);
+    arr.sort(function(a,b){return S.cnt[b]-S.cnt[a];});
+    document.getElementById('hotBody').innerHTML = arr.slice(0,15).map(function(n,i){
+        return '<tr><td>'+(i+1)+'</td><td><span class="'+zcls(n)+'">'+pad2(n)+'</span></td><td>'+S.cnt[n]+'</td><td>'+S.miss[n]+'</td><td>'+S.z[n].toFixed(2)+'</td></tr>';
+    }).join('');
+    var arr2=arr.slice().reverse();
+    document.getElementById('coldBody').innerHTML = arr2.slice(0,15).map(function(n,i){
+        return '<tr><td>'+(i+1)+'</td><td><span class="'+zcls(n)+'">'+pad2(n)+'</span></td><td>'+S.cnt[n]+'</td><td>'+S.miss[n]+'</td><td>'+S.z[n].toFixed(2)+'</td></tr>';
+    }).join('');
+    // 上期
+    document.getElementById('lastBox').innerHTML =
+        '<div style="margin-bottom:6px;">上期（'+esc(D.periods[D.periods.length-1])+'）：'+S.last.map(function(n){return '<span class="'+zcls(n)+'">'+pad2(n)+'</span>';}).join('')+'</div>' +
+        '<div class="kv">近 '+N+' 期平均每期与上期重号 '+S.avgRep.toFixed(2)+' 个（理论 5 个 = 20×25%） · 推荐号码会优先延续上期号码</div>';
+}
+function tbox(cls,title,arr){
+    return '<div class="temp-box"><div class="t '+cls+'">'+title+'</div>' +
+        arr.map(function(n){return '<span class="'+zcls(n)+'">'+pad2(n)+'</span>';}).join('')+'</div>';
+}
+
+// ============ 选号算法 ============
+function scoresOf(S, strat){
+    var last = S.last, sc = [];
+    for(var n=1;n<=80;n++){
+        var zz = S.z[n];
+        var base = strat==='hot' ? zz : (strat==='cold' ? -zz : -Math.abs(zz));
+        var s = 0.6*base + 2.5*(last.indexOf(n)>=0?1:0) + 0.4*(S.r10[n]/2.5-1);
+        sc.push({n:n, s:s});
+    }
+    return sc;
+}
+function alloc(play, sc){
+    // 8区名额：基础均分 + 余数给热区（区内分数均值高的区）
+    var zoneScore = [], zoneNums = {};
+    for(var zi=0;zi<8;zi++){zoneNums[zi]=[];}
+    sc.forEach(function(o){zoneNums[zoneOf(o.n)].push(o);});
+    for(var zi=0;zi<8;zi++){
+        var sum=0; zoneNums[zi].forEach(function(o){sum+=o.s;});
+        zoneScore.push({zi:zi, avg:sum/Math.max(1,zoneNums[zi].length)});
+    }
+    zoneScore.sort(function(a,b){return b.avg-a.avg;});
+    var need=[]; for(var zi=0;zi<8;zi++)need[zi]=0;
+    var base=Math.floor(play/8), rem=play%8;
+    for(var zi=0;zi<8;zi++)need[zi]=base;
+    for(var i=0;i<rem;i++)need[zoneScore[i].zi]++;
+    return {need:need, zoneNums:zoneNums};
+}
+function pickPool(sc, S){
+    var al = alloc(parseInt(document.getElementById('selPlay').value,10), sc);
+    var pool=[];
+    // 每区取 2×名额 个高分号进候选池
+    for(var zi=0;zi<8;zi++){
+        var list = al.zoneNums[zi].slice().sort(function(a,b){return b.s-a.s;});
+        var k = Math.max(2, al.need[zi]*2);
+        for(var i=0;i<Math.min(k,list.length);i++)pool.push(list[i]);
+    }
+    return {pool:pool, need:al.need, zoneNums:al.zoneNums};
+}
+function checkForm(nums, play){
+    var odd=0, prime=0, sum=0, zc=[0,0,0,0,0,0,0,0];
+    nums.forEach(function(n){if(n%2===1)odd++;if(PRIMESET[n])prime++;sum+=n;zc[zoneOf(n)]++;});
+    var maxPerZone = Math.max(2, Math.ceil(play/8)+1);
+    for(var i=0;i<8;i++){if(zc[i]>maxPerZone)return false;}
+    var oddRate = odd/nums.length;
+    if(oddRate<0.3||oddRate>0.7)return false;
+    var pRate = prime/nums.length;
+    if(pRate<0.1||pRate>0.5)return false;
+    return true;
+}
+function comb(k, n){
+    if(n<0)return 0;
+    var r=1; for(var i=0;i<k;i++){r=r*(n-i)/(i+1);}
+    return Math.round(r);
+}
+function gen(){
+    var N = parseInt(document.getElementById('selN').value,10);
+    var play = parseInt(document.getElementById('selPlay').value,10);
+    var strat = document.getElementById('selStrat').value;
+    var type = document.getElementById('selType').value;
+    var cnt = parseInt(document.getElementById('inCount').value,10)||1;
+    var mult = parseInt(document.getElementById('inMult').value,10);
+    if(isNaN(mult)||mult<0)mult=0;
+    if(mult>100)mult=100;
+    var S = compute(N);
+    var sc = scoresOf(S, strat);
+    var P = pickPool(sc, S);
+    var pool = P.pool.slice().sort(function(a,b){return b.s-a.s;});
+    var h = '';
+    var playName = PLAYCN[play] || ('选' + play);
+    if(type==='multi'){
+        // 复式：候选池取前 K 个（K = play + cnt，cnt 作为"多出的号数"）
+        var K = Math.min(play + cnt, pool.length);
+        var sel = pool.slice(0, Math.max(play+1, K)).map(function(o){return o.n;}).sort(function(a,b){return a-b;});
+        var notes = comb(play, sel.length);
+        var hdr = '快乐8选号（' + mult + '倍，单倍出）';
+        var txt = hdr + '&#10;' + playName + '：' + txtOf(sel);
+        h += '<div class="res"><div class="line"><b>复式 '+sel.length+' 个号</b> · 选'+play+' → <b>'+notes+'</b> 注 · 倍数 <b>'+mult+'</b> · 合计 <b>'+(notes*2*mult)+'</b> 元</div>';
+        h += '<div style="margin:6px 0;">'+sel.map(function(n){return '<span class="'+zcls(n)+'">'+pad2(n)+'</span>';}).join('')+'</div>';
+        h += statLine(sel, S);
+        h += '<button class="cp" data-txt="'+txt+'">📋 复制这注复式</button></div>';
+    }else{
+        // 单式：每注从候选池按分数加权抽样，需通过形态约束
+        var hdr = '快乐8选号（' + mult + '倍，单倍出）';
+        var per = [];
+        for(var t=0;t<cnt;t++){
+            var nums = makeOne(pool, play, P);
+            var line = playName + '：' + txtOf(nums);
+            per.push(line);
+            h += '<div class="res"><div class="line"><b>第 '+(t+1)+' 注</b>（选'+play+' · 倍数 '+mult+' · '+(2*mult)+' 元）</div>';
+            h += '<div style="margin:6px 0;">'+nums.map(function(n){return '<span class="'+zcls(n)+'">'+pad2(n)+'</span>';}).join('')+'</div>';
+            h += statLine(nums, S);
+            h += '<button class="cp" data-txt="'+hdr+'&#10;'+line+'">📋 复制第 '+(t+1)+' 注</button></div>';
+        }
+        h = '<div class="res"><div class="line"><b>共 '+cnt+' 注</b> · 2元/注 · 倍数 <b>'+mult+'</b> · 合计 <b>'+(cnt*2*mult)+'</b> 元' +
+            ' <button class="cp" data-txt="'+hdr+'&#10;'+per.join('&#10;')+'" style="margin-left:12px;">📋 复制全部 '+cnt+' 注</button></div></div>' + h;
+    }
+    document.getElementById('resultBox').innerHTML = h;
+}
+function txtOf(nums){
+    return nums.join(' ');
+}
+function makeOne(pool, play, P){
+    var need = P.need;
+    for(var attempt=0;attempt<80;attempt++){
+        var nums=[];
+        for(var zi=0;zi<8;zi++){
+            if(need[zi]<=0)continue;
+            var list = P.zoneNums[zi].slice().sort(function(a,b){return b.s-a.s;});
+            var take = list.slice(0, Math.max(need[zi]*2, 3));
+            // 按分数加权随机取 need[zi] 个
+            var picked = weightedPick(take, need[zi]);
+            picked.forEach(function(o){nums.push(o.n);});
+        }
+        if(nums.length!==play)continue;
+        nums.sort(function(a,b){return a-b;});
+        if(checkForm(nums, play))return nums;
+    }
+    // 兜底：直接取每区最高分
+    var out=[];
+    for(var zi=0;zi<8;zi++){
+        var list = P.zoneNums[zi].slice().sort(function(a,b){return b.s-a.s;});
+        for(var i=0;i<need[zi]&&i<list.length;i++)out.push(list[i].n);
+    }
+    return out.sort(function(a,b){return a-b;});
+}
+function weightedPick(take, k){
+    var idx=[], used={}, total=0;
+    take.forEach(function(o,i){idx.push(i);});
+    var res=[];
+    for(var c=0;c<k&&c<take.length;c++){
+        // 取分数最高的若干个中随机一个（保留随机性又偏向高分）
+        var i = Math.floor(Math.random()*Math.min(3, take.length));
+        var guard=0;
+        while(used[i]&&guard<20){i=Math.floor(Math.random()*take.length);guard++;}
+        used[i]=1; res.push(take[i]);
+    }
+    return res;
+}
+function statLine(nums, S){
+    var odd=0, prime=0, sum=0, zc=[0,0,0,0,0,0,0,0], hotN=0;
+    nums.forEach(function(n){if(n%2===1)odd++;if(PRIMESET[n])prime++;sum+=n;zc[zoneOf(n)]++;if(S.z[n]>0.5)hotN++;});
+    var zs = zc.filter(function(x){return x>0;}).join('/');
+    return '<div class="line">8区分布 '+zs+' · 奇偶 '+odd+'奇'+(nums.length-odd)+'偶 · 质数 '+prime+' 个 · 和值 '+sum+' · 其中热号 '+hotN+' 个</div>';
+}
+document.getElementById('selN').addEventListener('change',render);
+document.getElementById('selPlay').addEventListener('change',function(){
+    document.getElementById('lbCount').textContent = document.getElementById('selType').value==='multi' ? '多加号码' : '注数';
+});
+document.getElementById('selType').addEventListener('change',function(){
+    var t=this.value;
+    document.getElementById('lbCount').textContent = t==='multi'?'多加号码':'注数';
+    document.getElementById('inCount').value = t==='multi'?3:5;
+    document.getElementById('inCount').max = t==='multi'?10:20;
+});
+document.getElementById('btnGen').addEventListener('click',gen);
+// 倍数变化时若已有结果则刷新金额
+document.getElementById('inMult').addEventListener('change',function(){
+    var v=parseInt(this.value,10);
+    if(isNaN(v)||v<0)this.value=0;
+    if(v>100)this.value=100;
+    if(document.getElementById('resultBox').querySelector('.res'))gen();
+});
+// 复制：委托点击 → 通过 vscode 剪贴板
+var vscodeApi = null;
+try { vscodeApi = acquireVsCodeApi(); } catch (e) { vscodeApi = null; }
+document.getElementById('resultBox').addEventListener('click',function(e){
+    var btn = e.target.closest ? e.target.closest('.cp') : null;
+    if(!btn)return;
+    var txt = btn.getAttribute('data-txt')||'';
+    if(vscodeApi){ vscodeApi.postMessage({command:'copy', text:txt}); }
+    else{ fallbackCopy(txt); showToast(); }
+    btn.classList.add('ok');
+    setTimeout(function(){btn.classList.remove('ok');},1000);
+});
+function fallbackCopy(txt){
+    var ta=document.createElement('textarea');
+    ta.value=txt; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select();
+    try{document.execCommand('copy');}catch(e){}
+    document.body.removeChild(ta);
+}
+var toastTimer=null;
+function showToast(){
+    var t=document.getElementById('toast');
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer=setTimeout(function(){t.classList.remove('show');},1200);
+}
+window.addEventListener('message',function(e){
+    if(e.data && e.data.command==='copySuccess') showToast();
+});
+render();
+</script>
+</body>
+</html>`;
+}
+
 function getDltPickKillHtml(rows, records, storePath) {
     const latest = rows[0] || null;
     const latestPeriod = latest ? latest.period : '—';
