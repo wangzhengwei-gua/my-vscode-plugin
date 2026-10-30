@@ -11739,7 +11739,9 @@ function intOf(id,dft,lo,hi){
 }
 function playNow(){return parseInt(el('inPlay').value,10)||10;}
 function sizeNow(){
-    var K=playNow(), s=intOf('inSize',K+1,K+1,30);
+    // 号码数下限 = 玩法数（等于玩法数时为单式 1 注，大于玩法数才是复式）
+    var K=playNow(), s=intOf('inSize',K,K,30);
+    el('inSize').min=K;
     ['inHot','inWarm','inCold'].forEach(function(id){ el(id).max=s; }); // 单个温度不超过每组号码数
     return s;
 }
@@ -11871,6 +11873,7 @@ function renderPick(){
     var notes=comb(size,K);                 // C(size, K) 注
     var per=notes*2*mult, all=per*gn;
     var pc=PLAYCN[K]||('选'+K);
+    var kind=(size===K?'单式':'复式');       // 号码数 = 玩法数 → 单式 1 注；> 玩法数 → 复式
     el('poolInfo').innerHTML='候选池：<b style="color:#ff9b91;">热 '+POOL.hot.length+' 个</b>（Z≥0.5） · <b style="color:#feca57;">温 '+POOL.warm.length+' 个</b>（-0.5~0.5） · <b style="color:#9fd0f0;">冷 '+POOL.cold.length+' 个</b>（Z≤-0.5）';
     var warn='';
     [['hot','热'],['warm','温'],['cold','冷']].forEach(function(p){
@@ -11879,20 +11882,20 @@ function renderPick(){
         }
     });
     el('mixInfo').innerHTML='配比合计 <b style="color:#feca57;">'+(mix.hot+mix.warm+mix.cold)+'</b> = 每组号码数 <b style="color:#feca57;">'+size+'</b>（热 '+mix.hot+' · 温 '+mix.warm+' · 冷 '+mix.cold+'）'+warn;
-    el('costInfo').innerHTML='每组 '+size+' 个号 · '+pc+'复式 → <b>'+notes.toLocaleString()+'</b> 注 · '+gn+' 组 · 倍数 '+mult
+    el('costInfo').innerHTML='每组 '+size+' 个号 · '+pc+kind+' → <b>'+notes.toLocaleString()+'</b> 注 · '+gn+' 组 · 倍数 '+mult
         +' · 单组 <b>'+per.toLocaleString()+'</b> 元 · 合计 <b>'+all.toLocaleString()+'</b> 元';
     var groups=buildGroups(size, mix, gn);
     var h='';
-    var allTxt='快乐8选号（'+mult+'倍）&#10;'+pc+'复式 '+size+' 个号 · '+notes+' 注 · '+per+' 元/组&#10;';
+    var allTxt='快乐8选号（'+mult+'倍）&#10;'+pc+kind+' '+size+' 个号 · '+notes+' 注 · '+per+' 元/组&#10;';
     groups.forEach(function(g, gi){
         var st=statOf(g, gi>0?groups[gi-1]:null);
-        var t='快乐8选号（'+mult+'倍）&#10;'+pc+'复式 '+size+' 个号 · '+notes+' 注 · '+per+' 元&#10;第 '+(gi+1)+' 组：'+txtOf(g);
+        var t='快乐8选号（'+mult+'倍）&#10;'+pc+kind+' '+size+' 个号 · '+notes+' 注 · '+per+' 元&#10;第 '+(gi+1)+' 组：'+txtOf(g);
         allTxt+='第 '+(gi+1)+' 组：'+txtOf(g)+'&#10;';
         var label = gi===0 ? '均衡型（8 区均衡 + 高分）'
                   : (gi===1 ? '激进型（高分优先，与第 1 组错位）' : '差异型（规避前组已用号）');
         h+='<div class="pick"><div class="hd">第 '+(gi+1)+' 组 · '+label+'</div>';
         h+='<div style="margin:6px 0;line-height:2;">'+g.map(function(s){return '<span class="'+zc(s.n)+'">'+pad2(s.n)+'</span>';}).join('')+'</div>';
-        h+='<div class="ln">'+size+' 个号 · '+pc+'复式 → <b style="color:#feca57;">'+notes.toLocaleString()+' 注</b> · 倍数 '+mult
+        h+='<div class="ln">'+size+' 个号 · '+pc+kind+' → <b style="color:#feca57;">'+notes.toLocaleString()+' 注</b> · 倍数 '+mult
           +' · <b style="color:#feca57;">'+per.toLocaleString()+' 元</b>'
           +' · 配比 热 '+st.mix.hot+' / 温 '+st.mix.warm+' / 冷 '+st.mix.cold
           + (gi>0 ? ' · 与上组重叠 '+st.ov+' 个' : '') +'</div>';
