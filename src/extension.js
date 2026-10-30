@@ -11721,14 +11721,14 @@ document.getElementById('bucketBox').innerHTML=bh;
 var PRIMES={2:1,3:1,5:1,7:1,11:1,13:1,17:1,19:1,23:1,29:1,31:1,37:1,41:1,43:1,47:1,53:1,59:1,61:1,67:1,71:1,73:1,79:1};
 var PLAYCN={1:'选一',2:'选二',3:'选三',4:'选四',5:'选五',6:'选六',7:'选七',8:'选八',9:'选九',10:'选十'};
 var MIXRATIO={pure:[1,0,0], hot7:[7,3,0], even:[5,5,0], warm7:[4,6,0], mix3:[5,3,2]};
-// 按总榜实际分布：热/温/冷 的真实号码个数之比
-var MIXAUTO=[POOL.hot.length, POOL.warm.length, POOL.cold.length];
 // 温度池：热 Z≥0.5 / 温 -0.5~0.5 / 冷 Z≤-0.5（三池互斥且覆盖全部 80 号）
 var POOL={
     hot:  D.stats.filter(function(s){return s.z>=0.5;}),
     warm: D.stats.filter(function(s){return s.z>-0.5 && s.z<0.5;}),
     cold: D.stats.filter(function(s){return s.z<=-0.5;})
 };
+// 按总榜实际分布：热/温/冷 的真实号码个数之比（必须声明在 POOL 之后）
+var MIXAUTO=[POOL.hot.length, POOL.warm.length, POOL.cold.length];
 var r50exp=D.r50N*20/80, r50sd=Math.sqrt(D.r50N*0.25*0.75);
 var jitter=false, PEN={};
 function el(id){return document.getElementById(id);}
@@ -11928,21 +11928,28 @@ function showToast(){
     clearTimeout(toastTimer); toastTimer=setTimeout(function(){t.classList.remove('show');},1200);
 }
 window.addEventListener('message',function(e){ if(e.data&&e.data.command==='copySuccess')showToast(); });
-document.getElementById('btnGen').addEventListener('click',genPick);
-document.getElementById('btnReroll').addEventListener('click',function(){jitter=true;renderPick();});
-document.getElementById('inPlay').addEventListener('change',function(){sizeNow();applyMix();renderPick();});
-document.getElementById('inSize').addEventListener('change',function(){sizeNow();applyMix();renderPick();});
-document.getElementById('inGroups').addEventListener('change',function(){renderPick();});
-document.getElementById('inMix').addEventListener('change',function(){applyMix();renderPick();});
-['inHot','inWarm','inCold'].forEach(function(id){
-    document.getElementById(id).addEventListener('change',function(){
-        document.getElementById('inMix').value='custom'; // 手动填个数 → 切到自定义，不再被预设覆盖
-        renderPick();
+// 事件绑定与初始化统一包一层：即使内部出错也在页面显示原因，而不是点了没反应
+try{
+    document.getElementById('btnGen').addEventListener('click',genPick);
+    document.getElementById('btnReroll').addEventListener('click',function(){jitter=true;renderPick();});
+    document.getElementById('inPlay').addEventListener('change',function(){sizeNow();applyMix();renderPick();});
+    document.getElementById('inSize').addEventListener('change',function(){sizeNow();applyMix();renderPick();});
+    document.getElementById('inGroups').addEventListener('change',function(){renderPick();});
+    document.getElementById('inMix').addEventListener('change',function(){applyMix();renderPick();});
+    ['inHot','inWarm','inCold'].forEach(function(id){
+        document.getElementById(id).addEventListener('change',function(){
+            document.getElementById('inMix').value='custom'; // 手动填个数 → 切到自定义，不再被预设覆盖
+            renderPick();
+        });
     });
-});
-document.getElementById('inMult').addEventListener('change',function(){renderPick();});
-applyMix();
-renderPick();
+    document.getElementById('inMult').addEventListener('change',function(){renderPick();});
+    applyMix();
+    renderPick();
+}catch(err){
+    var errBox=document.getElementById('pickBox');
+    if(errBox)errBox.innerHTML='<div style="color:#e74c3c;font-size:13px;">❌ 选号脚本出错：'+String((err&&err.message)||err)+'</div>';
+    if(window.console&&console.error)console.error(err);
+}
 </script>
 </body>
 </html>`;
