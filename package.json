@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.8.85",
+    "version": "0.8.88",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -55,6 +55,7 @@
         "onCommand:myPlugin.histFollow",
         "onCommand:myPlugin.kl8Follow",
         "onCommand:myPlugin.kl8HotCold",
+        "onCommand:myPlugin.kl8AllHotCold",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -206,6 +207,10 @@
             {
                 "command": "myPlugin.kl8HotCold",
                 "title": "快8热温冷选号"
+            },
+            {
+                "command": "myPlugin.kl8AllHotCold",
+                "title": "快8冷热总榜"
             }
         ],
         "viewsContainers": {
