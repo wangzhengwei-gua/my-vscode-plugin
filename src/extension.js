@@ -1131,8 +1131,8 @@ function activate(context) {
     });
     context.subscriptions.push(dltZoneDisposable);
 
-    // 大乐透后区 · 热温冷 + 历史跟随 + 智能推荐（多因子评分）
-    let dltBackSmartDisposable = vscode.commands.registerCommand('myPlugin.dltBackSmart', async () => {
+    // 大乐透 · 前区 + 后区 智能推荐（热温冷 + 历史跟随 + 多因子评分）
+    let dltSmartDisposable = vscode.commands.registerCommand('myPlugin.dltSmart', async () => {
         let history = [];
         try {
             const cfg = LOTTERY_TYPES.find(c => c.key === 'dlt');
@@ -1145,12 +1145,12 @@ function activate(context) {
             return;
         }
         const panel = vscode.window.createWebviewPanel(
-            'dltBackSmart',
-            '大乐透后区 · 热温冷 · 跟随 · 智能推荐',
+            'dltSmart',
+            '大乐透智能推荐 · 前区 + 后区',
             vscode.ViewColumn.One,
             { enableScripts: true, retainContextWhenHidden: true }
         );
-        panel.webview.html = getDltBackSmartHtml(history);
+        panel.webview.html = getDltSmartHtml(history);
 
         panel.webview.onDidReceiveMessage(async (msg) => {
             if (!msg || !msg.command) return;
@@ -1160,7 +1160,7 @@ function activate(context) {
             }
         });
     });
-    context.subscriptions.push(dltBackSmartDisposable);
+    context.subscriptions.push(dltSmartDisposable);
 
     // 号码排序工具（粘贴任意分隔的号码 → 升序/降序排列，可去重、补零、复制）
     let sortNumbersDisposable = vscode.commands.registerCommand('myPlugin.sortNumbers', async () => {
@@ -2709,7 +2709,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🧮 大乐透分区统计', 'myPlugin.dltZone', '🧮'),
                 this.createItem('🎯 大乐透选号杀号', 'myPlugin.dltPickKill', '🎯'),
                 this.createItem('🧩 大乐透区间形态', 'myPlugin.dltZoneForm', '🧩'),
-                this.createItem('🔵 大乐透后区智能推荐', 'myPlugin.dltBackSmart', '🔵'),
+                this.createItem('🎯 大乐透智能推荐', 'myPlugin.dltSmart', '🎯'),
                 this.createItem('🔢 号码排序', 'myPlugin.sortNumbers', '🔢'),
                 this.createItem('🔥 热号统计', 'myPlugin.hotNumbers', '🔥'),
                 this.createItem('🎯 快8罕见形态选号', 'myPlugin.kl8RarePick', '🎯'),
@@ -11364,15 +11364,17 @@ document.getElementById('selN').addEventListener('change',search);
  * 后区规则：1-12 选 2（无序、不重复），每期开 2 个号，理论单号出现率 2/12 ≈ 16.67%
  * ① 热温冷分层  ② 历史跟随号码（支持隔期 gap）  ③ 多因子智能推荐  ④ 近期趋势
  */
-function getDltBackSmartHtml(history) {
+function getDltSmartHtml(history) {
     const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const N = Math.min(500, history.length);
     const rows = history.slice(-N); // 旧→新
     const periods = rows.map(r => r.period);
+    const fronts = rows.map(r => (r.front || []).filter(x => x >= 1 && x <= 35));
     const backs = rows.map(r => (r.back || []).filter(x => x >= 1 && x <= 12));
     const dataJson = JSON.stringify({
-        periods, backs, N,
+        periods, fronts, backs, N,
         lastPeriod: periods[periods.length - 1] || '',
+        lastFront: fronts[fronts.length - 1] || [],
         lastBack: backs[backs.length - 1] || []
     });
 
@@ -11380,7 +11382,7 @@ function getDltBackSmartHtml(history) {
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>大乐透后区 热温冷 · 跟随 · 智能推荐</title>
+<title>大乐透智能推荐 · 前区 + 后区</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
@@ -11426,13 +11428,18 @@ th { background: #2d2d30; color: #8ec5ff; }
 .bar-inner { height: 100%; background: linear-gradient(90deg,#3498db,#feca57); }
 .bar-val { min-width: 78px; color: #aaa; font-size: 11px; }
 .rank1 { color: #feca57; font-weight: 800; }
+.tab-btn { background: #1a2030; color: #9aa7b8; border: 1px solid #3a4a66; border-radius: 16px; padding: 6px 14px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all .2s; }
+.tab-btn:hover { background: #243052; color: #d6e4ff; }
+.tab-btn.active { background: #0e639c; color: #fff; border-color: #4da3e8; box-shadow: 0 0 10px rgba(78,163,232,0.4); }
 </style>
 </head>
 <body>
-<h2>🎯 大乐透后区 · 热温冷 + 历史跟随 + 智能推荐</h2>
-<div class="meta">后区 1-12 选 2（无序不重复） · 理论单号出现率 <b>16.67%</b> · 共 ${N} 期历史 · 最新一期：<b>${esc(periods[periods.length - 1] || '')}</b></div>
+<h2>🎯 大乐透智能推荐 · 前区 + 后区</h2>
+<div class="meta" id="metaBox"></div>
 
 <div class="ctrl">
+    <button class="tab-btn active" data-zone="front">🔴 前区 1-35 选 5</button>
+    <button class="tab-btn" data-zone="back">🔵 后区 1-12 选 2</button>
     <label>统计期数</label>
     <select id="selN">
         <option value="30">近 30 期</option>
@@ -11455,46 +11462,51 @@ th { background: #2d2d30; color: #8ec5ff; }
 </div>
 
 <div class="panel">
-    <h3>🌡️ 热温冷分层（后区 1-12）</h3>
-    <div class="sub">按窗口内出现频率与理论期望（每期 2/12）的比值分层，括号内为「出现次数 / 当前遗漏期数」。</div>
+    <h3 id="tLayer">🌡️ 热温冷分层</h3>
+    <div class="sub" id="sLayer"></div>
     <div id="layerBox"></div>
 </div>
 
 <div class="panel">
-    <h3>🔗 历史跟随号码</h3>
-    <div class="sub">以种子号码为基准，追溯历史中出现该号的期，统计其后第 N 期（跟随间隔）开出的后区号码频次。</div>
+    <h3 id="tFollow">🔗 历史跟随号码</h3>
+    <div class="sub" id="sFollow"></div>
     <div id="followBox"></div>
 </div>
 
 <div class="panel">
-    <h3>🔮 智能推荐（多因子评分）</h3>
-    <div class="sub">综合频率、遗漏回归、边号延续、重号、趋势动量、历史跟随六项因子，归一化得到单号出现概率（合计 200%），再推算最优 2 码组合。</div>
+    <h3 id="tPick">🔮 智能推荐（多因子评分）</h3>
+    <div class="sub" id="sPick"></div>
     <div id="pickBox"></div>
 </div>
 
 <div class="panel">
-    <h3>📈 近期趋势</h3>
-    <div class="sub">最近期后区开奖记录与号码热度条（近 10 期频率 / 窗口内频率）。</div>
+    <h3 id="tTrend">📈 近期趋势</h3>
+    <div class="sub" id="sTrend"></div>
     <div id="trendBox"></div>
 </div>
 
 <script>
 var DATA = ${dataJson};
-var PERIODS = DATA.periods, BACKS = DATA.backs, TOT = DATA.N;
-var LAST = DATA.lastBack || [];
+var PERIODS = DATA.periods, TOT = DATA.N;
+// 区域配置：前区 1-35 选 5；后区 1-12 选 2
+var ZONES = {
+    front: { key:'front', name:'前区', max:35, pick:5, list: DATA.fronts || [], last: DATA.lastFront || [] },
+    back:  { key:'back',  name:'后区', max:12, pick:2, list: DATA.backs  || [], last: DATA.lastBack  || [] }
+};
+var curZone = 'front';
 
 function pad2(n){ return n<10?'0'+n:''+n; }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function b(n, cls){ return '<span class="ball '+(cls||'')+'">'+pad2(n)+'</span>'; }
 
-function statsOf(bs){
+function statsOf(bs, max){
     var st={};
-    for(var n=1;n<=12;n++) st[n]={f:0,m:0,last:-1};
+    for(var n=1;n<=max;n++) st[n]={f:0,m:0,last:-1};
     for(var i=0;i<bs.length;i++){
         var bb=bs[i]||[];
-        for(var j=0;j<bb.length;j++){var v=bb[j];if(v>=1&&v<=12){st[v].f++;st[v].last=i;}}
+        for(var j=0;j<bb.length;j++){var v=bb[j];if(v>=1&&v<=max){st[v].f++;st[v].last=i;}}
     }
-    for(var n=1;n<=12;n++) st[n].m=(st[n].last>=0)?(bs.length-1-st[n].last):bs.length;
+    for(var n=1;n<=max;n++) st[n].m=(st[n].last>=0)?(bs.length-1-st[n].last):bs.length;
     return st;
 }
 
@@ -11512,53 +11524,80 @@ function layerOf(r){
     return LAYERS[LAYERS.length-1];
 }
 
-function followOf(list, seeds, gap){
+function followOf(list, seeds, gap, max){
     var freq={}, rec=[], samples=0;
-    for(var n=1;n<=12;n++) freq[n]=0;
+    for(var n=1;n<=max;n++) freq[n]=0;
     for(var i=0;i<list.length;i++){
-        var bb=list[i].back||[];
+        var bb=list[i].nums||[];
         var hit=false;
         for(var s=0;s<seeds.length;s++){ if(bb.indexOf(seeds[s])>=0){hit=true;break;} }
         if(!hit) continue;
         var ni=i+gap;
         if(ni>=list.length) continue;
-        var nb=list[ni].back||[];
-        for(var j=0;j<nb.length;j++){ var v=nb[j]; if(v>=1&&v<=12) freq[v]++; }
+        var nb=list[ni].nums||[];
+        for(var j=0;j<nb.length;j++){ var v=nb[j]; if(v>=1&&v<=max) freq[v]++; }
         samples++;
         rec.push({ hitPeriod: list[i].period, nextPeriod: list[ni].period, next: nb });
     }
     return { freq:freq, samples:samples, rec:rec };
 }
 
+// 枚举从 arr 中取 k 个的组合（限制规模，前区用 Top 池子）
+function combosOf(arr, k){
+    var res=[], cur=[];
+    var LIMIT = 20000;
+    function walk(start){
+        if(res.length>=LIMIT) return;
+        if(cur.length===k){ res.push(cur.slice()); return; }
+        for(var i=start;i<=arr.length-(k-cur.length);i++){
+            cur.push(arr[i]); walk(i+1); cur.pop();
+        }
+    }
+    walk(0);
+    return res;
+}
+
 function render(){
     var nsel=parseInt(document.getElementById('selN').value,10);
     var gap=parseInt(document.getElementById('selGap').value,10);
-    var win=nsel===0?BACKS.length:Math.min(nsel,BACKS.length);
-    var start=BACKS.length-win;
+    var Z=ZONES[curZone], MAX=Z.max, PICK=Z.pick;
+    var SRC=Z.list;
+    var win=nsel===0?SRC.length:Math.min(nsel,SRC.length);
+    var start=SRC.length-win;
     var BK=[],PK=[];
-    for(var i=start;i<BACKS.length;i++){ BK.push(BACKS[i]); PK.push(PERIODS[i]); }
+    for(var i=start;i<SRC.length;i++){ BK.push(SRC[i]); PK.push(PERIODS[i]); }
 
-    // 种子号码：输入框优先，否则用最新一期后区
+    // 种子号码：输入框优先（最多 PICK 个），否则用最新一期该区号码
     var seeds=[];
     var raw=document.getElementById('inSeed').value||'';
     var mt=raw.match(/\\d+/g);
     if(mt&&mt.length){
         for(var i=0;i<mt.length;i++){
             var v=parseInt(mt[i],10);
-            if(v>=1&&v<=12&&seeds.indexOf(v)<0) seeds.push(v);
-            if(seeds.length>=2) break;
+            if(v>=1&&v<=MAX&&seeds.indexOf(v)<0) seeds.push(v);
+            if(seeds.length>=PICK) break;
         }
     }
-    if(!seeds.length) seeds=LAST.slice(0,2);
+    if(!seeds.length) seeds=Z.last.slice(0,PICK);
+    if(!seeds.length) seeds=[1];
 
-    var st=statsOf(BK);
-    var exp=BK.length*2/12;
+    var st=statsOf(BK, MAX);
+    var exp=BK.length*PICK/MAX;
+
+    /* ===== 抬头信息（随区域变化） ===== */
+    document.getElementById('metaBox').innerHTML='当前区域：<b>'+Z.name+' 1-'+MAX+' 选 '+PICK+'</b>'+
+        ' · 理论单号出现率 <b>'+(PICK/MAX*100).toFixed(2)+'%</b> · 窗口 <b>'+BK.length+'</b> 期 / 共 '+TOT+' 期 · 最新一期：<b>'+esc(PERIODS[PERIODS.length-1]||'')+'</b>';
+    document.getElementById('tLayer').textContent='🌡️ 热温冷分层（'+Z.name+' 1-'+MAX+'）';
+    document.getElementById('sLayer').innerHTML='按窗口内出现频率与理论期望（每期 '+PICK+'/'+MAX+'）的比值分层，括号内为「出现次数 / 当前遗漏期数」。';
+    document.getElementById('sFollow').innerHTML='以种子号码为基准，追溯历史中出现该号的期，统计其后第 N 期（跟随间隔）开出的'+Z.name+'号码频次。';
+    document.getElementById('sPick').innerHTML='综合频率、遗漏回归、边号延续、重号、趋势动量、历史跟随六项因子，归一化得到单号出现概率（合计 '+(PICK*100)+'%），再推算最优 '+PICK+' 码组合。';
+    document.getElementById('sTrend').innerHTML='最近期'+Z.name+'开奖记录与号码热度条（近 10 期频率 / 窗口内频率）。';
 
     /* ===== ① 热温冷分层 ===== */
     var lh='';
     for(var li=0;li<LAYERS.length;li++){
         var L=LAYERS[li], nums=[];
-        for(var n=1;n<=12;n++){
+        for(var n=1;n<=MAX;n++){
             var r=exp>0?st[n].f/exp:0;
             if(r>=L.lo&&r<L.hi) nums.push(n);
         }
@@ -11574,17 +11613,18 @@ function render(){
     document.getElementById('layerBox').innerHTML=lh;
 
     /* ===== ② 历史跟随 ===== */
-    var fo=followOf(BK.map(function(b,i){return {period:PK[i],back:b};}), seeds, gap);
+    var list=BK.map(function(b,i){return {period:PK[i],nums:b};});
+    var fo=followOf(list, seeds, gap, MAX);
     var maxf=1;
-    for(var n=1;n<=12;n++) if(fo.freq[n]>maxf) maxf=fo.freq[n];
+    for(var n=1;n<=MAX;n++) if(fo.freq[n]>maxf) maxf=fo.freq[n];
     var fa=[];
-    for(var n=1;n<=12;n++) fa.push({n:n,c:fo.freq[n]});
+    for(var n=1;n<=MAX;n++) fa.push({n:n,c:fo.freq[n]});
     fa.sort(function(a,b){return b.c-a.c||a.n-b.n;});
     var fh='';
     for(var i=0;i<fa.length;i++){
         if(fa[i].c<=0) continue;
-        var pct=fo.samples>0?(fa[i].c/fo.samples*100):0;
-        fh+='<span class="ball '+layerOf(exp>0?fa[i].c/(exp):0).k+'">'+pad2(fa[i].n)+'</span>'+
+        var pct=(fo.samples>0)?(fa[i].c/(fo.samples*PICK)*100):0;
+        fh+=b(fa[i].n,layerOf(exp>0?fa[i].c/exp:0).k)+
             '<span style="color:#aaa;font-size:11px;margin-right:12px;">'+fa[i].c+'次('+pct.toFixed(0)+'%)</span>';
     }
     var gapName=gap===1?'下一期':(gap===2?'隔 1 期':'隔 2 期');
@@ -11612,13 +11652,14 @@ function render(){
 
     /* ===== ③ 智能推荐：多因子评分 ===== */
     var last=BK.length?(BK[BK.length-1]||[]):[];
+    var period=MAX/PICK;   // 理论回归周期：前区 7 期 / 后区 6 期
     var out=[];
-    for(var n=1;n<=12;n++){
-        var base=exp>0?st[n].f/exp:0;                       // 频率比（基准 1.0）
+    for(var n=1;n<=MAX;n++){
+        var base=exp>0?st[n].f/exp:0;                        // 频率比（基准 1.0）
         var miss=st[n].m;
-        var missBonus=0.60*(1-Math.exp(-miss/6));            // 遗漏回归（周期 6 期）
+        var missBonus=0.60*(1-Math.exp(-miss/period));       // 遗漏回归
         var nb=0;
-        if(last.indexOf(n)>=0) nb=0.05;                     // 重号（形态参考，弱）
+        if(last.indexOf(n)>=0) nb=0.05;                      // 重号（形态参考，弱）
         else{ for(var q=0;q<last.length;q++){ if(Math.abs(last[q]-n)===1){nb=0.10;break;} } } // 边号
         var r5=0,p5=0;
         for(var i=Math.max(0,BK.length-5);i<BK.length;i++){ if((BK[i]||[]).indexOf(n)>=0) r5++; }
@@ -11629,7 +11670,7 @@ function render(){
         out.push({n:n,score:score,f:st[n].f,m:miss,fw:fo.freq[n],r5:r5,p5:p5});
     }
     var sum=0; for(var i=0;i<out.length;i++) sum+=out[i].score;
-    for(var i=0;i<out.length;i++) out[i].p = sum>0 ? (out[i].score/sum*200) : 0;  // 合计 200%
+    for(var i=0;i<out.length;i++) out[i].p = sum>0 ? (out[i].score/sum*PICK*100) : 0;  // 合计 PICK×100%
     out.sort(function(a,b){return b.score-a.score;});
 
     var sh='<table><thead><tr><th>排名</th><th>号码</th><th>出现次数</th><th>当前遗漏</th><th>近5期</th><th>前5期</th><th>历史跟随</th><th>综合评分</th><th>出现概率</th></tr></thead><tbody>';
@@ -11642,58 +11683,65 @@ function render(){
     }
     sh+='</tbody></table>';
 
-    // 组合概率：枚举 66 种，w = p_a * p_b 归一化
-    var combos=[];
-    for(var i=1;i<=12;i++){
-        for(var j=i+1;j<=12;j++){
-            var pi=out.filter(function(x){return x.n===i;})[0].p;
-            var pj=out.filter(function(x){return x.n===j;})[0].p;
-            combos.push({a:i,b:j,w:pi*pj});
-        }
+    // 组合概率：从评分 Top 池枚举 PICK 个（前区 C(35,5) 太大，故限池）
+    var pmap={}; for(var i=0;i<out.length;i++) pmap[out[i].n]=out[i].p;
+    var poolN=(PICK<=2)?MAX:Math.min(MAX,10);
+    var topNums=[];
+    for(var i=0;i<out.length&&i<poolN;i++) topNums.push(out[i].n);
+    var combos=combosOf(topNums,PICK);
+    var csum=0;
+    for(var i=0;i<combos.length;i++){
+        var w=1;
+        for(var j=0;j<combos[i].length;j++) w*=(pmap[combos[i][j]]||0);
+        combos[i].w=w; csum+=w;
     }
-    var csum=0; for(var i=0;i<combos.length;i++) csum+=combos[i].w;
     for(var i=0;i<combos.length;i++) combos[i].p = csum>0?(combos[i].w/csum*100):0;
     combos.sort(function(x,y){return y.w-x.w;});
     var top5=combos.slice(0,5);
-    var theo=100/66;
+    var theo=combos.length>0?(100/combos.length):0;
 
-    sh+='<h3 style="margin-top:12px;">🏆 推荐后区组合（Top 5）</h3>';
+    sh+='<h3 style="margin-top:12px;">🏆 推荐'+Z.name+'组合（Top 5）</h3>';
     sh+='<div class="combo-top">';
     for(var i=0;i<top5.length;i++){
         var c=top5[i];
-        sh+='<div class="combo-item">'+pad2(c.a)+' + '+pad2(c.b)+
-            '<small>概率 '+c.p.toFixed(2)+'% · '+(c.p/theo).toFixed(2)+'× 随机</small></div>';
+        var ctxt='';
+        for(var j=0;j<c.length;j++){ ctxt+=(j?' + ':'')+pad2(c[j]); }
+        sh+='<div class="combo-item">'+ctxt+
+            '<small>'+(PICK<=2?'概率 ':'池内占比 ')+c.p.toFixed(2)+'% · '+(theo>0?(c.p/theo).toFixed(2):'0')+'× 均值</small></div>';
     }
     sh+='</div>';
-    sh+='<div class="sub">随机基准：每种组合 '+theo.toFixed(2)+'%（共 C(12,2)=66 种）。倍数 > 1 仅表示本模型评分更高，不代表真实概率提升。</div>';
+    sh+='<div class="sub">'+(PICK<=2
+        ? '随机基准：每种组合 '+theo.toFixed(2)+'%（共 C(12,2)=66 种）'
+        : '号码池：评分 Top '+poolN+' 号（C('+poolN+','+PICK+')='+combos.length+' 种），占比为池内相对值')
+        +'。倍数 > 1 仅表示本模型评分更高，不代表真实概率提升。</div>';
     document.getElementById('pickBox').innerHTML=sh;
 
     /* ===== ④ 近期趋势 ===== */
     var th='';
     var tn=Math.min(20,BK.length);
-    th+='<table><thead><tr><th>#</th><th>期号</th><th>后区号码</th><th>跨度</th><th>和值</th></tr></thead><tbody>';
+    th+='<table><thead><tr><th>#</th><th>期号</th><th>'+Z.name+'号码</th><th>跨度</th><th>和值</th></tr></thead><tbody>';
     for(var i=0;i<tn;i++){
         var idx=BK.length-tn+i;
         var bb=BK[idx]||[];
         var sorted=bb.slice().sort(function(x,y){return x-y;});
-        var span=sorted.length===2?(sorted[1]-sorted[0]):'-';
-        var sum=sorted.reduce(function(a,b){return a+b;},0);
+        var span=sorted.length?(sorted[sorted.length-1]-sorted[0]):'-';
+        var sumv=sorted.reduce(function(a,b){return a+b;},0);
         var ballsHtml='';
         for(var j=0;j<sorted.length;j++){ ballsHtml+=b(sorted[j],layerOf(exp>0?st[sorted[j]].f/exp:0).k); }
-        th+='<tr><td>'+(i+1)+'</td><td>'+esc(PK[idx])+'</td><td>'+ballsHtml+'</td><td>'+span+'</td><td>'+sum+'</td></tr>';
+        th+='<tr><td>'+(i+1)+'</td><td>'+esc(PK[idx])+'</td><td>'+ballsHtml+'</td><td>'+span+'</td><td>'+sumv+'</td></tr>';
     }
     th+='</tbody></table>';
 
     // 号码热度条：近10期 + 窗口内
     var last10=BK.slice(-10);
-    var st10=statsOf(last10);
-    var maxFreqWin=1; for(var n=1;n<=12;n++) if(st[n].f>maxFreqWin) maxFreqWin=st[n].f;
+    var st10=statsOf(last10,MAX);
+    var maxFreqWin=1; for(var n=1;n<=MAX;n++) if(st[n].f>maxFreqWin) maxFreqWin=st[n].f;
     th+='<div style="margin-top:8px;"><span style="color:#8ec5ff;font-size:12px;font-weight:600;">号码热度（近10期 / 窗口内 '+BK.length+' 期）</span></div>';
-    for(var n=1;n<=12;n++){
-        var pct=Math.round(st[n].f/maxFreqWin*100);
+    for(var n=1;n<=MAX;n++){
+        var pctv=Math.round(st[n].f/maxFreqWin*100);
         var L=layerOf(exp>0?st[n].f/exp:0);
         th+='<div class="bar-wrap"><span class="bar-label">'+pad2(n)+'</span>'+
-            '<span class="bar-outer"><span class="bar-inner" style="width:'+pct+'%"></span></span>'+
+            '<span class="bar-outer"><span class="bar-inner" style="width:'+pctv+'%"></span></span>'+
             '<span class="bar-val">'+st10[n].f+' / '+st[n].f+' 次 · '+L.name+'</span></div>';
     }
     document.getElementById('trendBox').innerHTML=th;
@@ -11726,8 +11774,19 @@ document.getElementById('selN').addEventListener('change',render);
 document.getElementById('selGap').addEventListener('change',render);
 document.getElementById('inSeed').addEventListener('keydown',function(e){ if(e.key==='Enter') render(); });
 document.getElementById('btnGen').addEventListener('click',render);
+// 区域切换（前区 / 后区）
+var tabBtns=document.querySelectorAll('.tab-btn');
+for(var ti=0;ti<tabBtns.length;ti++){
+    tabBtns[ti].addEventListener('click',function(){
+        for(var tj=0;tj<tabBtns.length;tj++) tabBtns[tj].classList.remove('active');
+        this.classList.add('active');
+        curZone=this.getAttribute('data-zone');
+        document.getElementById('inSeed').value='';
+        render();
+    });
+}
 document.getElementById('btnCopy').addEventListener('click',function(){
-    var lines=['大乐透后区 智能推荐'];
+    var lines=['大乐透'+ZONES[curZone].name+' 智能推荐（共 '+PERIODS.length+' 期历史）'];
     var rows=document.querySelectorAll('#pickBox table tbody tr');
     for(var i=0;i<rows.length;i++){
         var td=rows[i].querySelectorAll('td');
