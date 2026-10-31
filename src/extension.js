@@ -11032,7 +11032,7 @@ function search(){
                 h+='</div>';
             }else{h+='<div class="sub">无下一期样本。</div>';}
             // 最近跟随号码（该位，按时间倒序）
-            var recP=phits.filter(function(x){return x.next;}).slice(-8).reverse();
+            var recP=phits.filter(function(x){return x.next;}).slice(-15).reverse();
             if(recP.length){
                 h+='<div style="line-height:2;margin:6px 0;"><span style="color:#aaa;font-size:12px;">🕒 最近跟随（'+POSL[type][p]+'位，最新在前）：</span>';
                 for(var ri=0;ri<recP.length;ri++){
@@ -11044,13 +11044,13 @@ function search(){
             if(phits.length){
                 h+='<table><thead><tr><th>#</th><th>命中期号</th><th>该期号码</th><th>下一期期号</th><th>下一期号码</th></tr></thead><tbody>';
                 var shown=0;
-                for(var i=0;i<phits.length&&shown<15;i++){var hh=phits[i];
+                for(var i=0;i<phits.length&&shown<30;i++){var hh=phits[i];
                     h+='<tr><td>'+(i+1)+'</td><td>'+esc(hh.row.period)+'</td><td>'+balls(hh.row.num.slice(0,k),[dg])+'</td>';
                     if(hh.next){h+='<td>'+esc(hh.next.period)+'</td><td>'+balls(hh.next.num.slice(0,k),null)+'</td>';}
                     else{h+='<td colspan="2" style="color:#feca57;">已最新</td>';}
                     h+='</tr>';shown++;}
                 h+='</tbody></table>';
-                if(phits.length>15)h+='<div class="sub">仅显示前 15 条，共 '+phits.length+' 次命中。</div>';
+                if(phits.length>30)h+='<div class="sub">仅显示前 30 条，共 '+phits.length+' 次命中。</div>';
             }
         }
         h+='<div class="sub">⚠️ 样本量通常很小，频次在抽样噪声内，无预测效力。</div>';
@@ -11066,7 +11066,7 @@ function search(){
         var modeName=mode==='exact'?'全注直选':'全注组合';
         h+='<div class="stat">命中 '+hits.length+' 次（窗口 '+win+' 期，共 '+all.length+' 期历史） · 模式：'+modeName+'</div>';
         // 最近跟随号码：按时间倒序列出最近命中的下一期实际开奖号码
-        var rec=hits.filter(function(x){return x.next;}).slice(-10).reverse();
+        var rec=hits.filter(function(x){return x.next;}).slice(-30).reverse();
         if(rec.length){
             h+='<h3>🕒 最近跟随号码（最近 '+rec.length+' 条，最新在前）</h3>';
             h+='<table><thead><tr><th>#</th><th>命中期号</th><th>下一期期号</th><th>下一期号码</th><th>与输入号重合</th></tr></thead><tbody>';
@@ -11264,7 +11264,7 @@ function search(){
         for(var oi=0;oi<nums.length;oi++){if(nums[oi]===X)continue;var cnt=0;for(var j=0;j<hits.length;j++){if(!hits[j].next)continue;if((hits[j].next.num||[]).indexOf(nums[oi])>=0)cnt++;}h+='<span class="ball hit">'+pad2(nums[oi])+'</span><span style="color:#aaa;font-size:12px;margin-right:8px;">'+cnt+'/'+nsamp+'</span>';}
         h+='</div>';
         // 最近跟随号码：按时间倒序列出该号最近命中的下一期实际开奖号码
-        var recK=hits.filter(function(x){return x.next;}).slice(-5).reverse();
+        var recK=hits.filter(function(x){return x.next;}).slice(-10).reverse();
         if(recK.length){
             h+='<div style="margin:8px 0 4px;"><span style="color:#8ec5ff;font-size:12px;font-weight:600;">🕒 最近跟随号码（号码 '+pad2(X)+' 的最近 '+recK.length+' 条，最新在前）</span></div>';
             h+='<table><thead><tr><th>#</th><th>下一期期号</th><th>下一期号码（红色球 = 输入号）</th></tr></thead><tbody>';
@@ -11275,10 +11275,10 @@ function search(){
         }
         h+='<table><thead><tr><th>#</th><th>命中期号</th><th>下一期期号</th><th>下一期号码</th></tr></thead><tbody>';
         var shown=0;
-        for(var i=0;i<hits.length&&shown<10;i++){if(!hits[i].next)continue;var hh=hits[i];
+        for(var i=0;i<hits.length&&shown<20;i++){if(!hits[i].next)continue;var hh=hits[i];
             h+='<tr><td>'+(shown+1)+'</td><td>'+esc(hh.row.period)+' <span class="ball hit">'+pad2(X)+'</span></td><td>'+esc(hh.next.period)+'</td><td>'+kballs(hh.next.num,null)+'</td></tr>';shown++;}
         h+='</tbody></table>';
-        if(nsamp>10)h+='<div class="sub">仅显示前 10 条下一期，共 '+nsamp+' 个样本。</div>';
+        if(nsamp>20)h+='<div class="sub">仅显示前 20 条下一期，共 '+nsamp+' 个样本。</div>';
     }
     // 跨输入号最近跟随号码总览：按时间倒序合并去重
     if(nums.length>1&&allHits.length){
@@ -11290,7 +11290,7 @@ function search(){
             if(byIdx[ky].srcs.indexOf(allHits[ai].src)<0)byIdx[ky].srcs.push(allHits[ai].src);
         }
         order.sort(function(a,b){return a-b;});
-        var recentAll=order.slice(-10).reverse();
+        var recentAll=order.slice(-30).reverse();
         h+='<h3>🕒 最近跟随号码总览（跨 '+nums.length+' 个输入号，最近 '+recentAll.length+' 期，最新在前）</h3>';
         h+='<table><thead><tr><th>#</th><th>下一期期号</th><th>下一期号码</th><th>命中的输入号</th></tr></thead><tbody>';
         for(var ri=0;ri<recentAll.length;ri++){
