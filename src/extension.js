@@ -11507,6 +11507,7 @@ var DATA = ${dataJson};
 var PERIODS = DATA.periods;
 var FR = DATA.fronts || [];
 var BK = DATA.backs || [];
+var TOT = DATA.N;
 
 function pad2(n){ return n<10?'0'+n:''+n; }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -11711,11 +11712,11 @@ function layerSection(st, max, exp, title){
 var lastCombo=null;
 
 function render(){
-    var nsel=parseInt(document.getElementById('selN').value,10);
-    var FN=parseInt(document.getElementById('selF').value,10);
-    var BN=parseInt(document.getElementById('selB').value,10);
+    var nsel=parseInt(document.getElementById('selN').value,10); if(!(nsel>=0)) nsel=50;
+    var FN=parseInt(document.getElementById('selF').value,10); if(!(FN>=5)) FN=8;
+    var BN=parseInt(document.getElementById('selB').value,10); if(!(BN>=2)) BN=3;
     var gapSel=document.getElementById('selGap');
-    var gap=gapSel?parseInt(gapSel.value,10):1;
+    var gap=gapSel?parseInt(gapSel.value,10):1; if(!(gap>=1)) gap=1;
 
     var win=nsel===0?FR.length:Math.min(nsel,FR.length);
     var off=FR.length-win;
@@ -11734,6 +11735,10 @@ function render(){
 
     /* ==== ① 精选单式 Top5 ==== */
     var best=searchCombo(fRes.arr, bRes.arr, FN, BN, gap, fList, pList);
+    if(!best){
+        document.getElementById('status').textContent='数据不足，无法生成推荐';
+        return;
+    }
     lastCombo=best;
     var fmap={}, bmap={};
     for(var i=0;i<fRes.arr.length;i++) fmap[fRes.arr[i].n]=fRes.arr[i];
