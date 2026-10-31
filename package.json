@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.8.92",
+    "version": "0.8.93",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -46,6 +46,7 @@
         "onCommand:myPlugin.dltZone",
         "onCommand:myPlugin.dltPickKill",
         "onCommand:myPlugin.dltZoneForm",
+        "onCommand:myPlugin.dltBackSmart",
         "onCommand:myPlugin.sortNumbers",
         "onCommand:myPlugin.hotNumbers",
         "onCommand:myPlugin.kl8RarePick",
@@ -171,6 +172,10 @@
             {
                 "command": "myPlugin.dltZoneForm",
                 "title": "大乐透区间形态"
+            },
+            {
+                "command": "myPlugin.dltBackSmart",
+                "title": "大乐透后区智能推荐"
             },
             {
                 "command": "myPlugin.sortNumbers",
