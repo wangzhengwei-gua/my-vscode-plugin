@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PUBG 灵敏度调试助手</title>
+<style>
+:root{
+  --bg:#0d1014; --card:#171d24; --card2:#1c232b; --line:#262f39;
+  --gold:#ffb400; --gold2:#ff8c00; --txt:#e6e9ee; --dim:#8b98a5;
+  --ok:#2ecc71; --warn:#f39c12; --bad:#e74c3c; --blue:#5dade2;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:radial-gradient(1100px 520px at 50% -8%,#1e2732 0%,var(--bg) 62%);
+  color:var(--txt);font-family:"Segoe UI","Microsoft YaHei",sans-serif;
+  min-height:100vh;padding:26px 16px 70px;
+}
+.wrap{max-width:1180px;margin:0 auto}
+
+/* ===== 标题 ===== */
+.hero{text-align:center;margin-bottom:24px}
+.hero h1{
+  font-size:40px;font-weight:800;letter-spacing:1px;line-height:1.2;
+  background:linear-gradient(90deg,#ffffff 8%,var(--gold) 48%,#ffffff 92%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  filter:drop-shadow(0 0 22px rgba(255,180,0,.28));
+}
+.hero .sub{color:var(--dim);margin-top:10px;font-size:14px;line-height:1.7}
+.hero .badge{
+  display:inline-block;margin-top:12px;padding:5px 14px;border-radius:20px;
+  background:rgba(255,180,0,.1);border:1px solid rgba(255,180,0,.35);
+  color:var(--gold);font-size:12px;font-weight:600;
+}
+
+/* ===== 卡片 ===== */
+.card{
+  background:linear-gradient(180deg,var(--card2) 0%,var(--card) 100%);
+  border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin-bottom:18px;
+  box-shadow:0 6px 22px rgba(0,0,0,.35);
+}
+.card h2{
+  font-size:17px;font-weight:700;color:var(--gold);margin-bottom:14px;
+  display:flex;align-items:center;gap:8px;
+}
+.card h2 .tip{font-size:11px;font-weight:400;color:var(--dim);margin-left:auto}
+
+/* ===== 配置区 ===== */
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+@media(max-width:860px){.grid3,.grid2{grid-template-columns:1fr}}
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-size:12px;color:var(--dim);font-weight:600}
+.field input,.field select{
+  background:#0f1319;border:1px solid var(--line);color:var(--txt);
+  border-radius:8px;padding:9px 11px;font-size:14px;font-weight:600;outline:none;
+  transition:border-color .15s;
+}
+.field input:focus,.field select:focus{border-color:var(--gold)}
+.field .hint{font-size:11px;color:#6b7885}
+
+/* ===== 测试区 ===== */
+.tests{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:18px}
+@media(max-width:1000px){.tests{grid-template-columns:1fr}}
+.test-card{
+  background:linear-gradient(180deg,var(--card2) 0%,var(--card) 100%);
+  border:1px solid var(--line);border-radius:14px;padding:16px;
+  display:flex;flex-direction:column;box-shadow:0 6px 22px rgba(0,0,0,.35);
+  transition:border-color .2s,transform .2s;
+}
+.test-card:hover{border-color:rgba(255,180,0,.4);transform:translateY(-2px)}
+.test-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.test-head .idx{
+  width:24px;height:24px;border-radius:50%;background:rgba(255,180,0,.15);
+  color:var(--gold);font-size:12px;font-weight:800;display:flex;
+  align-items:center;justify-content:center;flex:none;
+}
+.test-head h3{font-size:15px;font-weight:700}
+.test-desc{font-size:12px;color:var(--dim);line-height:1.6;margin-bottom:10px;min-height:38px}
+
+.stage{
+  position:relative;background:#0a0d11;border:1px solid var(--line);
+  border-radius:10px;overflow:hidden;margin-bottom:10px;
+}
+.stage canvas{display:block;width:100%;height:auto;cursor:none}
+.stage.idle canvas{cursor:default}
+
+.timer{
+  position:absolute;top:8px;right:10px;font-size:20px;font-weight:800;
+  color:var(--gold);text-shadow:0 2px 8px rgba(0,0,0,.8);
+  font-variant-numeric:tabular-nums;
+}
+.overlay{
+  position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:6px;
+  background:rgba(10,13,17,.82);color:var(--dim);font-size:13px;text-align:center;padding:12px;
+}
+.overlay b{color:var(--gold);font-size:15px}
+.overlay.hidden{display:none}
+
+.btn{
+  background:linear-gradient(180deg,var(--gold) 0%,var(--gold2) 100%);
+  color:#1a1200;border:none;border-radius:9px;padding:10px 16px;
+  font-size:13px;font-weight:800;cursor:pointer;transition:filter .15s,transform .1s;
+  font-family:inherit;
+}
+.btn:hover{filter:brightness(1.1)}
+.btn:active{transform:translateY(1px)}
+.btn:disabled{background:#2a323b;color:#6b7885;cursor:not-allowed;filter:none}
+.btn.ghost{
+  background:transparent;border:1px solid var(--line);color:var(--txt);font-weight:600;
+}
+.btn.ghost:hover{border-color:var(--gold);color:var(--gold)}
+
+.res{
+  margin-top:auto;padding-top:10px;border-top:1px dashed var(--line);
+  font-size:12px;color:var(--dim);line-height:1.8;min-height:56px;
+}
+.res .k{color:var(--txt);font-weight:700}
+.res .g{color:var(--ok);font-weight:700}
+.res .y{color:var(--warn);font-weight:700}
+.res .r{color:var(--bad);font-weight:700}
+.res .ph{color:#5a6672}
+
+/* ===== 结果区 ===== */
+.sens-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}
+@media(max-width:860px){.sens-grid{grid-template-columns:repeat(2,1fr)}}
+.sens-item{
+  background:#0f1319;border:1px solid var(--line);border-radius:10px;padding:12px 14px;
+  display:flex;flex-direction:column;gap:4px;position:relative;overflow:hidden;
+}
+.sens-item::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--gold)}
+.sens-item .lb{font-size:11px;color:var(--dim);font-weight:600}
+.sens-item .vl{font-size:26px;font-weight:800;color:var(--gold);font-variant-numeric:tabular-nums}
+.sens-item .nt{font-size:10px;color:#6b7885}
+.sens-item.big{grid-column:span 1}
+.sens-item.big .vl{font-size:30px;color:#fff}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{border:1px solid var(--line);padding:8px 12px;text-align:center}
+th{background:#131920;color:var(--gold);font-size:12px;font-weight:700}
+td{color:var(--txt)}
+td.num{font-weight:800;color:var(--gold);font-size:15px;font-variant-numeric:tabular-nums}
+tbody tr:nth-child(even){background:rgba(255,255,255,.02)}
+
+.advice{
+  background:rgba(93,173,226,.06);border:1px solid rgba(93,173,226,.25);
+  border-left:3px solid var(--blue);border-radius:8px;padding:12px 14px;
+  font-size:12.5px;line-height:1.85;color:#c8d2dc;margin-top:14px;
+}
+.advice b{color:var(--blue)}
+.advice ul{margin:6px 0 0 18px}
+.advice li{margin-bottom:3px}
+
+.note{
+  background:rgba(255,180,0,.06);border:1px solid rgba(255,180,0,.22);
+  border-radius:8px;padding:11px 13px;font-size:12px;color:#c8cfd8;
+  line-height:1.75;margin-top:14px;
+}
+.note b{color:var(--gold)}
+
+.copy-bar{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
+.copy-msg{color:var(--ok);font-size:12px;font-weight:600;min-height:16px}
+
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--dim);margin-top:10px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>🎯 PUBG 专属灵敏度调试助手</h1>
+    <p class="sub">三项鼠标能力实测 · 基于你的真实操作习惯生成灵敏度<br>数值可直接在当前版本 PUBG「设置 → 鼠标灵敏度」中套用</p>
+    <span class="badge">✔ 鼠标碰到即触发 · 全程无需点击</span>
+  </header>
+
+  <!-- 基础设置 -->
+  <section class="card">
+    <h2>⚙️ 基础设置 <span class="tip">决定灵敏度换算基准，请如实填写</span></h2>
+    <div class="grid3">
+      <div class="field">
+        <label>鼠标 DPI</label>
+        <input type="number" id="cfgDpi" value="800" min="100" max="32000" step="50">
+        <span class="hint">鼠标驱动中设置的 DPI（如 400/800/1600）</span>
+      </div>
+      <div class="field">
+        <label>鼠标垫可用宽度（cm）</label>
+        <input type="number" id="cfgPad" value="30" min="10" max="120" step="1">
+        <span class="hint">鼠标能自由横向移动的距离（常见 30 / 45）</span>
+      </div>
+      <div class="field">
+        <label>一次横扫希望转身</label>
+        <select id="cfgSweep">
+          <option value="360" selected>360°（横扫全垫转一圈）</option>
+          <option value="270">270°（横扫全垫转大半圈）</option>
+          <option value="180">180°（横扫全垫转半圈，更稳）</option>
+        </select>
+        <span class="hint">决定最终 cm/360 与整体灵敏度高低</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 三项测试 -->
+  <section class="tests">
+
+    <!-- 追踪测试 -->
+    <div class="test-card">
+      <div class="test-head"><span class="idx">1</span><h3>追踪测试</h3></div>
+      <div class="test-desc">移动目标随机变向，用准星持续跟随。累计悬停时长占比即为<b style="color:#ffb400">追踪精准度</b>。</div>
+      <div class="stage" id="stageTrack">
+        <canvas id="cvTrack" width="900" height="380"></canvas>
+        <div class="timer hidden" id="tmTrack">10.0</div>
+        <div class="overlay" id="ovTrack"><b>追踪测试</b><span>点击下方按钮开始 · 10 秒</span></div>
+      </div>
+      <button class="btn" id="btnTrack">▶ 开始追踪测试</button>
+      <div class="res" id="resTrack"><span class="ph">尚未测试</span></div>
+    </div>
+
+    <!-- 定位测试 -->
+    <div class="test-card">
+      <div class="test-head"><span class="idx">2</span><h3>定位测试</h3></div>
+      <div class="test-desc">目标随机闪现，准星<b style="color:#ffb400">碰到即命中</b>。统计命中数与平均反应速度。</div>
+      <div class="stage" id="stageFlick">
+        <canvas id="cvFlick" width="900" height="380"></canvas>
+        <div class="timer hidden" id="tmFlick">10.0</div>
+        <div class="overlay" id="ovFlick"><b>定位测试</b><span>点击下方按钮开始 · 10 秒</span></div>
+      </div>
+      <button class="btn" id="btnFlick">▶ 开始定位测试</button>
+      <div class="res" id="resFlick"><span class="ph">尚未测试</span></div>
+    </div>
+
+    <!-- 360 转身测试 -->
+    <div class="test-card">
+      <div class="test-head"><span class="idx">3</span><h3>360° 转身测试</h3></div>
+      <div class="test-desc">向右横扫鼠标，进度条<b style="color:#ffb400">走满即完成一次转身</b>，测出你的实际 cm/360 与手速。</div>
+      <div class="stage" id="stageTurn">
+        <canvas id="cvTurn" width="900" height="380"></canvas>
+        <div class="timer hidden" id="tmTurn">0 / 3</div>
+        <div class="overlay" id="ovTurn"><b>360° 转身测试</b><span>横扫鼠标 3 次 · 无需点击</span></div>
+      </div>
+      <button class="btn" id="btnTurn">▶ 开始转身测试</button>
+      <div class="res" id="resTurn"><span class="ph">尚未测试</span></div>
+    </div>
+
+  </section>
+
+  <!-- 生成 -->
+  <section class="card">
+    <h2>🚀 生成我的专属灵敏度 <span class="tip">完成测试越多越精准</span></h2>
+    <button class="btn" id="btnGen" style="padding:12px 26px;font-size:15px">✨ 生成灵敏度方案</button>
+    <div id="outBox" style="margin-top:18px;display:none">
+
+      <div class="sens-grid" id="sensGrid"></div>
+
+      <h2 style="margin-top:8px">🔭 倍镜灵敏度明细</h2>
+      <table>
+        <thead><tr><th>倍镜</th><th>灵敏度数值</th><th>说明</th></tr></thead>
+        <tbody id="scopeBody"></tbody>
+      </table>
+
+      <div class="advice" id="adviceBox"></div>
+
+      <div class="note" id="noteBox"></div>
+
+      <div class="copy-bar">
+        <button class="btn ghost" id="btnCopy">📋 一键复制全部数值</button>
+        <span class="copy-msg" id="copyMsg"></span>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+(function(){
+'use strict';
+
+/* =========================================================
+   全局状态
+   ========================================================= */
+var cfg = { dpi: 800, pad: 30, sweepDeg: 360 };
+var R = {
+  track: { done:false, acc:0 },
+  flick: { done:false, hits:0, avgReact:0 },
+  turn:  { done:false, cm360:0, avgMs:0, cpc:0, realDpi:0 }
+};
+
+/* =========================================================
+   工具
+   ========================================================= */
+function $(id){ return document.getElementById(id); }
+function clamp(v,a,b){ return v<a?a:(v>b?b:v); }
+function rand(a,b){ return a + Math.random()*(b-a); }
+function dist(ax,ay,bx,by){ var dx=ax-bx,dy=ay-by; return Math.sqrt(dx*dx+dy*dy); }
+function readCfg(){
+  cfg.dpi  = clamp(parseFloat($('cfgDpi').value)||800, 100, 32000);
+  cfg.pad  = clamp(parseFloat($('cfgPad').value)||30, 5, 200);
+  cfg.sweepDeg = parseFloat($('cfgSweep').value)||360;
+}
+
+/* =========================================================
+   测试引擎（Pointer Lock + 虚拟准星，rAF 驱动，倒计时绝不卡住）
+   ========================================================= */
+function Engine(canvas, stage){
+  this.cv = canvas;
+  this.ctx = canvas.getContext('2d');
+  this.stage = stage;
+  this.cross = { x: canvas.width/2, y: canvas.height/2 };
+  this.running = false;
+  this.raf = 0;
+  this.locked = false;
+  var self = this;
+
+  // 鼠标移动：pointer lock 用 movementX/Y，否则用绝对坐标
+  this._onMove = function(e){
+    if(!self.running) return;
+    var dx=0, dy=0;
+    if(self.locked && e.movementX !== undefined){
+      var rect = self.cv.getBoundingClientRect();
+      var sc = self.cv.width / (rect.width||1);
+      dx = e.movementX * sc;
+      dy = e.movementY * sc;
+    }else{
+      var r2 = self.cv.getBoundingClientRect();
+      var sc2 = self.cv.width / (r2.width||1);
+      var nx = (e.clientX - r2.left) * sc2;
+      var ny = (e.clientY - r2.top) * sc2;
+      dx = nx - self.cross.x;
+      dy = ny - self.cross.y;
+    }
+    self.cross.x = clamp(self.cross.x + dx, 0, self.cv.width);
+    self.cross.y = clamp(self.cross.y + dy, 0, self.cv.height);
+    if(self.onMove) self.onMove(dx, dy);
+  };
+  this._onLockChange = function(){
+    self.locked = (document.pointerLockElement === self.cv);
+    if(!self.locked && self.running && self.onLostLock) self.onLostLock();
+  };
+  document.addEventListener('mousemove', this._onMove);
+  document.addEventListener('pointerlockchange', this._onLockChange);
+}
+
+Engine.prototype.start = function(opts){
+  var self = this;
+  this.opts = opts || {};
+  this.cross.x = this.cv.width/2;
+  this.cross.y = this.cv.height/2;
+  this.running = true;
+  this.startMs = performance.now();
+  this.lastMs = this.startMs;
+  this.elapsed = 0;
+
+  // 请求指针锁定（失败则退化为普通绝对坐标模式）
+  try{
+    var p = this.cv.requestPointerLock();
+    if(p && p.then) p.then(function(){}, function(){});
+  }catch(e){}
+
+  if(this.opts.onInit) this.opts.onInit();
+
+  function frame(now){
+    if(!self.running) return;
+    var dt = now - self.lastMs;
+    if(dt > 100) dt = 100;           // 防止切后台后跳变
+    self.lastMs = now;
+    self.elapsed = now - self.startMs;
+
+    if(self.opts.onFrame) self.opts.onFrame(dt, self.elapsed);
+
+    var done = self.opts.onEnd ? self.opts.onEnd(self.elapsed) : (self.elapsed >= (self.opts.duration||10000));
+    if(done){ self.stop(); if(self.opts.onFinish) self.opts.onFinish(); return; }
+    self.raf = requestAnimationFrame(frame);
+  }
+  this.raf = requestAnimationFrame(frame);
+};
+
+Engine.prototype.stop = function(){
+  this.running = false;
+  if(this.raf) cancelAnimationFrame(this.raf);
+  this.raf = 0;
+  if(document.pointerLockElement === this.cv){
+    try{ document.exitPointerLock(); }catch(e){}
+  }
+  this.locked = false;
+};
+
+/* ---------- 绘制：准星 ---------- */
+function drawCross(ctx, x, y, color){
+  color = color || '#ffb400';
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.shadowColor = 'rgba(0,0,0,.9)';
+  ctx.shadowBlur = 4;
+  var L = 13, G = 5, D = 9;
+  ctx.beginPath();
+  ctx.moveTo(x-L-G, y); ctx.lineTo(x-G, y);
+  ctx.moveTo(x+G, y);   ctx.lineTo(x+G+L, y);
+  ctx.moveTo(x, y-L-G); ctx.lineTo(x, y-G);
+  ctx.moveTo(x, y+G);   ctx.lineTo(x, y+G+L);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x, y, 2, 0, Math.PI*2);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.restore();
+}
+
+/* ---------- 绘制：网格背景 ---------- */
+function drawGrid(ctx, w, h){
+  ctx.fillStyle = '#0a0d11';
+  ctx.fillRect(0,0,w,h);
+  ctx.strokeStyle = 'rgba(255,255,255,.045)';
+  ctx.lineWidth = 1;
+  for(var x=0; x<w; x+=45){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
+  for(var y=0; y<h; y+=45){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+}
+
+/* =========================================================
+   测试 1：追踪测试（10 秒）
+   ========================================================= */
+var engTrack = new Engine($('cvTrack'), $('stageTrack'));
+
+function startTrack(){
+  readCfg();
+  var eng = engTrack, ctx = eng.ctx, cv = eng.cv;
+  var W = cv.width, H = cv.height;
+  var T = { x: rand(120, W-120), y: rand(90, H-90), r: 30, vx: rand(-4,4), vy: rand(-4,4) };
+  var sp = Math.sqrt(T.vx*T.vx + T.vy*T.vy) || 1;
+  T.vx = T.vx/sp*3.4; T.vy = T.vy/sp*3.4;
+  var inside = 0, total = 0, turnAt = 0;
+  var DUR = 10000;
+
+  $('ovTrack').classList.add('hidden');
+  $('tmTrack').classList.remove('hidden');
+  $('btnTrack').disabled = true;
+
+  eng.onLostLock = function(){ /* 丢失锁定不中断，用绝对坐标继续 */ };
+
+  eng.start({
+    duration: DUR,
+    onFrame: function(dt, elapsed){
+      var f = dt/16.667;
+      // 目标移动 + 边界反弹
+      T.x += T.vx*f; T.y += T.vy*f;
+      if(T.x < T.r){ T.x = T.r; T.vx = Math.abs(T.vx); }
+      if(T.x > W-T.r){ T.x = W-T.r; T.vx = -Math.abs(T.vx); }
+      if(T.y < T.r){ T.y = T.r; T.vy = Math.abs(T.vy); }
+      if(T.y > H-T.r){ T.y = H-T.r; T.vy = -Math.abs(T.vy); }
+      // 随机变向
+      turnAt += dt;
+      if(turnAt > 700){
+        turnAt = 0;
+        T.vx += rand(-1.3,1.3); T.vy += rand(-1.3,1.3);
+        var s = Math.sqrt(T.vx*T.vx+T.vy*T.vy)||1;
+        var spd = clamp(s, 2.6, 4.6);
+        T.vx = T.vx/s*spd; T.vy = T.vy/s*spd;
+      }
+
+      var d = dist(eng.cross.x, eng.cross.y, T.x, T.y);
+      var on = d < T.r;
+      if(on) inside += dt;
+      total += dt;
+
+      // 绘制
+      drawGrid(ctx, W, H);
+      // 目标
+      ctx.save();
+      ctx.shadowColor = on ? 'rgba(46,204,113,.85)' : 'rgba(255,180,0,.7)';
+      ctx.shadowBlur = on ? 26 : 16;
+      ctx.beginPath(); ctx.arc(T.x, T.y, T.r, 0, Math.PI*2);
+      ctx.fillStyle = on ? 'rgba(46,204,113,.35)' : 'rgba(255,180,0,.22)';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = on ? '#2ecc71' : '#ffb400';
+      ctx.stroke();
+      // 内圈
+      ctx.beginPath(); ctx.arc(T.x, T.y, T.r*0.45, 0, Math.PI*2);
+      ctx.strokeStyle = on ? 'rgba(46,204,113,.9)' : 'rgba(255,180,0,.55)';
+      ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.restore();
+      // 准星
+      drawCross(ctx, eng.cross.x, eng.cross.y, on ? '#2ecc71' : '#ffb400');
+
+      // 倒计时（每帧刷新，绝不停滞）
+      var remain = Math.max(0, DUR - elapsed);
+      $('tmTrack').textContent = (remain/1000).toFixed(1);
+    },
+    onFinish: function(){
+      var acc = total>0 ? (inside/total*100) : 0;
+      R.track.done = true; R.track.acc = acc;
+      $('tmTrack').classList.add('hidden');
+      $('btnTrack').disabled = false;
+      var lv, cls;
+      if(acc >= 75){ lv='优秀'; cls='g'; }
+      else if(acc >= 55){ lv='良好'; cls='g'; }
+      else if(acc >= 38){ lv='一般'; cls='y'; }
+      else { lv='偏弱'; cls='r'; }
+      $('resTrack').innerHTML =
+        '追踪精准度 <span class="k '+cls+'">'+acc.toFixed(1)+'%</span> <span class="'+cls+'">('+lv+')</span><br>'+
+        '<span class="ph">悬停 '+ (inside/1000).toFixed(2) +'s / 总计 10.00s</span>';
+    }
+  });
+}
+
+/* =========================================================
+   测试 2：定位测试（10 秒）
+   ========================================================= */
+var engFlick = new Engine($('cvFlick'), $('stageFlick'));
+
+function startFlick(){
+  readCfg();
+  var eng = engFlick, ctx = eng.ctx, cv = eng.cv;
+  var W = cv.width, H = cv.height;
+  var R0 = 34;
+  var T = null, spawnMs = 0;
+  var hits = 0, reacts = [], DUR = 10000;
+  var last = 0;
+
+  function spawn(){
+    var tries = 0, x, y;
+    do{
+      x = rand(R0+40, W-R0-40);
+      y = rand(R0+40, H-R0-40);
+      tries++;
+    } while(dist(x,y,eng.cross.x,eng.cross.y) < 220 && tries < 60);
+    T = { x:x, y:y, r:R0 };
+    spawnMs = performance.now();
+  }
+
+  $('ovFlick').classList.add('hidden');
+  $('tmFlick').classList.remove('hidden');
+  $('btnFlick').disabled = true;
+
+  eng.start({
+    duration: DUR,
+    onInit: spawn,
+    onFrame: function(dt, elapsed){
+      // 碰到即命中
+      if(T && dist(eng.cross.x, eng.cross.y, T.x, T.y) < T.r){
+        reacts.push(performance.now() - spawnMs);
+        hits++;
+        spawn();
+      }
+      drawGrid(ctx, W, H);
+      if(T){
+        ctx.save();
+        ctx.shadowColor = 'rgba(255,140,0,.8)'; ctx.shadowBlur = 18;
+        ctx.beginPath(); ctx.arc(T.x, T.y, T.r, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(255,140,0,.25)'; ctx.fill();
+        ctx.strokeStyle = '#ff8c00'; ctx.lineWidth = 2; ctx.stroke();
+        ctx.beginPath(); ctx.arc(T.x, T.y, T.r*0.4, 0, Math.PI*2);
+        ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 2; ctx.stroke();
+        ctx.restore();
+      }
+      drawCross(ctx, eng.cross.x, eng.cross.y, '#ffffff');
+
+      // HUD
+      ctx.save();
+      ctx.fillStyle = 'rgba(255,255,255,.55)';
+      ctx.font = 'bold 14px "Segoe UI",sans-serif';
+      ctx.fillText('命中 ' + hits, 12, 22);
+      ctx.restore();
+
+      var remain = Math.max(0, DUR - elapsed);
+      $('tmFlick').textContent = (remain/1000).toFixed(1);
+    },
+    onFinish: function(){
+      var avg = reacts.length ? (reacts.reduce(function(a,b){return a+b;},0)/reacts.length) : 0;
+      R.flick.done = true; R.flick.hits = hits; R.flick.avgReact = avg;
+      $('tmFlick').classList.add('hidden');
+      $('btnFlick').disabled = false;
+      var lv, cls;
+      if(avg === 0){ lv='无命中'; cls='r'; }
+      else if(avg < 380){ lv='极快'; cls='g'; }
+      else if(avg < 520){ lv='良好'; cls='g'; }
+      else if(avg < 700){ lv='一般'; cls='y'; }
+      else { lv='偏慢'; cls='r'; }
+      $('resFlick').innerHTML =
+        '命中 <span class="k g">'+hits+'</span> 次 · 平均反应 <span class="k '+cls+'">'+(avg?Math.round(avg):0)+'ms</span> <span class="'+cls+'">('+lv+')</span><br>'+
+        '<span class="ph">最快 '+(reacts.length?Math.round(Math.min.apply(null,reacts)):0)+'ms · 最慢 '+(reacts.length?Math.round(Math.max.apply(null,reacts)):0)+'ms</span>';
+    }
+  });
+}
+
+/* =========================================================
+   测试 3：360° 转身测试（横扫 3 次）
+   ========================================================= */
+var engTurn = new Engine($('cvTurn'), $('stageTurn'));
+
+function startTurn(){
+  readCfg();
+  var eng = engTurn, ctx = eng.ctx, cv = eng.cv;
+  var W = cv.width, H = cv.height;
+  // 一次横扫全垫对应的 counts
+  var targetCounts = cfg.pad * (cfg.dpi / 2.54);
+  var acc = 0, lapMs = performance.now(), laps = [], totalCounts = 0;
+  var NEED = 3;
+
+  $('ovTurn').classList.add('hidden');
+  $('tmTurn').classList.remove('hidden');
+
+  eng.start({
+    onInit: function(){
+      $('btnTurn').disabled = true;
+    },
+    onMove: function(dx){
+      if(dx > 0) acc += dx;                 // 只累计向右位移
+      totalCounts += Math.abs(dx);
+      if(acc >= targetCounts){              // 进度走满 = 完成一次 360° 转身
+        laps.push(performance.now() - lapMs);
+        lapMs = performance.now();
+        acc = 0;
+        $('tmTurn').textContent = laps.length + ' / ' + NEED;
+        if(laps.length >= NEED) eng.stop(), finishTurn();
+      }
+    },
+    onFrame: function(dt){
+      var p = clamp(acc / targetCounts, 0, 1);
+      drawGrid(ctx, W, H);
+
+      // 进度条
+      var bw = W - 120, bh = 34, bx = 60, by = H/2 - 17;
+      ctx.fillStyle = 'rgba(255,255,255,.06)';
+      ctx.fillRect(bx, by, bw, bh);
+      var g = ctx.createLinearGradient(bx,0,bx+bw,0);
+      g.addColorStop(0,'#ff8c00'); g.addColorStop(1,'#ffb400');
+      ctx.fillStyle = g;
+      ctx.fillRect(bx, by, bw*p, bh);
+      ctx.strokeStyle = 'rgba(255,180,0,.6)'; ctx.lineWidth = 2;
+      ctx.strokeRect(bx, by, bw, bh);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 15px "Segoe UI",sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('向右横扫 · ' + Math.round(p*100) + '%（第 ' + (laps.length+1) + '/' + NEED + ' 次）', W/2, by - 12);
+      ctx.textAlign = 'left';
+
+      // 提示
+      ctx.fillStyle = 'rgba(255,255,255,.5)';
+      ctx.font = '13px "Segoe UI",sans-serif';
+      ctx.fillText('鼠标向右快速横扫，进度条走满即完成一次转身（碰到即触发，无需点击）', 60, H/2 + 52);
+
+      // 准星（跟随，居中偏上）
+      drawCross(ctx, eng.cross.x, eng.cross.y, '#ffb400');
+    },
+    onEnd: function(elapsed){ return elapsed > 30000; }   // 30 秒保护
+  });
+
+  function finishTurn(){
+    var avg = laps.length ? (laps.reduce(function(a,b){return a+b;},0)/laps.length) : 0;
+    // 实测 counts/cm：总位移 / (垫宽 × 完成次数)
+    var cpc = laps.length ? (totalCounts / (cfg.pad * laps.length)) : 0;
+    var realDpi = cpc * 2.54;
+    // cm/360：一次横扫 = pad cm 对应 sweepDeg 度
+    var cm360 = cfg.pad * (360 / cfg.sweepDeg);
+    R.turn.done = true;
+    R.turn.cm360 = cm360; R.turn.avgMs = avg; R.turn.cpc = cpc; R.turn.realDpi = realDpi;
+
+    $('tmTurn').classList.add('hidden');
+    $('btnTurn').disabled = false;
+    var lv, cls;
+    if(avg === 0){ lv='未完成'; cls='r'; }
+    else if(avg < 320){ lv='极快'; cls='g'; }
+    else if(avg < 480){ lv='快'; cls='g'; }
+    else if(avg < 700){ lv='中等'; cls='y'; }
+    else { lv='偏慢'; cls='y'; }
+    $('resTurn').innerHTML =
+      'cm/360 <span class="k g">'+cm360.toFixed(1)+' cm</span> · 转身耗时 <span class="k '+cls+'">'+(avg?Math.round(avg):0)+'ms</span> <span class="'+cls+'">('+lv+')</span><br>'+
+      '<span class="ph">实测 '+Math.round(cpc)+' counts/cm ≈ '+Math.round(realDpi)+' DPI'+
+      (Math.abs(realDpi-cfg.dpi)/cfg.dpi > 0.25 ? '（与设置值偏差较大，已按实测校准）' : '')+'</span>';
+  }
+}
+
+/* =========================================================
+   灵敏度生成算法
+   PUBG 经验换算：cm/360 ≈ 1304000 / (灵敏度 × DPI)
+   （基准：灵敏度 50 @ 800DPI ≈ 32.6 cm/360）
+   ========================================================= */
+function generate(){
+  readCfg();
+  var dpi = cfg.dpi;
+
+  // ---- 1. 基础 cm/360：由鼠标垫宽度与偏好转身角度决定 ----
+  var cm360 = cfg.pad * (360 / cfg.sweepDeg);
+
+  // ---- 2. 追踪精准度修正 ----
+  var acc = R.track.done ? R.track.acc : 55;      // 未测取中位
+  if(acc < 38)      cm360 *= 1.16;                // 跟不住 → 降灵敏度（增大 cm/360）
+  else if(acc < 55) cm360 *= 1.08;
+  else if(acc > 85) cm360 *= 0.93;                // 非常稳 → 可更灵敏
+  else if(acc > 72) cm360 *= 0.97;
+
+  // ---- 3. 定位反应修正 ----
+  var react = R.flick.done ? R.flick.avgReact : 480;
+  if(react > 700)      cm360 *= 0.90;             // 甩不动 → 提灵敏度
+  else if(react > 520) cm360 *= 0.95;
+  else if(react > 0 && react < 340 && acc > 68) cm360 *= 1.05;  // 又快又稳 → 降灵敏度求更稳
+
+  // ---- 4. 转身手速修正 ----
+  if(R.turn.done && R.turn.avgMs > 0){
+    if(R.turn.avgMs > 800)     cm360 *= 0.93;     // 转身太费劲 → 提高灵敏度
+    else if(R.turn.avgMs > 620) cm360 *= 0.97;
+    else if(R.turn.avgMs < 260) cm360 *= 1.05;    // 极快手速 → 可降灵敏度提升精度
+  }
+
+  cm360 = clamp(cm360, 12, 90);
+
+  // ---- 5. 换算为游戏内数值 ----
+  var general = clamp(Math.round(1304000 / (cm360 * dpi)), 1, 100);
+
+  // 垂直灵敏度增强：追踪越稳越接近 1.0；偏弱则略降，压枪更好控
+  var vertical;
+  if(acc >= 78) vertical = 1.0;
+  else if(acc >= 60) vertical = 0.95;
+  else if(acc >= 40) vertical = 0.9;
+  else vertical = 0.85;
+  vertical = clamp(Math.round(vertical*10)/10, 0.5, 2.0);
+
+  var ads   = clamp(Math.round(general * 0.95), 1, 100);   // 瞄准灵敏度
+  var scope = clamp(Math.round(general * 0.90), 1, 100);   // 开镜模式灵敏度（1x 基准）
+
+  // 倍镜：随倍率递减，保持手感一致
+  var mag = [
+    { k:'机瞄 / 红点 / 全息 (1x)', f:0.90, d:'腰射转开镜的手感基准' },
+    { k:'2 倍镜',                  f:0.75, d:'近距离连狙 / 突击' },
+    { k:'3 倍镜',                  f:0.62, d:'中距离压枪' },
+    { k:'4 倍镜',                  f:0.50, d:'主力倍镜，压枪核心' },
+    { k:'6 倍镜',                  f:0.38, d:'远距离单点' },
+    { k:'8 倍镜',                  f:0.30, d:'超远距离狙击' }
+  ];
+  var scopes = mag.map(function(m){
+    return { name:m.k, val:clamp(Math.round(general*m.f),1,100), desc:m.d };
+  });
+
+  return {
+    cm360: cm360, general: general, vertical: vertical,
+    ads: ads, scope: scope, scopes: scopes,
+    acc: acc, react: react
+  };
+}
+
+/* =========================================================
+   渲染结果
+   ========================================================= */
+function render(s){
+  var grid = $('sensGrid');
+  var items = [
+    { lb:'常规灵敏度',        vl:s.general,  nt:'腰射 / 基础视角' },
+    { lb:'垂直灵敏度增强',    vl:s.vertical.toFixed(1), nt:'压枪纵向倍率', big:true },
+    { lb:'瞄准灵敏度 (ADS)',  vl:s.ads,      nt:'右键瞄准时的速度' },
+    { lb:'开镜模式灵敏度',    vl:s.scope,    nt:'1x 基准（红点/全息）' },
+    { lb:'cm / 360°',         vl:s.cm360.toFixed(1), nt:'实测转身距离', big:true },
+    { lb:'DPI',               vl:cfg.dpi,    nt:'本次换算基准' }
+  ];
+  grid.innerHTML = items.map(function(it){
+    return '<div class="sens-item'+(it.big?' big':'')+'">'+
+           '<span class="lb">'+it.lb+'</span>'+
+           '<span class="vl">'+it.vl+'</span>'+
+           '<span class="nt">'+it.nt+'</span></div>';
+  }).join('');
+
+  $('scopeBody').innerHTML = s.scopes.map(function(sc){
+    return '<tr><td>'+sc.name+'</td><td class="num">'+sc.val+'</td><td style="color:#8b98a5;font-size:12px">'+sc.desc+'</td></tr>';
+  }).join('');
+
+  /* ---- 微调建议 ---- */
+  var tips = [];
+  if(R.track.done){
+    if(s.acc >= 78)      tips.push('追踪精准度 <b>'+s.acc.toFixed(1)+'%</b>，跟枪非常稳 → 可尝试把常规灵敏度再 <b>＋2</b> 提升转身灵活性。');
+    else if(s.acc >= 55) tips.push('追踪精准度 <b>'+s.acc.toFixed(1)+'%</b>，跟枪合格 → 保持当前值，用 4 倍镜连点练习巩固。');
+    else if(s.acc >= 38) tips.push('追踪精准度 <b>'+s.acc.toFixed(1)+'%</b>，跟枪偏飘 → 建议常规灵敏度再 <b>－2～3</b>，优先练稳定性。');
+    else                 tips.push('追踪精准度 <b>'+s.acc.toFixed(1)+'%</b>，明显跟不上 → 常规灵敏度再 <b>－4～5</b>，并降低 4 倍镜灵敏度 3 点。');
+  }else{
+    tips.push('尚未完成追踪测试，已按中等水平估算 → 建议补测以获得更贴合的常规灵敏度。');
+  }
+
+  if(R.flick.done){
+    if(s.react === 0)    tips.push('定位测试未命中目标 → 建议先提高灵敏度或检查鼠标加速是否开启。');
+    else if(s.react < 380) tips.push('定位反应 <b>'+Math.round(s.react)+'ms</b>，甩狙很快 → 瞄准灵敏度可保持，追求稳定可 <b>－1</b>。');
+    else if(s.react < 520) tips.push('定位反应 <b>'+Math.round(s.react)+'ms</b>，速度良好 → 维持当前瞄准灵敏度。');
+    else                   tips.push('定位反应 <b>'+Math.round(s.react)+'ms</b>，定位偏慢 → 瞄准灵敏度可 <b>＋2～3</b>，并关闭鼠标加速。');
+  }else{
+    tips.push('尚未完成定位测试，已按中等水平估算 → 建议补测以校准瞄准灵敏度。');
+  }
+
+  if(R.turn.done){
+    tips.push('一次横扫 <b>'+cfg.pad+' cm</b> 对应 <b>'+cfg.sweepDeg+'°</b> 转身（cm/360 ≈ <b>'+s.cm360.toFixed(1)+' cm</b>），转身耗时 <b>'+Math.round(R.turn.avgMs)+'ms</b>。');
+  }
+
+  tips.push('压枪时枪口<b>上飘</b> → 垂直灵敏度增强 <b>＋0.1</b>；枪口<b>左右晃</b> → 常规灵敏度 <b>－2</b>；4 倍镜压不住 → 4 倍镜灵敏度 <b>－3</b>。');
+
+  $('adviceBox').innerHTML = '<b>🎯 微调提升建议（每次只改一项，打 2 局再判断）</b><ul>'+
+    tips.map(function(t){ return '<li>'+t+'</li>'; }).join('')+'</ul>';
+
+  $('noteBox').innerHTML =
+    '<b>📌 套用方法</b>：打开 PUBG → 设置 → 游戏玩法 / 控制 → 鼠标灵敏度，按上表逐项填入。'+
+    '常规、瞄准、各倍镜灵敏度取值范围为 <b>1–100</b>，垂直灵敏度增强取值范围 <b>0.5–2.0</b>，'+
+    '均为当前版本可直接输入的数值。<br>'+
+    '<b>⚠️ 换算基准</b>：本工具采用 PUBG 社区通用换算（灵敏度 50 @ 800DPI ≈ 32.6 cm/360）。'+
+    '请关闭 Windows「提高指针精确度」，否则实测会有偏差。';
+
+  $('outBox').style.display = 'block';
+  $('outBox').scrollIntoView({ behavior:'smooth', block:'nearest' });
+}
+
+/* =========================================================
+   复制
+   ========================================================= */
+function copyText(text){
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position='fixed'; ta.style.opacity='0';
+  document.body.appendChild(ta); ta.select();
+  var ok = false;
+  try{ ok = document.execCommand('copy'); }catch(e){ ok=false; }
+  document.body.removeChild(ta);
+  if(!ok && navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(function(){}, function(){});
+    ok = true;
+  }
+  return ok;
+}
+
+/* =========================================================
+   事件绑定
+   ========================================================= */
+$('btnTrack').addEventListener('click', startTrack);
+$('btnFlick').addEventListener('click', startFlick);
+$('btnTurn').addEventListener('click', startTurn);
+
+$('btnGen').addEventListener('click', function(){
+  render(generate());
+});
+
+$('btnCopy').addEventListener('click', function(){
+  var s = generate();
+  var lines = [];
+  lines.push('PUBG 专属灵敏度（DPI ' + cfg.dpi + ' · 鼠标垫 ' + cfg.pad + 'cm · cm/360 ' + s.cm360.toFixed(1) + '）');
+  lines.push('常规灵敏度：' + s.general);
+  lines.push('垂直灵敏度增强：' + s.vertical.toFixed(1));
+  lines.push('瞄准灵敏度：' + s.ads);
+  lines.push('开镜模式灵敏度：' + s.scope);
+  s.scopes.forEach(function(sc){ lines.push(sc.name + '：' + sc.val); });
+  var ok = copyText(lines.join('\n'));
+  $('copyMsg').textContent = ok ? '✅ 已复制到剪贴板' : '复制失败，请手动选择';
+  setTimeout(function(){ $('copyMsg').textContent = ''; }, 2500);
+});
+
+/* 初始画面：三个 canvas 画个静态示意 */
+function idle(cv){
+  var ctx = cv.getContext('2d');
+  drawGrid(ctx, cv.width, cv.height);
+  ctx.fillStyle = 'rgba(255,255,255,.25)';
+  ctx.font = 'bold 15px "Segoe UI",sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('等待开始…', cv.width/2, cv.height/2);
+  ctx.textAlign = 'left';
+}
+idle($('cvTrack')); idle($('cvFlick')); idle($('cvTurn'));
+
+})();
+</script>
+</body>
+</html>

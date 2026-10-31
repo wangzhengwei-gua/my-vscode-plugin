@@ -11031,6 +11031,16 @@ function search(){
                 for(var i=0;i<parr.length;i++){h+='<span class="ball next">'+parr[i].d+'</span><span style="color:#aaa;font-size:12px;margin-right:10px;">×'+parr[i].c+'</span>';}
                 h+='</div>';
             }else{h+='<div class="sub">无下一期样本。</div>';}
+            // 最近跟随号码（该位，按时间倒序）
+            var recP=phits.filter(function(x){return x.next;}).slice(-8).reverse();
+            if(recP.length){
+                h+='<div style="line-height:2;margin:6px 0;"><span style="color:#aaa;font-size:12px;">🕒 最近跟随（'+POSL[type][p]+'位，最新在前）：</span>';
+                for(var ri=0;ri<recP.length;ri++){
+                    var rv=recP[ri].next.num[p];
+                    h+='<span style="color:#888;font-size:11px;margin-right:3px;">'+esc(recP[ri].next.period)+'</span><span class="ball '+(rv===dg?'hit':'next')+'">'+rv+'</span><span style="display:inline-block;width:10px;"></span>';
+                }
+                h+='</div>';
+            }
             if(phits.length){
                 h+='<table><thead><tr><th>#</th><th>命中期号</th><th>该期号码</th><th>下一期期号</th><th>下一期号码</th></tr></thead><tbody>';
                 var shown=0;
@@ -11055,6 +11065,18 @@ function search(){
         var hitSet=nums;
         var modeName=mode==='exact'?'全注直选':'全注组合';
         h+='<div class="stat">命中 '+hits.length+' 次（窗口 '+win+' 期，共 '+all.length+' 期历史） · 模式：'+modeName+'</div>';
+        // 最近跟随号码：按时间倒序列出最近命中的下一期实际开奖号码
+        var rec=hits.filter(function(x){return x.next;}).slice(-10).reverse();
+        if(rec.length){
+            h+='<h3>🕒 最近跟随号码（最近 '+rec.length+' 条，最新在前）</h3>';
+            h+='<table><thead><tr><th>#</th><th>命中期号</th><th>下一期期号</th><th>下一期号码</th><th>与输入号重合</th></tr></thead><tbody>';
+            for(var ri=0;ri<rec.length;ri++){
+                var rr=rec[ri], rnn=rr.next.num.slice(0,k), same=0;
+                for(var rj=0;rj<rnn.length;rj++){if(hitSet.indexOf(rnn[rj])>=0)same++;}
+                h+='<tr><td>'+(ri+1)+'</td><td>'+esc(rr.row.period)+'</td><td>'+esc(rr.next.period)+'</td><td>'+balls(rnn,hitSet)+'</td><td>'+(same>0?'<b style="color:#2ecc71;">'+same+' 个</b>':'0 个')+'</td></tr>';
+            }
+            h+='</tbody></table>';
+        }
         if(!hits.length){
             h+='<div class="sub">窗口内未出现该'+(mode==='exact'?'直选组合':'组合')+'。</div>';
         }else{
@@ -11218,13 +11240,14 @@ function search(){
     var win=Nsel===0?all.length:Math.min(Nsel,all.length);
     var startFrom=all.length-win;
     var h='';
+    var allHits=[]; // 跨输入号汇总：{src, next, idx}
     h+='<div class="stat">快乐8 按号码跟随 · 窗口 '+win+' 期（共 '+all.length+' 期历史） · 输入 '+nums.length+' 个号码：'+nums.map(pad2).join(' ')+' · 每个号各自追溯其下一期</div>';
     for(var ni=0;ni<nums.length;ni++){
         var X=nums[ni];
         var hits=[];
         for(var r=startFrom;r<all.length;r++){
             var n=all[r].num||[];
-            if(n.indexOf(X)>=0){var next=(r+1<all.length)?all[r+1]:null;hits.push({row:all[r],next:next});}
+            if(n.indexOf(X)>=0){var next=(r+1<all.length)?all[r+1]:null;hits.push({row:all[r],next:next});if(next)allHits.push({src:X,next:next,idx:r+1});}
         }
         var nsamp=hits.filter(function(x){return x.next;}).length;
         h+='<h3>号码 '+pad2(X)+'（命中 '+hits.length+' 次，下一期样本 '+nsamp+'）</h3>';
@@ -11240,12 +11263,43 @@ function search(){
         h+='<div style="margin:6px 0;"><span style="color:#aaa;font-size:12px;">其他输入号在下一期出现：</span>';
         for(var oi=0;oi<nums.length;oi++){if(nums[oi]===X)continue;var cnt=0;for(var j=0;j<hits.length;j++){if(!hits[j].next)continue;if((hits[j].next.num||[]).indexOf(nums[oi])>=0)cnt++;}h+='<span class="ball hit">'+pad2(nums[oi])+'</span><span style="color:#aaa;font-size:12px;margin-right:8px;">'+cnt+'/'+nsamp+'</span>';}
         h+='</div>';
+        // 最近跟随号码：按时间倒序列出该号最近命中的下一期实际开奖号码
+        var recK=hits.filter(function(x){return x.next;}).slice(-5).reverse();
+        if(recK.length){
+            h+='<div style="margin:8px 0 4px;"><span style="color:#8ec5ff;font-size:12px;font-weight:600;">🕒 最近跟随号码（号码 '+pad2(X)+' 的最近 '+recK.length+' 条，最新在前）</span></div>';
+            h+='<table><thead><tr><th>#</th><th>下一期期号</th><th>下一期号码（红色球 = 输入号）</th></tr></thead><tbody>';
+            for(var ri=0;ri<recK.length;ri++){
+                h+='<tr><td>'+(ri+1)+'</td><td>'+esc(recK[ri].next.period)+'</td><td>'+kballs(recK[ri].next.num,nums)+'</td></tr>';
+            }
+            h+='</tbody></table>';
+        }
         h+='<table><thead><tr><th>#</th><th>命中期号</th><th>下一期期号</th><th>下一期号码</th></tr></thead><tbody>';
         var shown=0;
         for(var i=0;i<hits.length&&shown<10;i++){if(!hits[i].next)continue;var hh=hits[i];
             h+='<tr><td>'+(shown+1)+'</td><td>'+esc(hh.row.period)+' <span class="ball hit">'+pad2(X)+'</span></td><td>'+esc(hh.next.period)+'</td><td>'+kballs(hh.next.num,null)+'</td></tr>';shown++;}
         h+='</tbody></table>';
         if(nsamp>10)h+='<div class="sub">仅显示前 10 条下一期，共 '+nsamp+' 个样本。</div>';
+    }
+    // 跨输入号最近跟随号码总览：按时间倒序合并去重
+    if(nums.length>1&&allHits.length){
+        allHits.sort(function(a,b){return a.idx-b.idx;});
+        var byIdx={},order=[];
+        for(var ai=0;ai<allHits.length;ai++){
+            var ky=allHits[ai].idx;
+            if(!byIdx[ky]){byIdx[ky]={period:allHits[ai].next.period,num:allHits[ai].next.num||[],srcs:[]};order.push(ky);}
+            if(byIdx[ky].srcs.indexOf(allHits[ai].src)<0)byIdx[ky].srcs.push(allHits[ai].src);
+        }
+        order.sort(function(a,b){return a-b;});
+        var recentAll=order.slice(-10).reverse();
+        h+='<h3>🕒 最近跟随号码总览（跨 '+nums.length+' 个输入号，最近 '+recentAll.length+' 期，最新在前）</h3>';
+        h+='<table><thead><tr><th>#</th><th>下一期期号</th><th>下一期号码</th><th>命中的输入号</th></tr></thead><tbody>';
+        for(var ri=0;ri<recentAll.length;ri++){
+            var rr2=byIdx[recentAll[ri]];
+            var srcHtml='';
+            for(var si=0;si<rr2.srcs.length;si++){srcHtml+='<span class="ball hit">'+pad2(rr2.srcs[si])+'</span>';}
+            h+='<tr><td>'+(ri+1)+'</td><td>'+esc(rr2.period)+'</td><td>'+kballs(rr2.num,nums)+'</td><td>'+srcHtml+'</td></tr>';
+        }
+        h+='</tbody></table>';
     }
     h+='<div class="sub">⚠️ 快乐8每期开 20 个号，每号每期理论概率 25%；样本量大时频次会趋近 25%，无预测效力。</div>';
     document.getElementById('result').innerHTML=h;
