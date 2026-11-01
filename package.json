@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.8.96",
+    "version": "0.8.97",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -47,6 +47,7 @@
         "onCommand:myPlugin.dltPickKill",
         "onCommand:myPlugin.dltZoneForm",
         "onCommand:myPlugin.dltSmart",
+        "onCommand:myPlugin.ssqSmart",
         "onCommand:myPlugin.sortNumbers",
         "onCommand:myPlugin.hotNumbers",
         "onCommand:myPlugin.kl8RarePick",
@@ -176,6 +177,10 @@
             {
                 "command": "myPlugin.dltSmart",
                 "title": "大乐透智能推荐"
+            },
+            {
+                "command": "myPlugin.ssqSmart",
+                "title": "双色球智能推荐"
             },
             {
                 "command": "myPlugin.sortNumbers",

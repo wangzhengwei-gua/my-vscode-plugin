@@ -1162,6 +1162,37 @@ function activate(context) {
     });
     context.subscriptions.push(dltSmartDisposable);
 
+    // 双色球 · 红球 + 蓝球 智能推荐（完整号码 + 复式）
+    let ssqSmartDisposable = vscode.commands.registerCommand('myPlugin.ssqSmart', async () => {
+        let history = [];
+        try {
+            const cfg = LOTTERY_TYPES.find(c => c.key === 'ssq');
+            if (cfg) history = loadLotteryData(cfg);
+        } catch (e) {
+            history = [];
+        }
+        if (!history.length) {
+            vscode.window.showWarningMessage('双色球数据为空，请先刷新数据');
+            return;
+        }
+        const panel = vscode.window.createWebviewPanel(
+            'ssqSmart',
+            '双色球智能推荐 · 红球 + 蓝球',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getSsqSmartHtml(history);
+
+        panel.webview.onDidReceiveMessage(async (msg) => {
+            if (!msg || !msg.command) return;
+            if (msg.command === 'copy') {
+                await vscode.env.clipboard.writeText(String(msg.text || ''));
+                panel.webview.postMessage({ command: 'copySuccess' });
+            }
+        });
+    });
+    context.subscriptions.push(ssqSmartDisposable);
+
     // 号码排序工具（粘贴任意分隔的号码 → 升序/降序排列，可去重、补零、复制）
     let sortNumbersDisposable = vscode.commands.registerCommand('myPlugin.sortNumbers', async () => {
         const panel = vscode.window.createWebviewPanel(
@@ -2710,6 +2741,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🎯 大乐透选号杀号', 'myPlugin.dltPickKill', '🎯'),
                 this.createItem('🧩 大乐透区间形态', 'myPlugin.dltZoneForm', '🧩'),
                 this.createItem('🎯 大乐透智能推荐', 'myPlugin.dltSmart', '🎯'),
+                this.createItem('🔴 双色球智能推荐', 'myPlugin.ssqSmart', '🔴'),
                 this.createItem('🔢 号码排序', 'myPlugin.sortNumbers', '🔢'),
                 this.createItem('🔥 热号统计', 'myPlugin.hotNumbers', '🔥'),
                 this.createItem('🎯 快8罕见形态选号', 'myPlugin.kl8RarePick', '🎯'),
@@ -11370,25 +11402,28 @@ document.getElementById('selN').addEventListener('change',search);
  * ① 精选单式 Top5（完整 5+2）  ② 复式方案（含注数/金额）  ③ 热温冷分层
  * ④ 历史跟随号码  ⑤ 回测表现  ⑥ 近期趋势
  */
-function getDltSmartHtml(history) {
+/**
+ * 通用「双区」智能推荐（大乐透 35选5 + 12选2；双色球 33选6 + 16选1）
+ * ① 精选单式（完整号码） ② 复式方案 ③ 热温冷分层 ④ 历史跟随 ⑤ 回测 ⑥ 趋势
+ * cfg: { name, frontName, backName, frontKey, backKey, fMax, fPick, bMax, bPick, fOpts, fDefault, bOpts, bDefault }
+ */
+function getTwoZoneSmartHtml(history, cfg) {
     const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const N = Math.min(500, history.length);
     const rows = history.slice(-N); // 旧→新
     const periods = rows.map(r => r.period);
-    const fronts = rows.map(r => (r.front || []).filter(x => x >= 1 && x <= 35));
-    const backs = rows.map(r => (r.back || []).filter(x => x >= 1 && x <= 12));
+    const fronts = rows.map(r => (r[cfg.frontKey] || []).filter(x => x >= 1 && x <= cfg.fMax));
+    const backs = rows.map(r => (r[cfg.backKey] || []).filter(x => x >= 1 && x <= cfg.bMax));
     const dataJson = JSON.stringify({
-        periods, fronts, backs, N,
-        lastPeriod: periods[periods.length - 1] || '',
-        lastFront: fronts[fronts.length - 1] || [],
-        lastBack: backs[backs.length - 1] || []
+        periods, fronts, backs, N, cfg: cfg,
+        lastPeriod: periods[periods.length - 1] || ''
     });
 
     return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>大乐透智能推荐 · 完整号码 + 复式</title>
+<title>${esc(cfg.name)}智能推荐 · 完整号码 + 复式</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: #0a0e1a; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
@@ -11439,7 +11474,7 @@ th { background: #2d2d30; color: #8ec5ff; }
 </style>
 </head>
 <body>
-<h2>🎯 大乐透智能推荐 · 完整号码 + 复式</h2>
+<h2>🎯 ${esc(cfg.name)}智能推荐 · 完整号码 + 复式</h2>
 <div class="meta" id="metaBox"></div>
 
 <div class="ctrl">
@@ -11468,7 +11503,7 @@ th { background: #2d2d30; color: #8ec5ff; }
 
 <div class="panel">
     <h3>🏆 精选单式（完整号码 Top 5）</h3>
-    <div class="sub">每行为一注完整号码：前区 5 码 + 后区 2 码，按综合评分排序。</div>
+    <div class="sub" id="sSingle"></div>
     <div id="singleBox"></div>
 </div>
 
@@ -11508,13 +11543,19 @@ var PERIODS = DATA.periods;
 var FR = DATA.fronts || [];
 var BK = DATA.backs || [];
 var TOT = DATA.N;
+var CFG = DATA.cfg;
+var FNAME = CFG.frontName, BNAME = CFG.backName;
+var FMAX = CFG.fMax, FPICK = CFG.fPick, BMAX = CFG.bMax, BPICK = CFG.bPick;
+// 形态边界：三区划分与大小分界（按池大小自适应）
+var FZ1 = Math.ceil(FMAX/3), FZ2 = Math.ceil(FMAX*2/3);
+var FBIG = Math.ceil(FMAX/2), BBIG = Math.floor(BMAX/2)+1;
+var FODDR = Math.ceil(FMAX/2)/FMAX, FBIGR = (FMAX-FBIG+1)/FMAX;
 
 function pad2(n){ return n<10?'0'+n:''+n; }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function ball(n, cls){ return '<span class="ball '+(cls||'')+'">'+pad2(n)+'</span>'; }
 function ballsHtml(arr, cls){ var h=''; for(var i=0;i<arr.length;i++) h+=ball(arr[i],cls); return h; }
 function C(n,k){ if(k<0||k>n) return 0; var r=1; for(var i=0;i<k;i++) r=r*(n-i)/(i+1); return Math.round(r); }
-function pctOf(x){ return (x*100).toFixed(1)+'%'; }
 
 var LAYERS=[
     {k:'hot',   name:'热号', lo:1.25, hi:99},
@@ -11588,32 +11629,30 @@ function scoreZone(list, per, max, pick, gap){
     return { arr:arr, follow:fo, stats:st, exp:exp, last:last };
 }
 
-// 形态惩罚：区间/奇偶/大小分布偏离理论的比例（越小越合理）
+// 形态惩罚：区间/奇偶/大小分布偏离理论比例（越小越合理）
 function penFront(nums){
     var z=[0,0,0], odd=0, big=0;
     for(var i=0;i<nums.length;i++){
         var n=nums[i];
-        if(n<=12) z[0]++; else if(n<=24) z[1]++; else z[2]++;
+        if(n<=FZ1) z[0]++; else if(n<=FZ2) z[1]++; else z[2]++;
         if(n%2===1) odd++;
-        if(n>=18) big++;
+        if(n>=FBIG) big++;
     }
     var L=nums.length||1;
-    var t=[12/35,12/35,11/35];
-    var p=0;
-    for(var i=0;i<3;i++) p+=Math.pow(z[i]/L-t[i],2);
-    p+=Math.pow(odd/L-0.5,2)*0.5;
-    p+=Math.pow(big/L-0.5,2)*0.5;
+    var t1=FZ1/FMAX, t2=(FZ2-FZ1)/FMAX, t3=(FMAX-FZ2)/FMAX;
+    var p=Math.pow(z[0]/L-t1,2)+Math.pow(z[1]/L-t2,2)+Math.pow(z[2]/L-t3,2);
+    p+=Math.pow(odd/L-FODDR,2)*0.5;
+    p+=Math.pow(big/L-FBIGR,2)*0.5;
     return p*3;
 }
 function penBack(nums){
     var odd=0, big=0;
     for(var i=0;i<nums.length;i++){
         if(nums[i]%2===1) odd++;
-        if(nums[i]>=7) big++;
+        if(nums[i]>=BBIG) big++;
     }
     var L=nums.length||1;
-    var p=Math.pow(odd/L-0.5,2)+Math.pow(big/L-0.5,2);
-    return p*3;
+    return (Math.pow(odd/L-0.5,2)+Math.pow(big/L-0.5,2))*3;
 }
 
 // 从 arr 中取 k 个的所有组合（带上限保护）
@@ -11632,7 +11671,7 @@ function kCombs(arr, k){
 }
 
 // 复式方案搜索：在 Top 候选池内枚举组合，按「号码评分 + 形态合理性」选最优
-function searchCombo(fArr, bArr, FN, BN, gap, listF, perF){
+function searchCombo(fArr, bArr, FN, BN){
     var poolF=Math.min(fArr.length, Math.max(12, FN+4));
     var poolB=Math.min(bArr.length, Math.max(6, BN+3));
     var candF=[], candB=[];
@@ -11653,21 +11692,19 @@ function searchCombo(fArr, bArr, FN, BN, gap, listF, perF){
         var fs=0;
         for(var j=0;j<fCombos[i].length;j++) fs+=fScoreMap[fCombos[i][j]]||0;
         fs/=fCombos[i].length||1;
-        var pf=penFront(fCombos[i]);
-        var fv=fs-pf;
+        var fv=fs-penFront(fCombos[i]);
         for(var b=0;b<bCombos.length;b++){
             var bs2=0;
             for(var j=0;j<bCombos[b].length;j++) bs2+=bScoreMap[bCombos[b][j]]||0;
             bs2/=bCombos[b].length||1;
-            var pb=penBack(bCombos[b]);
-            var total=fv*0.65+(bs2-pb)*0.35;
+            var total=fv*0.65+(bs2-penBack(bCombos[b]))*0.35;
             if(!best||total>best.total) best={f:fCombos[i],b:bCombos[b],total:total};
         }
     }
     return best;
 }
 
-// 回测：对最近若干期，用其之前的数据评分并取 Top，统计命中
+// 回测：滚动窗口，每期只用其之前的数据评分并选号，统计下一期命中
 function runBacktest(win, gap, FN, BN){
     var res=[];
     var testN=Math.min(20, Math.max(0, FR.length-win-1));
@@ -11676,11 +11713,11 @@ function runBacktest(win, gap, FN, BN){
         var s=Math.max(0, idx-win);
         var fTrain=FR.slice(s, idx), bTrain=BK.slice(s, idx), pTrain=PERIODS.slice(s, idx);
         if(fTrain.length<10) continue;
-        var fRes=scoreZone(fTrain, pTrain, 35, 5, gap);
-        var bRes=scoreZone(bTrain, pTrain, 12, 2, gap);
+        var fRes=scoreZone(fTrain, pTrain, FMAX, FPICK, gap);
+        var bRes=scoreZone(bTrain, pTrain, BMAX, BPICK, gap);
         var fPick=[], bPick=[];
-        for(var i=0;i<fRes.arr.length&&i<Math.max(5,FN);i++) fPick.push(fRes.arr[i].n);
-        for(var i=0;i<bRes.arr.length&&i<Math.max(2,BN);i++) bPick.push(bRes.arr[i].n);
+        for(var i=0;i<fRes.arr.length&&i<Math.max(FPICK,FN);i++) fPick.push(fRes.arr[i].n);
+        for(var i=0;i<bRes.arr.length&&i<Math.max(BPICK,BN);i++) bPick.push(bRes.arr[i].n);
         var hitF=0, hitB=0;
         for(var i=0;i<FR[idx].length;i++) if(fPick.indexOf(FR[idx][i])>=0) hitF++;
         for(var i=0;i<BK[idx].length;i++) if(bPick.indexOf(BK[idx][i])>=0) hitB++;
@@ -11713,8 +11750,8 @@ var lastCombo=null;
 
 function render(){
     var nsel=parseInt(document.getElementById('selN').value,10); if(!(nsel>=0)) nsel=50;
-    var FN=parseInt(document.getElementById('selF').value,10); if(!(FN>=5)) FN=8;
-    var BN=parseInt(document.getElementById('selB').value,10); if(!(BN>=2)) BN=3;
+    var FN=parseInt(document.getElementById('selF').value,10); if(!(FN>=FPICK)) FN=CFG.fDefault;
+    var BN=parseInt(document.getElementById('selB').value,10); if(!(BN>=BPICK)) BN=CFG.bDefault;
     var gapSel=document.getElementById('selGap');
     var gap=gapSel?parseInt(gapSel.value,10):1; if(!(gap>=1)) gap=1;
 
@@ -11723,10 +11760,10 @@ function render(){
     var fList=[], bList=[], pList=[];
     for(var i=off;i<FR.length;i++){ fList.push(FR[i]); bList.push(BK[i]); pList.push(PERIODS[i]); }
 
-    var fRes=scoreZone(fList, pList, 35, 5, gap);
-    var bRes=scoreZone(bList, pList, 12, 2, gap);
+    var fRes=scoreZone(fList, pList, FMAX, FPICK, gap);
+    var bRes=scoreZone(bList, pList, BMAX, BPICK, gap);
 
-    var totalN=C(FN,5)*C(BN,2);
+    var totalN=C(FN,FPICK)*C(BN,BPICK);
     var money=totalN*2;
 
     document.getElementById('metaBox').innerHTML='统计窗口 <b>'+fList.length+'</b> 期 / 共 '+TOT+
@@ -11734,7 +11771,7 @@ function render(){
         totalN.toLocaleString()+'</b> 注 · <b style="color:#feca57;">'+money.toLocaleString()+'</b> 元';
 
     /* ==== ① 精选单式 Top5 ==== */
-    var best=searchCombo(fRes.arr, bRes.arr, FN, BN, gap, fList, pList);
+    var best=searchCombo(fRes.arr, bRes.arr, FN, BN);
     if(!best){
         document.getElementById('status').textContent='数据不足，无法生成推荐';
         return;
@@ -11745,10 +11782,9 @@ function render(){
     for(var i=0;i<bRes.arr.length;i++) bmap[bRes.arr[i].n]=bRes.arr[i];
 
     var sf=best.f.slice(), sb=best.b.slice();
-    // 前区池内枚举 5 码 × 后区池内枚举 2 码，按乘积概率排序
     var poolS=Math.min(sf.length,10);
-    var singleF=kCombs(sf.slice(0,poolS),5);
-    var singleB=kCombs(sb,2);
+    var singleF=kCombs(sf.slice(0,poolS),FPICK);
+    var singleB=kCombs(sb,BPICK);
     var singles=[];
     for(var i=0;i<singleF.length;i++){
         var wf=1, sc=0;
@@ -11763,7 +11799,7 @@ function render(){
     var topS=singles.slice(0,5);
     var sw=0;
     for(var i=0;i<singles.length;i++) sw+=singles[i].w;
-    var sh='<table><thead><tr><th>#</th><th>前区 5 码</th><th>后区 2 码</th><th>综合评分</th><th>池内占比</th></tr></thead><tbody>';
+    var sh='<table><thead><tr><th>#</th><th>'+FNAME+' '+FPICK+' 码</th><th>'+BNAME+' '+BPICK+' 码</th><th>综合评分</th><th>池内占比</th></tr></thead><tbody>';
     for(var i=0;i<topS.length;i++){
         var s=topS[i];
         var cls=i===0?'rank1':'';
@@ -11775,26 +11811,27 @@ function render(){
     }
     sh+='</tbody></table>';
     document.getElementById('singleBox').innerHTML=sh;
+    document.getElementById('sSingle').innerHTML='每行为一注完整号码：'+FNAME+' '+FPICK+' 码 + '+BNAME+' '+BPICK+' 码，按综合评分排序。';
 
-    /* ==== ② 复式方案 === */
+    /* ==== ② 复式方案 ==== */
     var ch='<div class="combo-big">';
-    ch+='<div class="combo-line"><span class="combo-tag">前区 '+FN+' 个</span>'+ballsHtml(best.f.slice().sort(function(x,y){return x-y;}))+'</div>';
-    ch+='<div class="combo-line"><span class="combo-tag">后区 '+BN+' 个</span>'+ballsHtml(best.b.slice().sort(function(x,y){return x-y;}))+'</div>';
-    ch+='<div class="combo-meta">注数 C('+FN+',5) × C('+BN+',2) = '+totalN.toLocaleString()+' 注 · 金额 '+money.toLocaleString()+' 元'+
+    ch+='<div class="combo-line"><span class="combo-tag">'+FNAME+' '+FN+' 个</span>'+ballsHtml(best.f.slice().sort(function(x,y){return x-y;}))+'</div>';
+    ch+='<div class="combo-line"><span class="combo-tag">'+BNAME+' '+BN+' 个</span>'+ballsHtml(best.b.slice().sort(function(x,y){return x-y;}))+'</div>';
+    ch+='<div class="combo-meta">注数 C('+FN+','+FPICK+') × C('+BN+','+BPICK+') = '+totalN.toLocaleString()+' 注 · 金额 '+money.toLocaleString()+' 元'+
         (totalN>10000?' <span class="warn">⚠️ 注数较多，注意投注成本</span>':'')+'</div>';
     ch+='</div>';
     document.getElementById('comboBox').innerHTML=ch;
     document.getElementById('sCombo').innerHTML='由算法从评分 Top 候选池中搜索最优组合，兼顾<b>号码评分</b>与<b>形态合理性</b>（三区/奇偶/大小分布接近理论）。';
 
-    /* ==== ③ 热温冷分层 === */
-    var lh='<div class="flex2"><div>'+layerSection(fRes.stats,35,fRes.exp,'🔴 前区 1-35')+'</div>'+
-           '<div>'+layerSection(bRes.stats,12,bRes.exp,'🔵 后区 1-12')+'</div></div>';
+    /* ==== ③ 热温冷分层 ==== */
+    var lh='<div class="flex2"><div>'+layerSection(fRes.stats,FMAX,fRes.exp,'🔴 '+FNAME+' 1-'+FMAX)+'</div>'+
+           '<div>'+layerSection(bRes.stats,BMAX,bRes.exp,'🔵 '+BNAME+' 1-'+BMAX)+'</div></div>';
     document.getElementById('layerBox').innerHTML=lh;
     document.getElementById('sLayer').innerHTML='按窗口内出现频率与理论期望的比值分层（热号 ≥1.25× … 冰封 <0.25×），括号内为「出现次数 / 当前遗漏期数」。';
 
     /* ==== ④ 历史跟随 ==== */
     var fh='<div class="flex2">';
-    var zones=[{r:fRes,m:35,p:5,n:'前区'},{r:bRes,m:12,p:2,n:'后区'}];
+    var zones=[{r:fRes,m:FMAX,p:FPICK,n:FNAME},{r:bRes,m:BMAX,p:BPICK,n:BNAME}];
     for(var zi=0;zi<zones.length;zi++){
         var zz=zones[zi], fo=zz.r.follow;
         var maxf=1;
@@ -11837,22 +11874,23 @@ function render(){
     }else{
         var tf=0, tb=0, bestF=0;
         for(var i=0;i<bt.length;i++){ tf+=bt[i].hitF; tb+=bt[i].hitB; if(bt[i].hitF>bestF) bestF=bt[i].hitF; }
-        bth='<div class="stat">近 '+bt.length+' 期模拟：前区平均命中 <b>'+(tf/bt.length).toFixed(2)+'</b> 个 / 后区平均命中 <b>'+
-            (tb/bt.length).toFixed(2)+'</b> 个 · 单期前区最佳命中 <b>'+bestF+'</b> 个</div>';
-        bth+='<table><thead><tr><th>#</th><th>期号</th><th>前区命中</th><th>后区命中</th></tr></thead><tbody>';
+        bth='<div class="stat">近 '+bt.length+' 期模拟：'+FNAME+'平均命中 <b>'+(tf/bt.length).toFixed(2)+'</b> 个 / '+BNAME+'平均命中 <b>'+
+            (tb/bt.length).toFixed(2)+'</b> 个 · 单期'+FNAME+'最佳命中 <b>'+bestF+'</b> 个</div>';
+        bth+='<table><thead><tr><th>#</th><th>期号</th><th>'+FNAME+'命中</th><th>'+BNAME+'命中</th></tr></thead><tbody>';
         for(var i=0;i<bt.length;i++){
-            bth+='<tr><td>'+(i+1)+'</td><td>'+esc(bt[i].period)+'</td><td>'+bt[i].hitF+' / 5</td><td>'+bt[i].hitB+' / 2</td></tr>';
+            bth+='<tr><td>'+(i+1)+'</td><td>'+esc(bt[i].period)+'</td><td>'+bt[i].hitF+' / '+FPICK+'</td><td>'+bt[i].hitB+' / '+BPICK+'</td></tr>';
         }
         bth+='</tbody></table>';
-        bth+='<div class="sub">随机期望：前区 5×5/35≈0.71 个、后区 2×2/12≈0.33 个。命中高于期望仅说明该方法在历史窗口内较贴合，不代表可预测未来。</div>';
+        bth+='<div class="sub">随机期望：'+FNAME+' '+(FPICK*FPICK/FMAX).toFixed(2)+' 个、'+BNAME+' '+(BPICK*BPICK/BMAX).toFixed(2)+
+            ' 个。命中高于期望仅说明该方法在历史窗口内较贴合，不代表可预测未来。</div>';
     }
     document.getElementById('backBox').innerHTML=bth;
     document.getElementById('sBack').innerHTML='用滚动窗口方式，每期只用其之前的数据评分并选号，统计在下一期的实际命中个数。';
 
-    /* ==== ⑥ 趋势 === */
+    /* ==== ⑥ 趋势 ==== */
     var th='';
     var tn=Math.min(20,fList.length);
-    th+='<table><thead><tr><th>#</th><th>期号</th><th>前区 5 码</th><th>后区 2 码</th><th>跨前</th><th>前和</th></tr></thead><tbody>';
+    th+='<table><thead><tr><th>#</th><th>期号</th><th>'+FNAME+' '+FPICK+' 码</th><th>'+BNAME+' '+BPICK+' 码</th><th>跨'+FNAME+'</th><th>'+FNAME+'和</th></tr></thead><tbody>';
     for(var i=0;i<tn;i++){
         var idx=fList.length-tn+i;
         var fs2=fList[idx]||[], bs3=bList[idx]||[];
@@ -11864,20 +11902,20 @@ function render(){
             '<td>'+sp+'</td><td>'+sv+'</td></tr>';
     }
     th+='</tbody></table>';
-    var st10=statsOf(fList.slice(-10),35);
-    var maxW=1; for(var n=1;n<=35;n++) if(fRes.stats[n].f>maxW) maxW=fRes.stats[n].f;
-    var b10=statsOf(bList.slice(-10),12);
-    var maxB=1; for(var n=1;n<=12;n++) if(bRes.stats[n].f>maxB) maxB=bRes.stats[n].f;
-    th+='<div class="flex2"><div><div style="color:#8ec5ff;font-weight:700;margin:6px 0;">🔴 前区热度（近10期 / 窗口内 '+fList.length+' 期）</div>';
-    for(var n=1;n<=35;n++){
+    var st10=statsOf(fList.slice(-10),FMAX);
+    var maxW=1; for(var n=1;n<=FMAX;n++) if(fRes.stats[n].f>maxW) maxW=fRes.stats[n].f;
+    var b10=statsOf(bList.slice(-10),BMAX);
+    var maxB=1; for(var n=1;n<=BMAX;n++) if(bRes.stats[n].f>maxB) maxB=bRes.stats[n].f;
+    th+='<div class="flex2"><div><div style="color:#8ec5ff;font-weight:700;margin:6px 0;">🔴 '+FNAME+'热度（近10期 / 窗口内 '+fList.length+' 期）</div>';
+    for(var n=1;n<=FMAX;n++){
         var p1=Math.round(fRes.stats[n].f/maxW*100);
         var L1=layerOf(fRes.exp>0?fRes.stats[n].f/fRes.exp:0);
         th+='<div class="bar-wrap"><span class="bar-label">'+pad2(n)+'</span>'+
             '<span class="bar-outer"><span class="bar-inner" style="width:'+p1+'%"></span></span>'+
             '<span class="bar-val">'+st10[n].f+' / '+fRes.stats[n].f+' 次 · '+L1.name+'</span></div>';
     }
-    th+='</div><div><div style="color:#8ec5ff;font-weight:700;margin:6px 0;">🔵 后区热度（近10期 / 窗口内 '+bList.length+' 期）</div>';
-    for(var n=1;n<=12;n++){
+    th+='</div><div><div style="color:#8ec5ff;font-weight:700;margin:6px 0;">🔵 '+BNAME+'热度（近10期 / 窗口内 '+bList.length+' 期）</div>';
+    for(var n=1;n<=BMAX;n++){
         var p2=Math.round(bRes.stats[n].f/maxB*100);
         var L2=layerOf(bRes.exp>0?bRes.stats[n].f/bRes.exp:0);
         th+='<div class="bar-wrap"><span class="bar-label">'+pad2(n)+'</span>'+
@@ -11886,7 +11924,7 @@ function render(){
     }
     th+='</div></div>';
     document.getElementById('trendBox').innerHTML=th;
-    document.getElementById('sTrend').innerHTML='最近 '+tn+' 期开奖记录（前区跨度 = 最大−最小，前区和值 = 5 码之和）与号码热度条。';
+    document.getElementById('sTrend').innerHTML='最近 '+tn+' 期开奖记录（'+FNAME+'跨度 = 最大−最小，'+FNAME+'和值 = '+FPICK+' 码之和）与号码热度条。';
 
     document.getElementById('status').textContent='已生成推荐 ✓';
 }
@@ -11908,19 +11946,17 @@ function copyText(text, okMsg){
 
 // 初始化复式下拉
 (function initSelects(){
-    var F=[5,6,7,8,9,10,11,12,14,16,18,20];
-    var B=[2,3,4,5,6,8,10,12];
     var sf=document.getElementById('selF'), sb=document.getElementById('selB');
-    for(var i=0;i<F.length;i++){
+    for(var i=0;i<CFG.fOpts.length;i++){
         var o=document.createElement('option');
-        o.value=F[i]; o.text=F[i];
-        if(F[i]===8) o.selected=true;
+        o.value=CFG.fOpts[i]; o.text=CFG.fOpts[i];
+        if(CFG.fOpts[i]===CFG.fDefault) o.selected=true;
         sf.appendChild(o);
     }
-    for(var i=0;i<B.length;i++){
+    for(var i=0;i<CFG.bOpts.length;i++){
         var o2=document.createElement('option');
-        o2.value=B[i]; o2.text=B[i];
-        if(B[i]===3) o2.selected=true;
+        o2.value=CFG.bOpts[i]; o2.text=CFG.bOpts[i];
+        if(CFG.bOpts[i]===CFG.bDefault) o2.selected=true;
         sb.appendChild(o2);
     }
 })();
@@ -11928,14 +11964,15 @@ function copyText(text, okMsg){
 document.getElementById('selN').addEventListener('change',render);
 document.getElementById('selF').addEventListener('change',render);
 document.getElementById('selB').addEventListener('change',render);
+var gs=document.getElementById('selGap'); if(gs) gs.addEventListener('change',render);
 document.getElementById('btnGen').addEventListener('click',render);
 document.getElementById('btnCopy').addEventListener('click',function(){
     if(!lastCombo){ document.getElementById('status').textContent='请先生成推荐'; return; }
     var f=lastCombo.f.slice().sort(function(a,b){return a-b;});
     var b=lastCombo.b.slice().sort(function(a,b){return a-b;});
-    var lines=['大乐透 复式 '+f.length+'+'+b.length,
-               '前区：'+f.map(pad2).join(' '),
-               '后区：'+b.map(pad2).join(' ')];
+    var lines=[CFG.name+' 复式 '+f.length+'+'+b.length,
+               FNAME+'：'+f.map(pad2).join(' '),
+               BNAME+'：'+b.map(pad2).join(' ')];
     copyText(lines.join('\\n'),'已复制复式号码 ✓');
     var btn=document.getElementById('btnCopy');
     btn.classList.add('copied');
@@ -11945,6 +11982,28 @@ render();
 </script>
 </body>
 </html>`;
+}
+
+// 大乐透：前区 1-35 选 5 + 后区 1-12 选 2
+function getDltSmartHtml(history) {
+    return getTwoZoneSmartHtml(history, {
+        name: '大乐透', frontName: '前区', backName: '后区',
+        frontKey: 'front', backKey: 'back',
+        fMax: 35, fPick: 5, bMax: 12, bPick: 2,
+        fOpts: [5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20], fDefault: 8,
+        bOpts: [2, 3, 4, 5, 6, 8, 10, 12], bDefault: 3
+    });
+}
+
+// 双色球：红球 1-33 选 6 + 蓝球 1-16 选 1
+function getSsqSmartHtml(history) {
+    return getTwoZoneSmartHtml(history, {
+        name: '双色球', frontName: '红球', backName: '蓝球',
+        frontKey: 'red', backKey: 'blue',
+        fMax: 33, fPick: 6, bMax: 16, bPick: 1,
+        fOpts: [6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 25, 28, 33], fDefault: 8,
+        bOpts: [1, 2, 3, 4, 5, 6, 8, 10, 12, 16], bDefault: 3
+    });
 }
 
 function getDltZoneFormHtml(history) {
