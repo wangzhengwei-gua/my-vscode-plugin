@@ -12237,6 +12237,22 @@ function getKl8AllHotColdHtml(history) {
             b: bucketOf(z[n])
         });
     }
+    // 最近若干期：每期开奖号码按全量 Z 的温度归属计数（用于「近期热温冷占比」图表）
+    const RECENT_MAX = Math.min(200, N);
+    const recent = [];
+    for (let i = N - RECENT_MAX; i < N; i++) {
+        const row = history[i];
+        const nums = row.num || [];
+        let rh = 0, rw = 0, rc = 0;
+        for (const x of nums) {
+            const b = bucketOf(z[x]);
+            if (b === 'veryHot' || b === 'hot') rh++;
+            else if (b === 'warm') rw++;
+            else rc++;
+        }
+        recent.push({ p: row.period, h: rh, w: rw, c: rc, n: nums.slice() });
+    }
+
     const byCntDesc = stats.slice().sort((a, b) => b.c - a.c);
     const byCntAsc = stats.slice().sort((a, b) => a.c - b.c);
     const byMissDesc = stats.slice().sort((a, b) => b.miss - a.miss);
@@ -12274,6 +12290,7 @@ function getKl8AllHotColdHtml(history) {
         warmTop: byWarmAsc.slice(0, 20),
         coldTop: byCntAsc.slice(0, 20),
         missTop: byMissDesc.slice(0, 20),
+        recent: recent,
         bucket: bucket
     });
 
@@ -12321,6 +12338,16 @@ th { background: rgba(0,0,0,0.3); color: #8ec5ff; }
 tbody tr.in { background: rgba(254,202,87,0.07); }
 .scroll { max-height: 420px; overflow-y: auto; border: 1px solid rgba(120,180,255,0.1); border-radius: 6px; }
 .scroll thead th { position: sticky; top: 0; z-index: 2; }
+.chart { display: flex; align-items: flex-end; gap: 1px; height: 180px; background: rgba(0,0,0,0.22); border-radius: 6px; padding: 6px 6px 0; }
+.chart .bar { flex: 1 1 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; min-width: 2px; }
+.chart .bar:hover { filter: brightness(1.35); }
+.seg { width: 100%; }
+.seg.s-hot { background: linear-gradient(180deg,#e74c3c,#c0392b); }
+.seg.s-warm { background: linear-gradient(180deg,#feca57,#f39c12); }
+.seg.s-cold { background: linear-gradient(180deg,#3498db,#2980b9); }
+.axis { display: flex; justify-content: space-between; color: #666; font-size: 11px; margin-top: 4px; }
+.avg { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: #aaa; margin-top: 8px; }
+.avg b { color: #feca57; }
 .bk { display: flex; gap: 10px; flex-wrap: wrap; }
 .bk-item { background: rgba(0,0,0,0.25); border-radius: 6px; padding: 8px 14px; text-align: center; min-width: 110px; }
 .bk-item .t { font-size: 12px; margin-bottom: 4px; }
@@ -12389,6 +12416,32 @@ button:hover { background: #1177bb; }
 <div class="panel">
     <h3>⏳ 当前遗漏榜 TOP20（最久没出现）</h3>
     <table><thead><tr><th>#</th><th>号码</th><th>当前遗漏(期)</th><th>历史最大遗漏</th><th>出现次数</th><th>Z 值</th><th>上次出现期号</th></tr></thead><tbody id="missBody"></tbody></table>
+</div>
+
+<div class="panel">
+    <h3>📉 最近 N 期开奖的热温冷占比</h3>
+    <div class="ctrl">
+        <span class="lb">最近</span>
+        <select id="inRecent">
+            <option value="20">20 期</option>
+            <option value="30">30 期</option>
+            <option value="50" selected>50 期</option>
+            <option value="100">100 期</option>
+            <option value="200">200 期</option>
+        </select>
+        <span class="lb" style="color:#aaa;">每根柱 = 一期 20 个号，自下而上：热(红) / 温(黄) / 冷(蓝)；鼠标悬停看该期明细</span>
+    </div>
+    <div class="legend">
+        <span><span class="dot vhot"></span>热（含很热）</span>
+        <span><span class="dot warm"></span>温</span>
+        <span><span class="dot cold"></span>冷（含很冷）</span>
+    </div>
+    <div class="chart" id="chart"></div>
+    <div class="axis"><span id="axL"></span><span id="axR"></span></div>
+    <div class="avg" id="recentAvg"></div>
+    <div class="note">温度归属用<b>全量历史 Z</b> 判定（与该号在总榜中的档位一致）；柱高 = 该档个数 ÷ 20。
+    随机基准：每期 20 个号里各档个数的期望值 = 20 × 该档在总榜中的占比，即 热 <b>${(20 * (bucket.veryHot + bucket.hot) / 80).toFixed(1)}</b> 个 / 温 <b>${(20 * bucket.warm / 80).toFixed(1)}</b> 个 / 冷 <b>${(20 * (bucket.cold + bucket.veryCold) / 80).toFixed(1)}</b> 个
+    （总榜占比 热 ${((bucket.veryHot + bucket.hot) / 80 * 100).toFixed(1)}％ / 温 ${(bucket.warm / 80 * 100).toFixed(1)}％ / 冷 ${((bucket.cold + bucket.veryCold) / 80 * 100).toFixed(1)}％），实测围绕该值上下波动属正常。</div>
 </div>
 
 <div class="panel">
@@ -12510,6 +12563,38 @@ document.getElementById('ownBody').innerHTML=oh;
 document.getElementById('ownInfo').innerHTML='热号榜 '+ownCnt.hot+' 个号（其中 TOP20 '+inCnt.hot+' 个） · '
     +'温号榜 '+ownCnt.warm+' 个号（TOP20 '+inCnt.warm+' 个） · '
     +'冷号榜 '+ownCnt.cold+' 个号（TOP20 '+inCnt.cold+' 个） · 合计 '+D.stats.length+' 个号';
+
+// ============ 最近 N 期热温冷占比（堆叠柱图） ============
+function renderChart(){
+    var maxLen=D.recent.length;
+    var n=parseInt(document.getElementById('inRecent').value,10)||50;
+    if(n>maxLen)n=maxLen;
+    var arr=D.recent.slice(-n);
+    var h='';
+    arr.forEach(function(r){
+        var tp=esc(r.p)+'&#10;热 '+r.h+'（'+(r.h/20*100).toFixed(0)+'％） · 温 '+r.w+'（'+(r.w/20*100).toFixed(0)+'％） · 冷 '+r.c+'（'+(r.c/20*100).toFixed(0)+'％）&#10;号码：'+r.n.join(' ');
+        h+='<div class="bar" title="'+tp+'">'
+          +'<div class="seg s-cold" style="height:'+(r.c/20*100)+'%;"></div>'
+          +'<div class="seg s-warm" style="height:'+(r.w/20*100)+'%;"></div>'
+          +'<div class="seg s-hot" style="height:'+(r.h/20*100)+'%;"></div>'
+          +'</div>';
+    });
+    document.getElementById('chart').innerHTML=h;
+    document.getElementById('axL').textContent='◀ '+(arr[0]?arr[0].p:'');
+    document.getElementById('axR').textContent=(arr[arr.length-1]?arr[arr.length-1].p:'')+' ▶';
+    var th=0,tw=0,tc=0;
+    arr.forEach(function(r){ th+=r.h; tw+=r.w; tc+=r.c; });
+    var m=arr.length;
+    document.getElementById('recentAvg').innerHTML=
+        '最近 <b>'+m+'</b> 期平均：'
+      + '<span style="color:#ff9b91;">热 <b>'+(th/m).toFixed(2)+'</b> 个（'+(th/m/20*100).toFixed(1)+'％）</span> · '
+      + '<span style="color:#feca57;">温 <b>'+(tw/m).toFixed(2)+'</b> 个（'+(tw/m/20*100).toFixed(1)+'％）</span> · '
+      + '<span style="color:#9fd0f0;">冷 <b>'+(tc/m).toFixed(2)+'</b> 个（'+(tc/m/20*100).toFixed(1)+'％）</span> · '
+      + '单期极值：热 '+Math.max.apply(null,arr.map(function(r){return r.h;}))+'~'+Math.min.apply(null,arr.map(function(r){return r.h;}))
+      + ' · 温 '+Math.max.apply(null,arr.map(function(r){return r.w;}))+'~'+Math.min.apply(null,arr.map(function(r){return r.w;}))
+      + ' · 冷 '+Math.max.apply(null,arr.map(function(r){return r.c;}))+'~'+Math.min.apply(null,arr.map(function(r){return r.c;}));
+}
+renderChart();
 var mh='';
 D.missTop.forEach(function(s,i){
     mh+='<tr><td>'+(i+1)+'</td><td><span class="'+zc(s.n)+'">'+pad2(s.n)+'</span></td><td><b style="color:#feca57;">'+s.miss+'</b></td><td>'+s.maxMiss+'</td><td>'+s.c+'</td><td>'+s.z+'</td><td>'+esc(s.last)+'</td></tr>';
@@ -12750,6 +12835,7 @@ try{
         });
     });
     document.getElementById('inMult').addEventListener('change',function(){renderPick();});
+    document.getElementById('inRecent').addEventListener('change',renderChart);
     applyMix();
     renderPick();
 }catch(err){
