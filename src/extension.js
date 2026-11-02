@@ -12398,39 +12398,6 @@ button:hover { background: #1177bb; }
     <div class="note">鼠标悬停格子可看详情（出现率、当前遗漏、历史最大遗漏、上次出现期号）。</div>
 </div>
 
-<div class="grid3">
-    <div class="panel">
-        <h3>🔥 热号榜 TOP20（出现次数最多）</h3>
-        <table><thead><tr><th>#</th><th>号码</th><th>出现次数</th><th>出现率</th><th>Z 值</th><th>当前遗漏</th></tr></thead><tbody id="hotBody"></tbody></table>
-    </div>
-    <div class="panel">
-        <h3>🌤 温号榜 TOP20（最接近理论值 · |Z| 最小）</h3>
-        <table><thead><tr><th>#</th><th>号码</th><th>出现次数</th><th>偏离理论</th><th>Z 值</th><th>当前遗漏</th></tr></thead><tbody id="warmBody"></tbody></table>
-    </div>
-    <div class="panel">
-        <h3>❄️ 冷号榜 TOP20（出现次数最少）</h3>
-        <table><thead><tr><th>#</th><th>号码</th><th>出现次数</th><th>出现率</th><th>Z 值</th><th>当前遗漏</th></tr></thead><tbody id="coldBody"></tbody></table>
-    </div>
-</div>
-
-<div class="panel">
-    <h3>🧾 全号码归属总表（80 号 · 各号属于哪个榜、榜内第几名）</h3>
-    <div id="ownInfo" style="color:#aaa;font-size:12px;margin-bottom:8px;"></div>
-    <div class="scroll">
-        <table>
-            <thead><tr><th>号码</th><th>温度档</th><th>归属榜</th><th>榜内名次</th><th>出现次数</th><th>偏离理论</th><th>Z 值</th><th>当前遗漏</th><th>历史最大遗漏</th></tr></thead>
-            <tbody id="ownBody"></tbody>
-        </table>
-    </div>
-    <div class="note">归属规则：<b style="color:#ff9b91;">很热/热 → 热号榜</b>（按出现次数降序排名） · <b style="color:#feca57;">温 → 温号榜</b>（按 |Z| 升序排名） · <b style="color:#9fd0f0;">冷/很冷 → 冷号榜</b>（按出现次数升序排名） ·
-    黄色底行 = 进入该榜 TOP20；名次「—」表示该号在其归属榜中排在 20 名之外。</div>
-</div>
-
-<div class="panel">
-    <h3>⏳ 当前遗漏榜 TOP20（最久没出现）</h3>
-    <table><thead><tr><th>#</th><th>号码</th><th>当前遗漏(期)</th><th>历史最大遗漏</th><th>出现次数</th><th>Z 值</th><th>上次出现期号</th></tr></thead><tbody id="missBody"></tbody></table>
-</div>
-
 <div class="panel">
     <h3>📉 最近 N 期开奖的热温冷占比</h3>
     <div class="ctrl">
@@ -12469,6 +12436,39 @@ button:hover { background: #1177bb; }
     <div class="avg" id="fcBt"></div>
     <div class="note">⚠️ 快乐8 每期独立随机，理论上<b>最优无偏预测就是「长期基准」</b>。上面的模型额外纳入了近期趋势与动量，
     下方回测会把它与「恒用基准」逐步对比——若提升不明显或为负，说明近期波动只是随机噪声，基准更可靠。</div>
+</div>
+
+<div class="grid3">
+    <div class="panel">
+        <h3>🔥 热号榜 TOP20（出现次数最多）</h3>
+        <table><thead><tr><th>#</th><th>号码</th><th>出现次数</th><th>出现率</th><th>Z 值</th><th>当前遗漏</th></tr></thead><tbody id="hotBody"></tbody></table>
+    </div>
+    <div class="panel">
+        <h3>🌤 温号榜 TOP20（最接近理论值 · |Z| 最小）</h3>
+        <table><thead><tr><th>#</th><th>号码</th><th>出现次数</th><th>偏离理论</th><th>Z 值</th><th>当前遗漏</th></tr></thead><tbody id="warmBody"></tbody></table>
+    </div>
+    <div class="panel">
+        <h3>❄️ 冷号榜 TOP20（出现次数最少）</h3>
+        <table><thead><tr><th>#</th><th>号码</th><th>出现次数</th><th>出现率</th><th>Z 值</th><th>当前遗漏</th></tr></thead><tbody id="coldBody"></tbody></table>
+    </div>
+</div>
+
+<div class="panel">
+    <h3>🧾 全号码归属总表（80 号 · 各号属于哪个榜、榜内第几名）</h3>
+    <div id="ownInfo" style="color:#aaa;font-size:12px;margin-bottom:8px;"></div>
+    <div class="scroll">
+        <table>
+            <thead><tr><th>号码</th><th>温度档</th><th>归属榜</th><th>榜内名次</th><th>出现次数</th><th>偏离理论</th><th>Z 值</th><th>当前遗漏</th><th>历史最大遗漏</th></tr></thead>
+            <tbody id="ownBody"></tbody>
+        </table>
+    </div>
+    <div class="note">归属规则：<b style="color:#ff9b91;">很热/热 → 热号榜</b>（按出现次数降序排名） · <b style="color:#feca57;">温 → 温号榜</b>（按 |Z| 升序排名） · <b style="color:#9fd0f0;">冷/很冷 → 冷号榜</b>（按出现次数升序排名） ·
+    黄色底行 = 进入该榜 TOP20；名次「—」表示该号在其归属榜中排在 20 名之外。</div>
+</div>
+
+<div class="panel">
+    <h3>⏳ 当前遗漏榜 TOP20（最久没出现）</h3>
+    <table><thead><tr><th>#</th><th>号码</th><th>当前遗漏(期)</th><th>历史最大遗漏</th><th>出现次数</th><th>Z 值</th><th>上次出现期号</th></tr></thead><tbody id="missBody"></tbody></table>
 </div>
 
 <div class="panel">
