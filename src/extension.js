@@ -12243,6 +12243,24 @@ function getKl8AllHotColdHtml(history) {
     // 温号榜：温号池（-0.5<Z<0.5）内按 |Z| 升序 → 越靠前越接近理论出现次数
     const byWarmAsc = stats.filter(s => s.b === 'warm').sort((a, b) => Math.abs(a.z) - Math.abs(b.z));
 
+    // 每个号在三个榜中的名次（1-based）与「归属榜」：很热/热→热号榜，温→温号榜，冷/很冷→冷号榜
+    const rankHot = {}, rankWarm = {}, rankCold = {};
+    byCntDesc.forEach((s, i) => { rankHot[s.n] = i + 1; });
+    byCntAsc.forEach((s, i) => { rankCold[s.n] = i + 1; });
+    byWarmAsc.forEach((s, i) => { rankWarm[s.n] = i + 1; });
+    const OWN = { veryHot: 'hot', hot: 'hot', warm: 'warm', cold: 'cold', veryCold: 'cold' };
+    const OWN_CN = { hot: '热号榜', warm: '温号榜', cold: '冷号榜' };
+    stats.forEach(s => {
+        const own = OWN[s.b];
+        s.own = own;
+        s.ownCn = OWN_CN[own];
+        s.rankHot = rankHot[s.n] || 0;
+        s.rankWarm = rankWarm[s.n] || 0;
+        s.rankCold = rankCold[s.n] || 0;
+        s.ownRank = own === 'hot' ? s.rankHot : (own === 'warm' ? s.rankWarm : s.rankCold);
+        s.ownIn = s.ownRank > 0 && s.ownRank <= 20;   // 是否进入该榜 TOP20
+    });
+
     const dataJson = JSON.stringify({
         N: N,
         exp: +exp.toFixed(2),
@@ -12273,9 +12291,10 @@ h3 { color: #feca57; font-size: 15px; margin-bottom: 10px; }
 .panel { background: rgba(20,30,50,0.5); border: 1px solid rgba(120,180,255,0.15); border-radius: 8px; padding: 14px; margin-bottom: 14px; max-width: 1400px; }
 .zone-row { display: flex; align-items: center; margin: 4px 0; flex-wrap: wrap; }
 .zone-name { width: 78px; font-size: 11px; color: #888; }
-.cell { width: 62px; height: 46px; border-radius: 5px; margin: 2px; text-align: center; font-size: 13px; font-weight: bold; padding-top: 3px; }
+.cell { width: 62px; height: 56px; border-radius: 5px; margin: 2px; text-align: center; font-size: 13px; font-weight: bold; padding-top: 2px; }
 .cell .c { display: block; font-size: 11px; font-weight: normal; opacity: 0.9; }
 .cell .z { display: block; font-size: 10px; opacity: 0.75; }
+.cell .o { display: block; font-size: 9px; font-weight: normal; opacity: 0.85; }
 .vhot { background: rgba(231,76,60,0.55); color: #ffd5d0; border: 1px solid rgba(231,76,60,0.9); }
 .hot { background: rgba(231,76,60,0.28); color: #ff9b91; border: 1px solid rgba(231,76,60,0.55); }
 .warm { background: rgba(254,202,87,0.2); color: #feca57; border: 1px solid rgba(254,202,87,0.45); }
@@ -12298,6 +12317,10 @@ th { background: rgba(0,0,0,0.3); color: #8ec5ff; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 @media (max-width: 1200px) { .grid3 { grid-template-columns: 1fr; } }
+.tag { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 11px; }
+tbody tr.in { background: rgba(254,202,87,0.07); }
+.scroll { max-height: 420px; overflow-y: auto; border: 1px solid rgba(120,180,255,0.1); border-radius: 6px; }
+.scroll thead th { position: sticky; top: 0; z-index: 2; }
 .bk { display: flex; gap: 10px; flex-wrap: wrap; }
 .bk-item { background: rgba(0,0,0,0.25); border-radius: 6px; padding: 8px 14px; text-align: center; min-width: 110px; }
 .bk-item .t { font-size: 12px; margin-bottom: 4px; }
@@ -12348,6 +12371,19 @@ button:hover { background: #1177bb; }
         <h3>❄️ 冷号榜 TOP20（出现次数最少）</h3>
         <table><thead><tr><th>#</th><th>号码</th><th>出现次数</th><th>出现率</th><th>Z 值</th><th>当前遗漏</th></tr></thead><tbody id="coldBody"></tbody></table>
     </div>
+</div>
+
+<div class="panel">
+    <h3>🧾 全号码归属总表（80 号 · 各号属于哪个榜、榜内第几名）</h3>
+    <div id="ownInfo" style="color:#aaa;font-size:12px;margin-bottom:8px;"></div>
+    <div class="scroll">
+        <table>
+            <thead><tr><th>号码</th><th>温度档</th><th>归属榜</th><th>榜内名次</th><th>出现次数</th><th>偏离理论</th><th>Z 值</th><th>当前遗漏</th><th>历史最大遗漏</th></tr></thead>
+            <tbody id="ownBody"></tbody>
+        </table>
+    </div>
+    <div class="note">归属规则：<b style="color:#ff9b91;">很热/热 → 热号榜</b>（按出现次数降序排名） · <b style="color:#feca57;">温 → 温号榜</b>（按 |Z| 升序排名） · <b style="color:#9fd0f0;">冷/很冷 → 冷号榜</b>（按出现次数升序排名） ·
+    黄色底行 = 进入该榜 TOP20；名次「—」表示该号在其归属榜中排在 20 名之外。</div>
 </div>
 
 <div class="panel">
@@ -12426,14 +12462,16 @@ var BLABEL={veryHot:'很热 Z≥1',hot:'热 0.5~1',warm:'温 -0.5~0.5',cold:'冷
 document.getElementById('meta').innerHTML =
     '统计区间：<b>'+esc(D.firstPeriod)+'</b> → <b>'+esc(D.lastPeriod)+'</b>（旧→新） · 共 <b>'+D.N+'</b> 期 · 总出号 <b>'+(D.N*20)+'</b> 个<br>' +
     '每号理论出现 <b>'+D.exp+'</b> 次（出现率 25%） · 标准差 <b>'+D.sd+'</b> 次';
-// 温度盘
+var OWNSHORT={hot:'热',warm:'温',cold:'冷'};
+// 温度盘：格子内加「归属榜 + 榜内名次」角标（未入 TOP20 只显示档位）
 var gh='';
 for(var zi=0;zi<8;zi++){
     gh+='<div class="zone-row"><span class="zone-name">'+(zi+1)+'区 '+(zi*10+1)+'-'+((zi+1)*10)+'</span>';
     for(var k=0;k<10;k++){
         var s=D.stats[zi*10+k];
-        gh+='<div class="cell '+BCLS[s.b]+'" title="'+pad2(s.n)+' 号：出现 '+s.c+' 次（'+s.rate+'%，Z='+s.z+'）&#10;当前遗漏 '+s.miss+' 期 · 历史最大遗漏 '+s.maxMiss+' 期&#10;上次出现 '+s.last+' · 首次出现 '+s.first+'">'
-            + pad2(s.n) + '<span class="c">'+s.c+'</span><span class="z">Z '+s.z+'</span></div>';
+        gh+='<div class="cell '+BCLS[s.b]+'" title="'+pad2(s.n)+' 号：出现 '+s.c+' 次（'+s.rate+'%，Z='+s.z+'）&#10;当前遗漏 '+s.miss+' 期 · 历史最大遗漏 '+s.maxMiss+' 期&#10;上次出现 '+s.last+' · 首次出现 '+s.first+'&#10;归属：'+s.ownCn+' '+(s.ownIn?('第 '+s.ownRank+' 名'):'未入 TOP20')+'">'
+            + pad2(s.n) + '<span class="c">'+s.c+'</span><span class="z">Z '+s.z+'</span>'
+            + '<span class="o">'+OWNSHORT[s.own]+(s.ownIn?('#'+s.ownRank):'')+'</span></div>';
     }
     gh+='</div>';
 }
@@ -12456,6 +12494,22 @@ D.warmTop.forEach(function(s,i){
 });
 document.getElementById('warmBody').innerHTML=wh;
 document.getElementById('coldBody').innerHTML=rowsHtml(D.coldTop,false);
+// 全号码归属总表（80 号）
+var oh='', inCnt={hot:0,warm:0,cold:0}, ownCnt={hot:0,warm:0,cold:0};
+D.stats.forEach(function(s){
+    ownCnt[s.own]++; if(s.ownIn)inCnt[s.own]++;
+    var rankTxt=s.ownIn?('#'+s.ownRank):'—';
+    var diff=s.c-D.exp;
+    oh+='<tr'+(s.ownIn?' class="in"':'')+'><td><span class="'+zc(s.n)+'">'+pad2(s.n)+'</span></td>'
+      +'<td><span class="tag '+BCLS[s.b]+'">'+BLABEL[s.b]+'</span></td>'
+      +'<td>'+s.ownCn+'</td>'
+      +'<td><b style="color:'+(s.ownIn?'#feca57':'#666')+';">'+rankTxt+'</b></td>'
+      +'<td>'+s.c+'</td><td>'+(diff>=0?'+':'')+diff.toFixed(0)+'</td><td>'+s.z+'</td><td>'+s.miss+'</td><td>'+s.maxMiss+'</td></tr>';
+});
+document.getElementById('ownBody').innerHTML=oh;
+document.getElementById('ownInfo').innerHTML='热号榜 '+ownCnt.hot+' 个号（其中 TOP20 '+inCnt.hot+' 个） · '
+    +'温号榜 '+ownCnt.warm+' 个号（TOP20 '+inCnt.warm+' 个） · '
+    +'冷号榜 '+ownCnt.cold+' 个号（TOP20 '+inCnt.cold+' 个） · 合计 '+D.stats.length+' 个号';
 var mh='';
 D.missTop.forEach(function(s,i){
     mh+='<tr><td>'+(i+1)+'</td><td><span class="'+zc(s.n)+'">'+pad2(s.n)+'</span></td><td><b style="color:#feca57;">'+s.miss+'</b></td><td>'+s.maxMiss+'</td><td>'+s.c+'</td><td>'+s.z+'</td><td>'+esc(s.last)+'</td></tr>';
