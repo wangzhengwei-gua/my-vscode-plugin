@@ -12348,6 +12348,12 @@ tbody tr.in { background: rgba(254,202,87,0.07); }
 .axis { display: flex; justify-content: space-between; color: #666; font-size: 11px; margin-top: 4px; }
 .avg { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: #aaa; margin-top: 8px; }
 .avg b { color: #feca57; }
+.fc-bar { display: flex; height: 36px; border-radius: 6px; overflow: hidden; margin: 10px 0 6px; border: 1px solid rgba(255,255,255,0.12); }
+.fc-bar div { display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.55); }
+.fc-num { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: #ddd; margin-bottom: 6px; }
+.fc-int { font-size: 12px; color: #aaa; margin: 6px 0 10px; }
+.fc-int b { color: #feca57; }
+.good { color: #2ecc71; } .bad { color: #e74c3c; }
 .bk { display: flex; gap: 10px; flex-wrap: wrap; }
 .bk-item { background: rgba(0,0,0,0.25); border-radius: 6px; padding: 8px 14px; text-align: center; min-width: 110px; }
 .bk-item .t { font-size: 12px; margin-bottom: 4px; }
@@ -12442,6 +12448,20 @@ button:hover { background: #1177bb; }
     <div class="note">温度归属用<b>全量历史 Z</b> 判定（与该号在总榜中的档位一致）；柱高 = 该档个数 ÷ 20。
     随机基准：每期 20 个号里各档个数的期望值 = 20 × 该档在总榜中的占比，即 热 <b>${(20 * (bucket.veryHot + bucket.hot) / 80).toFixed(1)}</b> 个 / 温 <b>${(20 * bucket.warm / 80).toFixed(1)}</b> 个 / 冷 <b>${(20 * (bucket.cold + bucket.veryCold) / 80).toFixed(1)}</b> 个
     （总榜占比 热 ${((bucket.veryHot + bucket.hot) / 80 * 100).toFixed(1)}％ / 温 ${(bucket.warm / 80 * 100).toFixed(1)}％ / 冷 ${((bucket.cold + bucket.veryCold) / 80 * 100).toFixed(1)}％），实测围绕该值上下波动属正常。</div>
+</div>
+
+<div class="panel">
+    <h3>🔮 下一期热温冷占比 · 智能预测</h3>
+    <div class="ctrl" style="margin-bottom:2px;">
+        <span class="lb" style="color:#aaa;">模型：长期基准（总榜占比） + 近期趋势（指数加权） + 动量修正（一阶自相关 ρ）→ 归一化到 20 个号</span>
+    </div>
+    <div class="fc-bar" id="fcBar"></div>
+    <div class="fc-num" id="fcNum"></div>
+    <div class="fc-int" id="fcInt"></div>
+    <table style="margin-top:4px;"><thead><tr><th>档位</th><th>长期基准</th><th>近期趋势(指数加权)</th><th>自相关 ρ</th><th>趋势贡献</th><th>动量贡献</th><th>预测个数</th></tr></thead><tbody id="fcBody"></tbody></table>
+    <div class="avg" id="fcBt"></div>
+    <div class="note">⚠️ 快乐8 每期独立随机，理论上<b>最优无偏预测就是「长期基准」</b>。上面的模型额外纳入了近期趋势与动量，
+    下方回测会把它与「恒用基准」逐步对比——若提升不明显或为负，说明近期波动只是随机噪声，基准更可靠。</div>
 </div>
 
 <div class="panel">
@@ -12565,6 +12585,100 @@ document.getElementById('ownInfo').innerHTML='热号榜 '+ownCnt.hot+' 个号（
     +'冷号榜 '+ownCnt.cold+' 个号（TOP20 '+inCnt.cold+' 个） · 合计 '+D.stats.length+' 个号';
 
 // ============ 最近 N 期热温冷占比（堆叠柱图） ============
+var FCKEYS=['h','w','c'];                       // 与 D.recent 的字段名一致（h=热 w=温 c=冷）
+var FCNAME={h:'热',w:'温',c:'冷'};
+var curArr=null;   // 当前图表所用的近期数据（与柱图同步）
+function baseMix(){
+    var tot=D.bucket.veryHot+D.bucket.hot+D.bucket.warm+D.bucket.cold+D.bucket.veryCold;
+    return {h:20*(D.bucket.veryHot+D.bucket.hot)/tot, w:20*D.bucket.warm/tot, c:20*(D.bucket.cold+D.bucket.veryCold)/tot};
+}
+function seqStats(seq,k){ // 均值 + 一阶自相关
+    var n=seq.length,i,s=0;
+    for(i=0;i<n;i++)s+=seq[i][k];
+    var mu=s/n, num=0, den=0;
+    for(i=1;i<n;i++)num+=(seq[i][k]-mu)*(seq[i-1][k]-mu);
+    for(i=0;i<n;i++)den+=(seq[i][k]-mu)*(seq[i][k]-mu);
+    return {mu:mu, rho:den>0?num/den:0};
+}
+function ewmaOf(seq,k,lam){ // 指数加权均值（近期权重大）
+    var sw=0,w=0,p=1,i;
+    for(i=seq.length-1;i>=0;i--){ sw+=seq[i][k]*p; w+=p; p*=lam; }
+    return sw/w;
+}
+function forecastOne(seq){
+    var base=baseMix(), out={}, parts={};
+    var lam=Math.pow(0.5, 1/Math.max(3, Math.round(seq.length/3))); // 半衰期 ≈ 样本长度/3
+    FCKEYS.forEach(function(k){
+        var st=seqStats(seq,k), ew=ewmaOf(seq,k,lam), last=seq[seq.length-1][k];
+        var drift=ew-base[k], mom=st.rho*(last-base[k]);
+        out[k]=base[k]+0.5*drift+0.5*mom;
+        parts[k]={base:base[k], ew:ew, rho:st.rho, drift:0.5*drift, mom:0.5*mom, last:last};
+    });
+    var sum=0;
+    FCKEYS.forEach(function(k){ out[k]=Math.max(0,out[k]); sum+=out[k]; });
+    FCKEYS.forEach(function(k){ out[k]=out[k]*20/sum; }); // 三档归一化，合计恒为 20
+    return {pred:out, parts:parts, base:base};
+}
+function roundTo20(p){ // 取整建议（最大余数法，保证合计 20）
+    var raw=FCKEYS.map(function(k){return p[k];}), bs=raw.map(function(v){return Math.floor(v);});
+    var rest=20-bs[0]-bs[1]-bs[2];
+    var order=[0,1,2].sort(function(a,b){return (raw[b]-bs[b])-(raw[a]-bs[a]);});
+    for(var i=0;rest>0;i++,rest--)bs[order[i%3]]++;
+    return {h:bs[0], w:bs[1], c:bs[2]};
+}
+function backtest(arr){ // 逐步回测：用前 t 期预测第 t+1 期
+    var base=baseMix(), em=[], eb=[], es=[];
+    for(var t=10;t<arr.length;t++){
+        var f=forecastOne(arr.slice(0,t));
+        FCKEYS.forEach(function(k){
+            var e=f.pred[k]-arr[t][k];
+            em.push(Math.abs(e)); es.push(e*e); eb.push(Math.abs(base[k]-arr[t][k]));
+        });
+    }
+    if(!em.length)return null;
+    var mean=function(a){var s=0;for(var i=0;i<a.length;i++)s+=a[i];return s/a.length;};
+    return {mae:mean(em), maeBase:mean(eb), rmse:Math.sqrt(mean(es)), n:em.length/3};
+}
+function renderForecast(){
+    var arr=curArr;
+    if(!arr||arr.length<3){document.getElementById('fcBt').innerHTML='<span style="color:#888;">样本不足，无法预测</span>';return;}
+    var f=forecastOne(arr), bt=backtest(arr);
+    var cls={h:'s-hot',w:'s-warm',c:'s-cold'};
+    var col={h:'#ff9b91',w:'#feca57',c:'#9fd0f0'};
+    var nh='';
+    FCKEYS.forEach(function(k){
+        var v=f.pred[k], pc=v/20*100;
+        nh+='<span style="color:'+col[k]+';">'+FCNAME[k]+' <b style="color:'+col[k]+';">'+v.toFixed(2)+'</b> 个（'+pc.toFixed(1)+'％）'
+           +(bt?(' ± '+(1.96*bt.rmse).toFixed(1)):'')+'</span>';
+    });
+    // fcBar 用带底色的段（复用 chart 段配色）
+    var barHtml='';
+    FCKEYS.forEach(function(k){
+        var pc=f.pred[k]/20*100;
+        barHtml+='<div class="seg '+cls[k]+'" style="width:'+pc.toFixed(2)+'%;">'+FCNAME[k]+' '+f.pred[k].toFixed(1)+'（'+pc.toFixed(1)+'％）</div>';
+    });
+    document.getElementById('fcBar').innerHTML=barHtml;
+    document.getElementById('fcNum').innerHTML=nh;
+    var ri=roundTo20(f.pred);
+    document.getElementById('fcInt').innerHTML='取整建议（合计 20 个号）：<b>热 '+ri.h+'</b> · <b>温 '+ri.w+'</b> · <b>冷 '+ri.c+'</b>'
+        +' &nbsp;｜&nbsp; 上期实际：热 '+f.parts.h.last+' · 温 '+f.parts.w.last+' · 冷 '+f.parts.c.last;
+    var tb='';
+    FCKEYS.forEach(function(k){
+        var p=f.parts[k];
+        tb+='<tr><td><b style="color:'+col[k]+';">'+FCNAME[k]+'</b></td><td>'+p.base.toFixed(2)+'</td><td>'+p.ew.toFixed(2)+'</td>'
+          +'<td>'+p.rho.toFixed(3)+'</td><td>'+(p.drift>=0?'+':'')+p.drift.toFixed(2)+'</td><td>'+(p.mom>=0?'+':'')+p.mom.toFixed(2)+'</td>'
+          +'<td><b style="color:#feca57;">'+f.pred[k].toFixed(2)+'</b></td></tr>';
+    });
+    document.getElementById('fcBody').innerHTML=tb;
+    if(!bt){ document.getElementById('fcBt').innerHTML='<span style="color:#888;">样本不足，无法回测（需 &gt;10 期）</span>'; return; }
+    var diff=(bt.maeBase-bt.mae)/bt.maeBase*100;
+    var verdict = diff>1 ? '<span class="good">模型略优于基准 '+diff.toFixed(1)+'％</span>'
+                : (diff<-1 ? '<span class="bad">模型不如基准 '+Math.abs(diff).toFixed(1)+'％ → 建议直接用基准</span>'
+                           : '<span style="color:#feca57;">与基准基本持平（差异 '+diff.toFixed(1)+'％）→ 近期波动属随机噪声</span>');
+    document.getElementById('fcBt').innerHTML=
+        '逐步回测（最近 '+bt.n+' 期，用前面的期预测下一期）：模型 MAE <b>'+bt.mae.toFixed(2)+'</b> 个/档 · '
+      + '恒用基准 MAE <b>'+bt.maeBase.toFixed(2)+'</b> 个/档 · RMSE <b>'+bt.rmse.toFixed(2)+'</b> → '+verdict;
+}
 function renderChart(){
     var maxLen=D.recent.length;
     var n=parseInt(document.getElementById('inRecent').value,10)||50;
@@ -12593,6 +12707,8 @@ function renderChart(){
       + '单期极值：热 '+Math.max.apply(null,arr.map(function(r){return r.h;}))+'~'+Math.min.apply(null,arr.map(function(r){return r.h;}))
       + ' · 温 '+Math.max.apply(null,arr.map(function(r){return r.w;}))+'~'+Math.min.apply(null,arr.map(function(r){return r.w;}))
       + ' · 冷 '+Math.max.apply(null,arr.map(function(r){return r.c;}))+'~'+Math.min.apply(null,arr.map(function(r){return r.c;}));
+    curArr=arr;
+    renderForecast();
 }
 renderChart();
 var mh='';
