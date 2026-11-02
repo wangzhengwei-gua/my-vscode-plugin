@@ -12354,6 +12354,13 @@ tbody tr.in { background: rgba(254,202,87,0.07); }
 .fc-int { font-size: 12px; color: #aaa; margin: 6px 0 10px; }
 .fc-int b { color: #feca57; }
 .good { color: #2ecc71; } .bad { color: #e74c3c; }
+.ball.tb { width: 28px; min-width: 28px; height: 24px; line-height: 22px; font-size: 11px; margin: 1px; }
+.tb.vhot { background: linear-gradient(135deg,#c0392b,#e74c3c); }
+.tb.hot { background: rgba(231,76,60,0.5); border: 1px solid rgba(231,76,60,0.85); color: #ffd5d0; }
+.tb.warm { background: rgba(254,202,87,0.32); border: 1px solid rgba(254,202,87,0.7); color: #ffe9a8; }
+.tb.cold { background: rgba(52,152,219,0.35); border: 1px solid rgba(52,152,219,0.8); color: #cfe9fb; }
+.tb.vcold { background: linear-gradient(135deg,#1f618d,#2980b9); }
+.tb.rp { outline: 2px solid #fff; outline-offset: -2px; }
 .bk { display: flex; gap: 10px; flex-wrap: wrap; }
 .bk-item { background: rgba(0,0,0,0.25); border-radius: 6px; padding: 8px 14px; text-align: center; min-width: 110px; }
 .bk-item .t { font-size: 12px; margin-bottom: 4px; }
@@ -12462,6 +12469,38 @@ button:hover { background: #1177bb; }
     <div class="avg" id="fcBt"></div>
     <div class="note">⚠️ 快乐8 每期独立随机，理论上<b>最优无偏预测就是「长期基准」</b>。上面的模型额外纳入了近期趋势与动量，
     下方回测会把它与「恒用基准」逐步对比——若提升不明显或为负，说明近期波动只是随机噪声，基准更可靠。</div>
+</div>
+
+<div class="panel">
+    <h3>🧩 近 N 期号码温度明细（每期哪些号是热 / 温 / 冷）</h3>
+    <div class="ctrl">
+        <span class="lb">最近</span>
+        <select id="inDetail">
+            <option value="10">10 期</option>
+            <option value="20" selected>20 期</option>
+            <option value="30">30 期</option>
+            <option value="50">50 期</option>
+            <option value="100">100 期</option>
+            <option value="200">200 期</option>
+        </select>
+        <span class="legend" style="margin:0;">
+            <span><span class="ball tb vhot">01</span>很热</span>
+            <span><span class="ball tb hot">02</span>热</span>
+            <span><span class="ball tb warm">03</span>温</span>
+            <span><span class="ball tb cold">04</span>冷</span>
+            <span><span class="ball tb vcold">05</span>很冷</span>
+            <span><span class="ball tb warm rp">06</span>白框 = 与上期重号</span>
+        </span>
+    </div>
+    <div class="scroll">
+        <table>
+            <thead><tr><th style="width:92px;">期号</th><th>开奖号码（按号码升序 · 颜色 = 该号在总榜中的温度）</th><th style="width:46px;">热</th><th style="width:46px;">温</th><th style="width:46px;">冷</th></tr></thead>
+            <tbody id="detailBody"></tbody>
+        </table>
+    </div>
+    <div class="avg" id="detailInfo"></div>
+    <div class="note">号码球颜色 = 该号在<b>全量历史总榜</b>中的温度档（与该号归属哪个榜一致）；白框 = 与上期开出相同的号码（重号）。
+    每行右侧为本期热 / 温 / 冷个数（对应上方柱图的那根柱）。</div>
 </div>
 
 <div class="panel">
@@ -12711,6 +12750,41 @@ function renderChart(){
     renderForecast();
 }
 renderChart();
+
+// ============ 近 N 期号码温度明细 ============
+var BMAP=null, ZMAP=null, BCN={veryHot:'很热',hot:'热',warm:'温',cold:'冷',veryCold:'很冷'};
+function renderDetail(){
+    var n=parseInt(document.getElementById('inDetail').value,10)||20;
+    var arr=D.recent.slice(-n);
+    if(!BMAP){
+        BMAP={}; ZMAP={};
+        D.stats.forEach(function(s){ BMAP[s.n]=s.b; ZMAP[s.n]=s.z; });
+    }
+    var h='', th=0, tw=0, tc=0, rep=0;
+    for(var i=0;i<arr.length;i++){
+        var r=arr[i], prev=(i>0?arr[i-1]:null), ps={};
+        if(prev) prev.n.forEach(function(x){ ps[x]=1; });
+        var nums=r.n.slice().sort(function(a,b){ return a-b; });
+        h+='<tr><td>'+esc(r.p)+'</td><td style="text-align:left;">';
+        nums.forEach(function(x){
+            var b=BMAP[x]||'warm', isRp=ps[x]?1:0;
+            if(isRp)rep++;
+            h+='<span class="ball tb '+BCLS[b]+(isRp?' rp':'')+'" title="'+pad2(x)+' 号 · '+BCN[b]+'（Z '+ZMAP[x]+'）'
+              +'&#10;全量出现 '+D.stats[x-1].c+' 次 · 当前遗漏 '+D.stats[x-1].miss+' 期'+(isRp?'&#10;✔ 与上期重号':'')+'">'+pad2(x)+'</span>';
+        });
+        h+='</td><td style="color:#ff9b91;"><b>'+r.h+'</b></td><td style="color:#feca57;"><b>'+r.w+'</b></td><td style="color:#9fd0f0;"><b>'+r.c+'</b></td></tr>';
+        th+=r.h; tw+=r.w; tc+=r.c;
+    }
+    document.getElementById('detailBody').innerHTML=h;
+    var tot=th+tw+tc, m=arr.length;
+    document.getElementById('detailInfo').innerHTML=
+        '近 <b>'+m+'</b> 期共 <b>'+tot+'</b> 个出号：'
+      + '<span style="color:#ff9b91;">热 <b>'+th+'</b> 次（'+(th/tot*100).toFixed(1)+'％）</span> · '
+      + '<span style="color:#feca57;">温 <b>'+tw+'</b> 次（'+(tw/tot*100).toFixed(1)+'％）</span> · '
+      + '<span style="color:#9fd0f0;">冷 <b>'+tc+'</b> 次（'+(tc/tot*100).toFixed(1)+'％）</span> · '
+      + '与上期重号共 <b>'+rep+'</b> 个（平均 '+(m>1?(rep/(m-1)).toFixed(2):'0')+' 个/期，随机期望 5 个）';
+}
+renderDetail();
 var mh='';
 D.missTop.forEach(function(s,i){
     mh+='<tr><td>'+(i+1)+'</td><td><span class="'+zc(s.n)+'">'+pad2(s.n)+'</span></td><td><b style="color:#feca57;">'+s.miss+'</b></td><td>'+s.maxMiss+'</td><td>'+s.c+'</td><td>'+s.z+'</td><td>'+esc(s.last)+'</td></tr>';
@@ -12952,6 +13026,7 @@ try{
     });
     document.getElementById('inMult').addEventListener('change',function(){renderPick();});
     document.getElementById('inRecent').addEventListener('change',renderChart);
+    document.getElementById('inDetail').addEventListener('change',renderDetail);
     applyMix();
     renderPick();
 }catch(err){
