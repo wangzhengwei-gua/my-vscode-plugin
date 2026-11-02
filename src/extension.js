@@ -12399,6 +12399,38 @@ button:hover { background: #1177bb; }
 </div>
 
 <div class="panel">
+    <h3>🧩 近 N 期号码温度明细（每期哪些号是热 / 温 / 冷）</h3>
+    <div class="ctrl">
+        <span class="lb">最近</span>
+        <select id="inDetail">
+            <option value="10">10 期</option>
+            <option value="20" selected>20 期</option>
+            <option value="30">30 期</option>
+            <option value="50">50 期</option>
+            <option value="100">100 期</option>
+            <option value="200">200 期</option>
+        </select>
+        <span class="legend" style="margin:0;">
+            <span><span class="ball tb vhot">01</span>很热</span>
+            <span><span class="ball tb hot">02</span>热</span>
+            <span><span class="ball tb warm">03</span>温</span>
+            <span><span class="ball tb cold">04</span>冷</span>
+            <span><span class="ball tb vcold">05</span>很冷</span>
+            <span><span class="ball tb warm rp">06</span>白框 = 与上期重号</span>
+        </span>
+    </div>
+    <div class="scroll">
+        <table>
+            <thead><tr><th style="width:92px;">期号</th><th>开奖号码（按号码升序 · 颜色 = 该号在总榜中的温度）</th><th style="width:46px;">热</th><th style="width:46px;">温</th><th style="width:46px;">冷</th></tr></thead>
+            <tbody id="detailBody"></tbody>
+        </table>
+    </div>
+    <div class="avg" id="detailInfo"></div>
+    <div class="note">号码球颜色 = 该号在<b>全量历史总榜</b>中的温度档（与该号归属哪个榜一致）；白框 = 与上期开出相同的号码（重号）。
+    每行右侧为本期热 / 温 / 冷个数（对应下方柱图的那根柱）。</div>
+</div>
+
+<div class="panel">
     <h3>📉 最近 N 期开奖的热温冷占比</h3>
     <div class="ctrl">
         <span class="lb">最近</span>
@@ -12469,38 +12501,6 @@ button:hover { background: #1177bb; }
 <div class="panel">
     <h3>⏳ 当前遗漏榜 TOP20（最久没出现）</h3>
     <table><thead><tr><th>#</th><th>号码</th><th>当前遗漏(期)</th><th>历史最大遗漏</th><th>出现次数</th><th>Z 值</th><th>上次出现期号</th></tr></thead><tbody id="missBody"></tbody></table>
-</div>
-
-<div class="panel">
-    <h3>🧩 近 N 期号码温度明细（每期哪些号是热 / 温 / 冷）</h3>
-    <div class="ctrl">
-        <span class="lb">最近</span>
-        <select id="inDetail">
-            <option value="10">10 期</option>
-            <option value="20" selected>20 期</option>
-            <option value="30">30 期</option>
-            <option value="50">50 期</option>
-            <option value="100">100 期</option>
-            <option value="200">200 期</option>
-        </select>
-        <span class="legend" style="margin:0;">
-            <span><span class="ball tb vhot">01</span>很热</span>
-            <span><span class="ball tb hot">02</span>热</span>
-            <span><span class="ball tb warm">03</span>温</span>
-            <span><span class="ball tb cold">04</span>冷</span>
-            <span><span class="ball tb vcold">05</span>很冷</span>
-            <span><span class="ball tb warm rp">06</span>白框 = 与上期重号</span>
-        </span>
-    </div>
-    <div class="scroll">
-        <table>
-            <thead><tr><th style="width:92px;">期号</th><th>开奖号码（按号码升序 · 颜色 = 该号在总榜中的温度）</th><th style="width:46px;">热</th><th style="width:46px;">温</th><th style="width:46px;">冷</th></tr></thead>
-            <tbody id="detailBody"></tbody>
-        </table>
-    </div>
-    <div class="avg" id="detailInfo"></div>
-    <div class="note">号码球颜色 = 该号在<b>全量历史总榜</b>中的温度档（与该号归属哪个榜一致）；白框 = 与上期开出相同的号码（重号）。
-    每行右侧为本期热 / 温 / 冷个数（对应上方柱图的那根柱）。</div>
 </div>
 
 <div class="panel">
