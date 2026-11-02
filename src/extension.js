@@ -12240,6 +12240,8 @@ function getKl8AllHotColdHtml(history) {
     const byCntDesc = stats.slice().sort((a, b) => b.c - a.c);
     const byCntAsc = stats.slice().sort((a, b) => a.c - b.c);
     const byMissDesc = stats.slice().sort((a, b) => b.miss - a.miss);
+    // 温号榜：温号池（-0.5<Z<0.5）内按 |Z| 升序 → 越靠前越接近理论出现次数
+    const byWarmAsc = stats.filter(s => s.b === 'warm').sort((a, b) => Math.abs(a.z) - Math.abs(b.z));
 
     const dataJson = JSON.stringify({
         N: N,
@@ -12251,6 +12253,7 @@ function getKl8AllHotColdHtml(history) {
         firstPeriod: history[0] ? history[0].period : '-',
         stats: stats,
         hotTop: byCntDesc.slice(0, 20),
+        warmTop: byWarmAsc.slice(0, 20),
         coldTop: byCntAsc.slice(0, 20),
         missTop: byMissDesc.slice(0, 20),
         bucket: bucket
@@ -12293,6 +12296,8 @@ th { background: rgba(0,0,0,0.3); color: #8ec5ff; }
 .zc6 { background: linear-gradient(135deg,#d35400,#e67e22); }
 .zc7 { background: linear-gradient(135deg,#7f8c8d,#95a5a6); }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+@media (max-width: 1200px) { .grid3 { grid-template-columns: 1fr; } }
 .bk { display: flex; gap: 10px; flex-wrap: wrap; }
 .bk-item { background: rgba(0,0,0,0.25); border-radius: 6px; padding: 8px 14px; text-align: center; min-width: 110px; }
 .bk-item .t { font-size: 12px; margin-bottom: 4px; }
@@ -12330,10 +12335,14 @@ button:hover { background: #1177bb; }
     <div class="note">鼠标悬停格子可看详情（出现率、当前遗漏、历史最大遗漏、上次出现期号）。</div>
 </div>
 
-<div class="grid2">
+<div class="grid3">
     <div class="panel">
         <h3>🔥 热号榜 TOP20（出现次数最多）</h3>
         <table><thead><tr><th>#</th><th>号码</th><th>出现次数</th><th>出现率</th><th>Z 值</th><th>当前遗漏</th></tr></thead><tbody id="hotBody"></tbody></table>
+    </div>
+    <div class="panel">
+        <h3>🌤 温号榜 TOP20（最接近理论值 · |Z| 最小）</h3>
+        <table><thead><tr><th>#</th><th>号码</th><th>出现次数</th><th>偏离理论</th><th>Z 值</th><th>当前遗漏</th></tr></thead><tbody id="warmBody"></tbody></table>
     </div>
     <div class="panel">
         <h3>❄️ 冷号榜 TOP20（出现次数最少）</h3>
@@ -12438,6 +12447,14 @@ function rowsHtml(arr, extra){
     return h;
 }
 document.getElementById('hotBody').innerHTML=rowsHtml(D.hotTop,false);
+// 温号榜：显示「偏离理论次数」= 实际出现次数 - 理论次数（越接近 0 越温）
+var wh='';
+D.warmTop.forEach(function(s,i){
+    var diff=s.c-D.exp;
+    wh+='<tr><td>'+(i+1)+'</td><td><span class="'+zc(s.n)+'">'+pad2(s.n)+'</span></td><td>'+s.c+'</td>'
+      +'<td>'+(diff>=0?'+':'')+diff.toFixed(0)+'</td><td>'+s.z+'</td><td>'+s.miss+'</td></tr>';
+});
+document.getElementById('warmBody').innerHTML=wh;
 document.getElementById('coldBody').innerHTML=rowsHtml(D.coldTop,false);
 var mh='';
 D.missTop.forEach(function(s,i){
