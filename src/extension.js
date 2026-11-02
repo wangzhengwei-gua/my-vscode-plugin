@@ -12427,7 +12427,7 @@ button:hover { background: #1177bb; }
     </div>
     <div class="avg" id="detailInfo"></div>
     <div class="note">号码球颜色 = 该号在<b>全量历史总榜</b>中的温度档（与该号归属哪个榜一致）；白框 = 与上期开出相同的号码（重号）。
-    每行右侧为本期热 / 温 / 冷个数（对应下方柱图的那根柱）。</div>
+    <b>最新一期在最上方</b>（黄色底行，标「最新」），往下依次是更早的期；每行右侧为本期热 / 温 / 冷个数（对应下方柱图的那根柱）。</div>
 </div>
 
 <div class="panel">
@@ -12761,11 +12761,14 @@ function renderDetail(){
         D.stats.forEach(function(s){ BMAP[s.n]=s.b; ZMAP[s.n]=s.z; });
     }
     var h='', th=0, tw=0, tc=0, rep=0;
-    for(var i=0;i<arr.length;i++){
-        var r=arr[i], prev=(i>0?arr[i-1]:null), ps={};
+    // 倒序渲染：最新一期在最上方（arr 仍是时间正序，重号仍与「时间上的前一期」比对）
+    for(var k=arr.length-1;k>=0;k--){
+        var r=arr[k], prev=(k>0?arr[k-1]:null), ps={};
         if(prev) prev.n.forEach(function(x){ ps[x]=1; });
         var nums=r.n.slice().sort(function(a,b){ return a-b; });
-        h+='<tr><td>'+esc(r.p)+'</td><td style="text-align:left;">';
+        var isNew=(k===arr.length-1);
+        h+='<tr'+(isNew?' style="background:rgba(254,202,87,0.07);"':'')+'><td>'+esc(r.p)
+          +(isNew?' <span style="color:#feca57;font-size:11px;">最新</span>':'')+'</td><td style="text-align:left;">';
         nums.forEach(function(x){
             var b=BMAP[x]||'warm', isRp=ps[x]?1:0;
             if(isRp)rep++;
