@@ -11526,6 +11526,20 @@ th { background: #2d2d30; color: #8ec5ff; }
 </div>
 
 <div class="panel">
+    <h3>🔍 历史相似期追溯（按红球重叠个数找相似期 → 看其下一期开什么）</h3>
+    <div class="ctrl">
+        <label>${cfg.frontName}重叠 ≥</label>
+        <select id="inSim">
+            <option value="2">2 个</option>
+            <option value="3" selected>3 个</option>
+            <option value="4">4 个</option>
+        </select>
+        <span class="sub" id="sSim"></span>
+    </div>
+    <div id="simBox"></div>
+</div>
+
+<div class="panel">
     <h3>📊 回测表现（近 20 期模拟）</h3>
     <div class="sub" id="sBack"></div>
     <div id="backBox"></div>
@@ -11927,6 +11941,72 @@ function render(){
     document.getElementById('sTrend').innerHTML='最近 '+tn+' 期开奖记录（'+FNAME+'跨度 = 最大−最小，'+FNAME+'和值 = '+FPICK+' 码之和）与号码热度条。';
 
     document.getElementById('status').textContent='已生成推荐 ✓';
+    renderSim();
+}
+
+// ============ 🔍 历史相似期追溯：以最新一期红球为种子，找窗口内红球重叠 ≥K 的期，看其下一期 ============
+function renderSim(){
+    var box=document.getElementById('simBox'); if(!box) return;
+    var sSim=document.getElementById('sSim');
+    var K=parseInt(document.getElementById('inSim').value,10)||3;
+    var g=parseInt(document.getElementById('selGap').value,10)||1;
+    // 相似期追溯查全量历史（不受「统计期数」窗口限制）
+    var fL=FR, bL=BK, pL=PERIODS;
+    var seedF=fL[fL.length-1]||[], seedB=bL[bL.length-1]||[];
+    var hits=[];
+    for(var i=0;i<fL.length-1;i++){
+        var a=fL[i]||[]; var ov=0;
+        for(var s=0;s<seedF.length;s++) if(a.indexOf(seedF[s])>=0) ov++;
+        if(ov<K) continue;
+        var ni=i+g; if(ni>=fL.length) continue;
+        hits.push({hp:pL[i],red:a,blue:bL[i]||[],ov:ov,np:pL[ni],nr:fL[ni]||[],nb:bL[ni]||[]});
+    }
+    hits.sort(function(a,b){ return b.ov-a.ov; });
+    if(!hits.length){
+        box.innerHTML='<div class="sub">窗口内没有 '+FNAME+' 重叠 ≥'+K+' 个的历史期，试试降低阈值或扩大统计期数。</div>';
+        if(sSim) sSim.textContent='';
+        return;
+    }
+    var seedSort=seedF.slice().sort(function(x,y){return x-y;});
+    var h='<div class="stat">以最新一期 <b>'+esc(pL[pL.length-1]||'')+'</b> 的 '+FNAME+' '+ballsHtml(seedSort)+' 为种子，窗口内 '+fL.length+
+          ' 期里找到 <b style="color:#feca57;">'+hits.length+'</b> 个相似期（'+FNAME+'重叠 ≥'+K+' 个）。下表为这些相似期及其「下一期（隔'+(g-1)+'期）」开奖号码：</div>';
+    h+='<table><thead><tr><th>#</th><th>相似期号</th><th>该期'+FNAME+'</th><th>'+BNAME+'</th><th>重叠</th><th>下一期号</th><th>下一期'+FNAME+'</th><th>'+BNAME+'</th></tr></thead><tbody>';
+    hits.slice(0,30).forEach(function(r,idx){
+        h+='<tr><td>'+(idx+1)+'</td><td>'+esc(r.hp)+'</td><td>'+ballsHtml(r.red.slice().sort(function(x,y){return x-y;}))+'</td><td>'+ballsHtml(r.blue)+'</td>'
+          +'<td><b style="color:'+(r.ov>=4?'#e74c3c':'#feca57')+';">'+r.ov+'</b></td>'
+          +'<td>'+esc(r.np)+'</td><td>'+ballsHtml(r.nr.slice().sort(function(x,y){return x-y;}))+'</td><td>'+ballsHtml(r.nb)+'</td></tr>';
+    });
+    h+='</tbody></table>';
+    if(hits.length>30) h+='<div class="sub">仅显示前 30 条（共 '+hits.length+' 条），频次统计基于全部 '+hits.length+' 条。</div>';
+    // 下一期频次统计
+    var ff={}, bf={};
+    for(var n=1;n<=FMAX;n++)ff[n]=0;
+    for(var n=1;n<=BMAX;n++)bf[n]=0;
+    hits.forEach(function(r){
+        r.nr.forEach(function(x){ if(x>=1&&x<=FMAX)ff[x]++; });
+        r.nb.forEach(function(x){ if(x>=1&&x<=BMAX)bf[x]++; });
+    });
+    var fa=[]; for(var n=1;n<=FMAX;n++) if(ff[n]>0) fa.push([n,ff[n]]);
+    fa.sort(function(a,b){ return b[1]-a[1]||a[0]-b[0]; });
+    var ba=[]; for(var n=1;n<=BMAX;n++) if(bf[n]>0) ba.push([n,bf[n]]);
+    ba.sort(function(a,b){ return b[1]-a[1]||a[0]-b[0]; });
+    var expF=hits.length*FPICK/FMAX, expB=hits.length*BPICK/BMAX;
+    h+='<div class="stat" style="margin-top:10px;">这些相似期的「下一期」'+FNAME+'频次 TOP15（样本 '+hits.length+'，随机期望每号 '+expF.toFixed(2)+' 次，超过 1.3× 标红）：</div>';
+    h+='<div style="line-height:2.1;">';
+    fa.slice(0,15).forEach(function(p){
+        var cls=p[1]>=expF*1.3?'hot':'';
+        h+=ball(p[0],cls)+'<span style="color:#aaa;font-size:11px;margin-right:10px;">'+p[1]+'次 ('+(p[1]/hits.length*100).toFixed(0)+'%)</span>';
+    });
+    h+='</div>';
+    h+='<div class="stat" style="margin-top:8px;">下一期'+BNAME+'频次（随机期望每号 '+expB.toFixed(2)+' 次，超过 1.3× 标红）：</div>';
+    h+='<div style="line-height:2.1;">';
+    ba.forEach(function(p){
+        var cls=p[1]>=expB*1.3?'hot':'';
+        h+=ball(p[0],cls)+'<span style="color:#aaa;font-size:11px;margin-right:10px;">'+p[1]+'次 ('+(p[1]/hits.length*100).toFixed(0)+'%)</span>';
+    });
+    h+='</div>';
+    box.innerHTML=h;
+    if(sSim) sSim.textContent='阈值 '+K+' → 命中 '+hits.length+' 期（查全量 '+fL.length+' 期；改阈值/跟随间隔会重算）。';
 }
 
 function copyText(text, okMsg){
@@ -11965,6 +12045,7 @@ document.getElementById('selN').addEventListener('change',render);
 document.getElementById('selF').addEventListener('change',render);
 document.getElementById('selB').addEventListener('change',render);
 var gs=document.getElementById('selGap'); if(gs) gs.addEventListener('change',render);
+var ss=document.getElementById('inSim'); if(ss) ss.addEventListener('change',renderSim);
 document.getElementById('btnGen').addEventListener('click',render);
 document.getElementById('btnCopy').addEventListener('click',function(){
     if(!lastCombo){ document.getElementById('status').textContent='请先生成推荐'; return; }
