@@ -9719,6 +9719,10 @@ th { background: #2d2d30; color: #8ec5ff; }
         <option value="30">近 30 期</option>
         <option value="40">近 40 期</option>
         <option value="50">近 50 期</option>
+        <option value="100">近 100 期</option>
+        <option value="200">近 200 期</option>
+        <option value="300">近 300 期</option>
+        <option value="0">全部</option>
     </select>
     <span class="sub" id="availTip"></span>
 </div>
@@ -9767,7 +9771,8 @@ function clsOf(key) {
     return 'zc-red';
 }
 function render() {
-    var N = Math.min(parseInt(document.getElementById('selN').value, 10) || 10, AVAIL);
+    var rawN = parseInt(document.getElementById('selN').value, 10);
+    var N = (rawN === 0) ? AVAIL : Math.min(rawN || 10, AVAIL);  // 0 = 全部
     var rows = ROWS.slice(0, N);
     var groupsHtml = '';
     for (var gi = 0; gi < GROUPS.length; gi++) {
