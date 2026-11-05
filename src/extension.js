@@ -1217,7 +1217,7 @@ function activate(context) {
     });
     context.subscriptions.push(sortNumbersDisposable);
 
-    // 热号统计（大乐透 / 双色球 / 快乐8 / 排列三 / 排列五 / 福彩3D，页面内可选 10~50 期）
+    // 热号统计（大乐透 / 双色球 / 快乐8 / 排列三 / 排列五 / 福彩3D，页面内可选 10~300 期 / 全部）
     let hotNumbersDisposable = vscode.commands.registerCommand('myPlugin.hotNumbers', async () => {
         const pick = await vscode.window.showQuickPick(
             [
@@ -1255,9 +1255,11 @@ function activate(context) {
             return;
         }
 
-        // 页面最多需要 50 期（下拉最大档）；loadLotteryData 返回旧→新，取最后若干期再反转为新→旧
-        const N = Math.min(50, history.length);
-        const rows = history.slice(-N).slice().reverse();
+        // 页面有 10/20/30/40/50/100/200/300/全部 档位，必须把全量历史传进去，
+        // 否则页面按「已载入期数」判断会把 100/200/300 置灰（旧逻辑只传 50 期）。
+        // 上限 5000 期防止极端数据把 webview 内联 JSON 撑得过大（当前快乐8 约 1700 期，可完整载入）。
+        const MAX_HOT_ROWS = 5000;
+        const rows = history.slice(-MAX_HOT_ROWS).slice().reverse(); // 旧→新 转 新→旧
 
         const panel = vscode.window.createWebviewPanel(
             'hotNumbers',
@@ -1915,6 +1917,48 @@ function activate(context) {
         panel.webview.html = getRoadAnalysisHtml(analysisResult, cfg, N);
     });
     context.subscriptions.push(roadAnalysisDisposable);
+
+    // ========== 排3/3D 形态分析（豹子/全顺/组三/半顺/杂六） ==========
+    let pl3FormTypeDisposable = vscode.commands.registerCommand('myPlugin.pl3FormType', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎯 排列三', value: 'pl3', description: '百/十/个 位 0-9' },
+                { label: '🎁 福彩3D', value: 'fc3d', description: '百/十/个 位 0-9' }
+            ],
+            { placeHolder: '选择要分析形态的彩种（0 与 9 视为相连）' }
+        );
+        if (!pick) return;
+        const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+        if (!cfg) return;
+
+        let rows = [];
+        try {
+            const history = loadLotteryData(cfg); // 旧→新
+            if (history.length === 0) {
+                vscode.window.showWarningMessage(cfg.name + '数据为空，请先刷新数据');
+                return;
+            }
+            rows = history.slice().reverse(); // 新→旧
+        } catch (e) {
+            vscode.window.showWarningMessage('读取' + cfg.name + '数据失败，请先刷新数据');
+            return;
+        }
+
+        const panel = vscode.window.createWebviewPanel(
+            'pl3FormType',
+            cfg.name + ' 形态分析',
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.onDidReceiveMessage(async (message) => {
+            if (message.command === 'copy') {
+                await vscode.env.clipboard.writeText(message.text);
+                panel.webview.postMessage({ command: 'copySuccess' });
+            }
+        });
+        panel.webview.html = getPl3FormTypeHtml(cfg, rows);
+    });
+    context.subscriptions.push(pl3FormTypeDisposable);
 
     // ========== 排三口诀工具 ==========
     let pl3FormulaDisposable = vscode.commands.registerCommand('myPlugin.pl3Formula', async () => {
@@ -2753,6 +2797,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🔥 快8热温冷选号', 'myPlugin.kl8HotCold', '🔥'),
                 this.createItem('📊 快8冷热总榜', 'myPlugin.kl8AllHotCold', '📊'),
                 this.createItem('🛤️ 012路趋势', 'myPlugin.roadAnalysis', '🛤️'),
+                this.createItem('🧩 排3/3D 形态分析', 'myPlugin.pl3FormType', '🧩'),
                 this.createItem('📜 排三口诀', 'myPlugin.pl3Formula', '📜'),
                 this.createItem('🎲 排五口诀', 'myPlugin.pl5Formula', '🎲'),
                 this.createItem('🎁 3D口诀', 'myPlugin.fc3dFormula', '🎁'),
@@ -9630,9 +9675,9 @@ button.ghost:hover { background: #45494e; }
 /**
  * 热号统计 Webview HTML（大乐透 / 双色球 / 快乐8 / 排列三 / 排列五 / 福彩3D）
  * @param {Object} cfg - LOTTERY_TYPES 中的彩种配置
- * @param {Array<Object>} rows - 最近若干期历史（新→旧，最多 50 期）
+ * @param {Array<Object>} rows - 全量历史（新→旧，最多 5000 期）
  * 输出：每个号码在所选期数内的出现次数（热度矩阵）、TOP 列表、逐期开奖明细、理论期望对比
- * 页面内可切换统计期数 10/20/30/40/50
+ * 页面内可切换统计期数 10/20/30/40/50/100/200/300/全部（期数大于已载入期数的档位自动置灰）
  */
 function getHotNumbersHtml(cfg, rows) {
     let groups;
@@ -9707,6 +9752,8 @@ th { background: #2d2d30; color: #8ec5ff; }
 .period-cell { white-space: nowrap; }
 .note { background: rgba(142,197,255,0.08); border: 1px solid rgba(142,197,255,0.25); border-radius: 8px; padding: 10px 14px; color: #aaa; font-size: 12px; line-height: 1.9; margin-top: 18px; }
 .note b { color: #8ec5ff; }
+.lnk { background: #0e639c; color: #fff; border: none; border-radius: 5px; padding: 4px 10px; font-size: 12px; cursor: pointer; margin-left: 8px; }
+.lnk:hover { background: #1177bb; }
 </style>
 </head>
 <body>
@@ -9747,6 +9794,8 @@ th { background: #2d2d30; color: #8ec5ff; }
 var ROWS = ${dataJson};
 var GROUPS = ${groupsJson};
 var AVAIL = ROWS.length;
+var DETAIL_LIMIT = 200;      // 开奖明细默认最多渲染 200 期，避免「全部」档位卡页面
+var showAllDetail = false;
 function esc(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -9850,7 +9899,8 @@ function render() {
     var dHtml = '<table><thead><tr><th>期号</th>';
     for (gi = 0; gi < showGroups.length; gi++) dHtml += '<th>' + esc(showGroups[gi].label) + '</th>';
     dHtml += '</tr></thead><tbody>';
-    for (var r = 0; r < N; r++) {
+    var dN = (showAllDetail || N <= DETAIL_LIMIT) ? N : DETAIL_LIMIT;
+    for (var r = 0; r < dN; r++) {
         var row = rows[r];
         dHtml += '<tr><td class="period-cell">' + esc(row.period) + (row.date ? '<br><span style="color:#888;font-size:11px;">' + esc(row.date) + '</span>' : '') + '</td>';
         for (gi = 0; gi < showGroups.length; gi++) {
@@ -9861,18 +9911,35 @@ function render() {
         dHtml += '</tr>';
     }
     dHtml += '</tbody></table>';
+    if (dN < N) {
+        dHtml += '<div class="sub">开奖明细仅显示最近 ' + dN + ' 期（共 ' + N + ' 期）；热度矩阵 / 热号 TOP / 理论期望均已按全部 ' + N + ' 期计算。'
+              + '<button class="lnk" id="btnDetailAll">展开全部 ' + N + ' 期明细</button></div>';
+    } else if (showAllDetail && N > DETAIL_LIMIT) {
+        dHtml += '<div class="sub">已显示全部 ' + N + ' 期明细。<button class="lnk" id="btnDetailFold">收起明细</button></div>';
+    }
     document.getElementById('detail').innerHTML = dHtml;
+    var bAll = document.getElementById('btnDetailAll');
+    if (bAll) bAll.onclick = function() { showAllDetail = true; render(); };
+    var bFold = document.getElementById('btnDetailFold');
+    if (bFold) bFold.onclick = function() { showAllDetail = false; render(); };
 
     document.getElementById('rangeTip').textContent = N > 0 ? (rows[N - 1].period + ' ~ ' + rows[0].period + '（共 ' + N + ' 期）') : '—';
-    document.getElementById('detailN').textContent = N;
-    document.getElementById('availTip').textContent = '本页共载入最近 ' + AVAIL + ' 期数据';
+    document.getElementById('detailN').textContent = dN;
+    document.getElementById('availTip').textContent = '本页共载入最近 ' + AVAIL + ' 期数据（可选 10~300 期或全部）';
     document.getElementById('calcTime').textContent = '⏱ 本次计算时间：' + new Date().toLocaleString('zh-CN');
 }
 (function() {
     var sel = document.getElementById('selN');
+    var lastOk = null;
     for (var i = 0; i < sel.options.length; i++) {
-        if (parseInt(sel.options[i].value, 10) > AVAIL) sel.options[i].disabled = true;
+        var v = parseInt(sel.options[i].value, 10);
+        if (v === 0 || v <= AVAIL) lastOk = sel.options[i];   // 0 = 全部，始终可用
+        else {
+            sel.options[i].disabled = true;
+            sel.options[i].title = '数据不足：本页仅载入 ' + AVAIL + ' 期';
+        }
     }
+    if (lastOk && sel.options[sel.selectedIndex].disabled) lastOk.selected = true;
     sel.addEventListener('change', render);
 })();
 render();
@@ -17246,6 +17313,355 @@ function showToast() {
     if (t) { t.classList.add('show'); t.style.display = 'block'; setTimeout(function(){ t.classList.remove('show'); t.style.display = 'none'; }, 2000); }
 }
 })();
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 排3/3D 形态分析 Webview HTML（豹子/全顺/组三/半顺/杂六）
+ * 分类口径（0 与 9 视为相连，即 890、901 也算顺）：
+ *   豹子  = 三个数字全相同（如 111）
+ *   组三  = 恰好两个数字相同、任意位置（如 112、121、211）
+ *   全顺  = 三个数字互不相同且构成 0-9 环上连续三连（如 123、890、901）
+ *   半顺  = 三个数字互不相同且恰有一对相邻（如 126、095、906）
+ *   杂六  = 三个数字互不相同且两两都不相邻（如 135）
+ * 理论占比：对 000~999 共 1000 个号均匀枚举 → 豹子 1% / 全顺 6% / 组三 27% / 半顺 36% / 杂六 30%
+ * @param {Object} cfg - LOTTERY_TYPES 中的彩种配置（pl3 / fc3d）
+ * @param {Array<Object>} rows - 全量历史（新→旧），行含 period/date/num[3]
+ */
+function getPl3FormTypeHtml(cfg, rows) {
+    const latest = rows[0] || null;
+    const latestPeriod = latest ? latest.period : '—';
+    const dataJson = JSON.stringify(rows.map(h => ({
+        period: h.period, date: h.date || '', num: (h.num || []).slice()
+    })));
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>${cfg.name} 形态分析</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1e1e1e; color: #ddd; font-family: "Segoe UI","Microsoft YaHei",sans-serif; font-size: 13px; padding: 16px; }
+h2 { color: #e8a87c; margin-bottom: 6px; font-size: 20px; }
+h3 { color: #8ec5ff; margin: 16px 0 8px; font-size: 15px; }
+.sub { color: #aaa; margin-bottom: 12px; font-size: 12px; line-height: 1.7; }
+.ctrl { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.ctrl .lb { color: #8ec5ff; font-size: 12px; }
+select, input[type=text] { background: #2d2d30; color: #ddd; border: 1px solid #555; border-radius: 5px; padding: 4px 8px; font-size: 13px; }
+.calc-time { color: #feca57; font-size: 12px; margin: 6px 0 14px; }
+.cards { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.card { background: #252526; border: 1px solid #3c3c3c; border-radius: 8px; padding: 10px 14px; min-width: 190px; flex: 1; }
+.card .hd { font-size: 14px; font-weight: bold; margin-bottom: 6px; }
+.card .ex { color: #888; font-size: 11px; margin-bottom: 6px; line-height: 1.6; }
+.card .big { font-size: 22px; font-weight: bold; }
+.card .row { font-size: 12px; color: #bbb; line-height: 1.8; }
+.badge { display: inline-block; min-width: 34px; padding: 2px 8px; border-radius: 10px; color: #fff; font-size: 12px; font-weight: bold; text-align: center; }
+.t-bz { background: #c0392b; }
+.t-qs { background: #d35400; }
+.t-zs { background: #b7950b; }
+.t-bs { background: #2471a3; }
+.t-zl { background: #5d6d7e; }
+.zball { display: inline-block; min-width: 26px; height: 26px; line-height: 26px; text-align: center; border-radius: 50%; font-size: 12px; font-weight: 600; color: #fff; margin: 1px 2px; background: linear-gradient(135deg,#9b59b6,#8e44ad); }
+table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+th, td { border: 1px solid #444; padding: 5px 9px; text-align: center; font-size: 12px; }
+th { background: #2d2d30; color: #8ec5ff; }
+.up { color: #feca57; font-weight: bold; }
+.dn { color: #7fb3d5; }
+.note { background: rgba(142,197,255,0.08); border: 1px solid rgba(142,197,255,0.25); border-radius: 8px; padding: 10px 14px; color: #aaa; font-size: 12px; line-height: 1.9; margin-top: 16px; }
+.note b { color: #8ec5ff; }
+.pred-bar { display: flex; height: 30px; border-radius: 6px; overflow: hidden; margin: 10px 0; border: 1px solid #444; }
+.pred-bar div { display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
+#numType { font-size: 14px; font-weight: bold; margin-left: 6px; }
+</style>
+</head>
+<body>
+<h2>🧩 ${cfg.name} · 形态分析（豹子 / 全顺 / 组三 / 半顺 / 杂六）</h2>
+<div class="sub">
+    统计区间：<b id="rangeTip"></b>　·　最新一期：${latestPeriod}　·　数据共 ${rows.length} 期<br>
+    分类口径：<b>0 与 9 视为相连</b>（890、901 也是顺）
+</div>
+
+<div class="ctrl">
+    <span class="lb">统计期数：</span>
+    <select id="selN">
+        <option value="30">近 30 期</option>
+        <option value="50" selected>近 50 期</option>
+        <option value="100">近 100 期</option>
+        <option value="300">近 300 期</option>
+        <option value="0">全部</option>
+    </select>
+    <span class="sub" id="availTip" style="margin:0;"></span>
+</div>
+<div class="calc-time" id="calcTime"></div>
+
+<h3>🧮 形态分布与遗漏</h3>
+<div class="cards" id="cards"></div>
+<table id="distTable"><thead><tr>
+    <th>类型</th><th>出现次数</th><th>实际占比</th><th>理论占比</th><th>差值</th><th>当前遗漏(期)</th><th>历史最大遗漏(期)</th>
+</tr></thead><tbody id="distBody"></tbody></table>
+
+<h3>📋 形态走势（新 → 旧）</h3>
+<div class="ctrl">
+    <span class="lb">只看类型：</span>
+    <select id="selType"></select>
+    <span class="lb">显示条数：</span>
+    <select id="selTrendN">
+        <option value="30">最近 30 期</option>
+        <option value="50" selected>最近 50 期</option>
+        <option value="100">最近 100 期</option>
+    </select>
+    <span class="sub" id="trendTip" style="margin:0;"></span>
+</div>
+<div id="trend"></div>
+
+<h3>🔮 下一期形态智能预测</h3>
+<div class="sub">模型 = 理论占比 0.40 + 当前形态→下期转移(一阶马尔可夫) 0.30 + 近期30期频率 0.20 + 遗漏回归 0.10，归一化到 100%。下方逐步回测对照「恒用理论最优」。</div>
+<div class="pred-bar" id="predBar"></div>
+<div class="sub" id="predNum" style="margin-bottom:8px;"></div>
+<table><thead><tr><th>形态</th><th>预测概率</th><th>理论占比</th><th>当前形态→下期转移</th><th>近期30期频率</th><th>当前遗漏 / 最大</th></tr></thead><tbody id="predBody"></tbody></table>
+<div class="sub" id="predBt" style="margin-top:8px;"></div>
+
+<h3>🔍 单号判断</h3>
+<div class="ctrl">
+    <input type="text" id="inNum" maxlength="3" placeholder="输入 3 位号码，如 126" style="width:150px;">
+    <span id="numType"></span>
+</div>
+
+<div class="note">
+    <b>口径说明：</b><br>
+    · <b>豹子</b>：三个数字全相同（111）。<b>组三</b>：恰好两个相同、任意位置（112 / 121 / 211）。<br>
+    · <b>全顺</b>：三个数字互不相同且构成 0-9 环上的连续三连（123、890、901、012…）。<br>
+    · <b>半顺</b>：三个数字互不相同且恰有一对相邻（126、095、906）。<b>杂六</b>：三个数字互不相同且两两都不相邻（135）。<br>
+    · 理论占比按 000~999 共 1000 个号均匀枚举：豹子 1%、组三 27%、全顺 6%、半顺 36%、杂六 30%。<br>
+    · 遗漏 = 该类型连续未出现的期数，仅基于上方所选期数区间统计。<br>
+    · ⚠️ 每期独立随机开奖，形态占比长期趋近理论值，短期偏离属正常波动，仅供统计参考。
+</div>
+
+<script>
+var ROWS = ${dataJson};
+var TKEYS = ['baozi','quanshun','zusan','banshun','zaliu'];
+var TNAME = {baozi:'豹子', quanshun:'全顺', zusan:'组三', banshun:'半顺', zaliu:'杂六'};
+var TCLS  = {baozi:'t-bz', quanshun:'t-qs', zusan:'t-zs', banshun:'t-bs', zaliu:'t-zl'};
+var TEX   = {baozi:'三个数字全相同（111）',
+             quanshun:'三不同且 0-9 环上三连（123 / 890 / 901）',
+             zusan:'恰好两个相同、任意位置（112 / 121 / 211）',
+             banshun:'三不同且恰有一对相邻（126 / 095 / 906）',
+             zaliu:'三不同且两两不相邻（135）'};
+var THEORY = {baozi:1.0, quanshun:6.0, zusan:27.0, banshun:36.0, zaliu:30.0};
+
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function pad2(n){ return n<10 ? '0'+n : ''+n; }
+
+// 分类：0 与 9 相连（环）
+function typeOf(a, b, c){
+    if (a === b && b === c) return 'baozi';
+    var s = [a, b, c].slice().sort(function(x, y){ return x - y; });
+    if (s[0] === s[1] || s[1] === s[2]) return 'zusan';
+    var d1 = s[1] - s[0], d2 = s[2] - s[1];
+    var run = (d1 === 1 && d2 === 1)                                   // 012 … 789
+           || (s[0] === 0 && s[1] === 8 && s[2] === 9)                  // 890
+           || (s[0] === 0 && s[1] === 1 && s[2] === 9);                 // 901
+    if (run) return 'quanshun';
+    var adj = (d1 === 1) || (d2 === 1) || (s[0] === 0 && s[2] === 9);   // 含 0-9 相连
+    return adj ? 'banshun' : 'zaliu';
+}
+function badge(t){ return '<span class="badge ' + TCLS[t] + '">' + TNAME[t] + '</span>'; }
+function balls(arr){ return arr.map(function(x){ return '<span class="zball">' + pad2(x) + '</span>'; }).join(''); }
+
+// 统计：返回旧→新的 seq + 各类型 次数/当前遗漏/最大遗漏
+function compute(N){
+    var arr = (N === 0 ? ROWS.slice() : ROWS.slice(0, N)).slice().reverse(); // 旧→新
+    var total = arr.length;
+    var cnt = {}, curM = {}, maxM = {}, prev = {}, seq = [];
+    TKEYS.forEach(function(t){ cnt[t] = 0; curM[t] = total; maxM[t] = 0; prev[t] = -1; });
+    for (var i = 0; i < total; i++) {
+        var r = arr[i];
+        var t = typeOf(r.num[0], r.num[1], r.num[2]);
+        seq.push({ period: r.period, date: r.date, num: r.num, t: t });
+        cnt[t]++;
+        var gap = prev[t] < 0 ? i : i - prev[t] - 1;
+        if (gap > maxM[t]) maxM[t] = gap;
+        prev[t] = i;
+    }
+    TKEYS.forEach(function(t){
+        curM[t] = prev[t] < 0 ? total : total - 1 - prev[t];
+        if (curM[t] > maxM[t]) maxM[t] = curM[t];
+    });
+    return { total: total, cnt: cnt, curM: curM, maxM: maxM, seq: seq };
+}
+
+function nNow(){
+    var v = parseInt(document.getElementById('selN').value, 10);
+    if (isNaN(v)) v = 50;
+    return v;
+}
+function trendNNow(){
+    var v = parseInt(document.getElementById('selTrendN').value, 10);
+    if (isNaN(v)) v = 50;
+    return v;
+}
+function typeFilter(){
+    return document.getElementById('selType').value;
+}
+
+function render(){
+    var N = nNow(), st = compute(N);
+    var rows = N === 0 ? ROWS : ROWS.slice(0, N);
+    document.getElementById('rangeTip').innerHTML = esc(rows[rows.length - 1].period) + ' ~ ' + esc(rows[0].period) + '（共 ' + st.total + ' 期）';
+    document.getElementById('availTip').textContent = '本页共载入 ' + ROWS.length + ' 期数据';
+    document.getElementById('calcTime').textContent = '⏱ 本次计算时间：' + new Date().toLocaleString('zh-CN');
+
+    // 分布卡片
+    var cards = '';
+    TKEYS.forEach(function(t){
+        var pct = st.total ? (st.cnt[t] / st.total * 100) : 0;
+        var diff = pct - THEORY[t];
+        var cls = diff >= 0 ? 'up' : 'dn';
+        cards += '<div class="card">'
+            + '<div class="hd"><span class="badge ' + TCLS[t] + '">' + TNAME[t] + '</span></div>'
+            + '<div class="ex">' + TEX[t] + '</div>'
+            + '<div class="big">' + st.cnt[t] + ' <span style="font-size:13px;color:#888;">次 · ' + pct.toFixed(1) + '%</span></div>'
+            + '<div class="row">理论 ' + THEORY[t].toFixed(0) + '%　·　差值 <span class="' + cls + '">' + (diff >= 0 ? '+' : '') + diff.toFixed(1) + '%</span></div>'
+            + '<div class="row">当前遗漏 <b class="up">' + st.curM[t] + '</b> 期　·　最大遗漏 <b>' + st.maxM[t] + '</b> 期</div>'
+            + '</div>';
+    });
+    document.getElementById('cards').innerHTML = cards;
+
+    // 分布表
+    var tb = '';
+    TKEYS.forEach(function(t){
+        var pct = st.total ? (st.cnt[t] / st.total * 100) : 0;
+        var diff = pct - THEORY[t];
+        var cls = diff >= 0 ? 'up' : 'dn';
+        tb += '<tr><td>' + badge(t) + '</td><td>' + st.cnt[t] + '</td><td>' + pct.toFixed(1) + '%</td><td>' + THEORY[t].toFixed(0) + '%</td>'
+            + '<td class="' + cls + '">' + (diff >= 0 ? '+' : '') + diff.toFixed(1) + '%</td>'
+            + '<td><b class="up">' + st.curM[t] + '</b></td><td>' + st.maxM[t] + '</td></tr>';
+    });
+    document.getElementById('distBody').innerHTML = tb;
+
+    // 走势（新→旧，按类型筛选）
+    var tf = typeFilter(), tn = trendNNow();
+    var seqNew = st.seq.slice().reverse();
+    var shown = 0, html = '<table><thead><tr><th style="width:90px;">期号</th><th style="width:80px;">日期</th><th>号码</th><th style="width:80px;">形态</th></tr></thead><tbody>';
+    for (var i = 0; i < seqNew.length && shown < tn; i++) {
+        var r = seqNew[i];
+        if (tf !== 'all' && r.t !== tf) continue;
+        html += '<tr><td>' + esc(r.period) + '</td><td style="color:#888;">' + esc(r.date || '—') + '</td>'
+             + '<td style="text-align:left;">' + balls(r.num) + '</td><td>' + badge(r.t) + '</td></tr>';
+        shown++;
+    }
+    html += '</tbody></table>';
+    var filtered = tf === 'all' ? seqNew.length : seqNew.filter(function(r){ return r.t === tf; }).length;
+    document.getElementById('trendTip').textContent = '区间内该类型共 ' + (tf === 'all' ? st.total : filtered) + ' 期，本表最多显示 ' + tn + ' 期';
+    document.getElementById('trend').innerHTML = html;
+}
+
+// ============ 🔮 下一期形态智能预测 ============
+function predictForm(){
+    var st=compute(0); var seq=st.seq; var n=seq.length;
+    if(n<30) return null;
+    var curForm=seq[n-1].t;
+    // 一阶转移矩阵 P(next|cur)
+    var trans={}, tot={};
+    TKEYS.forEach(function(t){ trans[t]={}; TKEYS.forEach(function(t2){trans[t][t2]=0;}); tot[t]=0; });
+    for(var i=0;i<n-1;i++){ trans[seq[i].t][seq[i+1].t]++; tot[seq[i].t]++; }
+    var tp={}; TKEYS.forEach(function(t){ tp[t]= tot[curForm]>0 ? trans[curForm][t]/tot[curForm] : THEORY[t]/100; });
+    // 近期 30 期频率
+    var rec=seq.slice(-30); var rf={}; TKEYS.forEach(function(t){rf[t]=0;}); rec.forEach(function(r){rf[r.t]++;}); TKEYS.forEach(function(t){rf[t]=rf[t]/rec.length;});
+    // 遗漏回归：当前遗漏越接近历史最大，概率越上调（0.5~1.0 倍）
+    var mr={}; TKEYS.forEach(function(t){ var mx=st.maxM[t]||1; mr[t]=0.5+0.5*Math.min(st.curM[t]/mx,1); });
+    var th={}; TKEYS.forEach(function(t){th[t]=THEORY[t]/100;});
+    // 加权混合
+    var pred={}, sum=0;
+    TKEYS.forEach(function(t){ pred[t]=0.40*th[t]+0.30*tp[t]+0.20*rf[t]+0.10*(th[t]*mr[t]); sum+=pred[t]; });
+    TKEYS.forEach(function(t){ pred[t]=pred[t]/sum; });
+    return {curForm:curForm, pred:pred, tp:tp, rf:rf, mr:mr, th:th, trans:trans, tot:tot, samples:tot[curForm], st:st};
+}
+function backtestForm(){
+    var st=compute(0); var seq=st.seq; var n=seq.length;
+    if(n<52) return null;
+    var hitM=0, hitT=0;
+    for(var i=50;i<n-1;i++){
+        var trans={}, tot={};
+        TKEYS.forEach(function(t){ trans[t]={}; TKEYS.forEach(function(t2){trans[t][t2]=0;}); tot[t]=0; });
+        for(var j=0;j<i;j++){ trans[seq[j].t][seq[j+1].t]++; tot[seq[j].t]++; }
+        var cur=seq[i].t;
+        var best=null, bestP=-1;
+        TKEYS.forEach(function(t){
+            var p = tot[cur]>0 ? (0.5*THEORY[t]/100 + 0.5*trans[cur][t]/tot[cur]) : THEORY[t]/100;
+            if(p>bestP){ bestP=p; best=t; }
+        });
+        if(seq[i+1].t===best) hitM++;
+        if(seq[i+1].t==='banshun') hitT++;   // 理论最优 = 半顺 36%
+    }
+    var m=n-1-50;
+    return {model:hitM/m, theory:hitT/m, n:m};
+}
+function renderPred(){
+    var barEl=document.getElementById('predBar'); if(!barEl) return;
+    var P=predictForm();
+    if(!P){ document.getElementById('predNum').innerHTML='<span style="color:#888;">数据不足，无法预测</span>'; return; }
+    var bar='';
+    TKEYS.forEach(function(t){ var pc=P.pred[t]*100; if(pc>=3) bar+='<div class="'+TCLS[t]+'" style="width:'+pc.toFixed(2)+'%;">'+TNAME[t]+' '+pc.toFixed(1)+'%</div>'; });
+    barEl.innerHTML=bar;
+    var sorted=TKEYS.slice().sort(function(a,b){ return P.pred[b]-P.pred[a]; });
+    var num='当前形态 '+badge(P.curForm)+' → 下期预测：';
+    sorted.forEach(function(t){
+        var pc=P.pred[t]*100, th=THEORY[t];
+        var cls = pc>th+2 ? 'up' : (pc<th-2 ? 'dn' : '');
+        num += '<span style="margin-right:14px;">'+badge(t)+' <b class="'+cls+'">'+pc.toFixed(1)+'%</b>（理论'+th.toFixed(0)+'%）</span>';
+    });
+    num += '<br><span style="color:#888;">转移样本：当前形态「'+TNAME[P.curForm]+'」历史共 '+P.samples+' 次 · 最近 30 期形态：'
+        + seq30map() + '</span>';
+    document.getElementById('predNum').innerHTML=num;
+    var tb='';
+    TKEYS.forEach(function(t){
+        var pc=P.pred[t]*100;
+        tb+='<tr><td>'+badge(t)+'</td><td><b class="up">'+pc.toFixed(2)+'%</b></td><td>'+THEORY[t].toFixed(0)+'%</td>'
+          +'<td>'+(P.tot[P.curForm]>0?(P.trans[P.curForm][t]/P.tot[P.curForm]*100).toFixed(1)+'%':'—')+'</td>'
+          +'<td>'+(P.rf[t]*100).toFixed(1)+'%</td>'
+          +'<td>'+P.st.curM[t]+' / '+P.st.maxM[t]+'</td></tr>';
+    });
+    document.getElementById('predBody').innerHTML=tb;
+    var bt=backtestForm();
+    if(!bt){ document.getElementById('predBt').textContent='样本不足，无法回测'; return; }
+    var diff=(bt.model-bt.theory)*100;
+    var verdict = diff>0.5 ? '<span class="up">✅ 模型优于理论基准 '+diff.toFixed(1)+' 个百分点</span>'
+                : (diff<-0.5 ? '<span class="dn">❌ 模型不如理论基准 '+Math.abs(diff).toFixed(1)+' 个百分点（建议直接用理论）</span>'
+                             : '≈ 与理论基准持平（差 '+diff.toFixed(1)+' 个百分点）');
+    document.getElementById('predBt').innerHTML='逐步回测（'+bt.n+' 期，用前面的期预测下一期）：模型命中率 <b>'+bt.model.toFixed(2)+'</b> vs 恒用理论最优(半顺) <b>'+bt.theory.toFixed(2)+'</b> → '+verdict
+      +'<br>⚠️ 排3/3D 每期独立随机，最优无偏预测就是理论占比（半顺 36%）。模型仅供参考，不构成预测保证。';
+}
+function seq30map(){
+    var seq=compute(0).seq; var rec=seq.slice(-30).reverse(); // 最新在前
+    var m={}; TKEYS.forEach(function(t){m[t]=0;}); rec.forEach(function(r){m[r.t]++;});
+    return TKEYS.map(function(t){ return TNAME[t]+m[t]; }).join(' / ');
+}
+renderPred();
+
+// 单号判断
+document.getElementById('inNum').addEventListener('input', function(){
+    var v = this.value.replace(/[^0-9]/g, '');
+    if (v.length !== 3) { document.getElementById('numType').innerHTML = '<span style="color:#888;">请输入 3 位数字</span>'; return; }
+    var a = +v.charAt(0), b = +v.charAt(1), c = +v.charAt(2);
+    var t = typeOf(a, b, c);
+    document.getElementById('numType').innerHTML = balls([a, b, c]) + ' → ' + badge(t);
+});
+
+// 初始化
+(function(){
+    var sel = document.getElementById('selType');
+    var opts = '<option value="all">全部类型</option>';
+    TKEYS.forEach(function(t){ opts += '<option value="' + t + '">' + TNAME[t] + '</option>'; });
+    sel.innerHTML = opts;
+    sel.addEventListener('change', render);
+})();
+document.getElementById('selN').addEventListener('change', render);
+document.getElementById('selTrendN').addEventListener('change', render);
+render();
 </script>
 </body>
 </html>`;
