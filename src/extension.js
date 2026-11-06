@@ -13632,11 +13632,11 @@ h2{color:#8ec5ff;font-size:20px;margin-bottom:6px;}
 .note{background:rgba(142,197,255,0.08);border:1px solid rgba(142,197,255,0.2);border-radius:8px;padding:10px 14px;color:#aaa;font-size:12px;line-height:1.8;margin-top:8px;}
 .note b{color:#8ec5ff;}
 .ball{display:inline-block;min-width:30px;height:30px;line-height:30px;border-radius:50%;text-align:center;font-size:13px;font-weight:bold;color:#fff;margin:3px;cursor:default;}
-.ball.vhot{background:linear-gradient(135deg,#c0392b,#e74c3c);}
+.ball.vhot,.ball.veryHot{background:linear-gradient(135deg,#c0392b,#e74c3c);}
 .ball.hot{background:linear-gradient(135deg,#e74c3c,#f08080);}
 .ball.warm{background:linear-gradient(135deg,#f39c12,#feca57);}
 .ball.cold{background:linear-gradient(135deg,#2980b9,#5dade2);}
-.ball.vcold{background:linear-gradient(135deg,#1f618d,#2980b9);}
+.ball.vcold,.ball.veryCold{background:linear-gradient(135deg,#1f618d,#2980b9);}
 .ball:hover{transform:scale(1.15);box-shadow:0 0 8px rgba(255,255,255,0.4);}
 .group{display:flex;flex-wrap:wrap;align-items:center;gap:2px;margin-bottom:10px;}
 .subtag{display:inline-block;font-size:11px;color:#aaa;margin:6px 8px 4px 0;}
