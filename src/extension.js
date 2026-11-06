@@ -1513,6 +1513,22 @@ function activate(context) {
     });
     context.subscriptions.push(kl8AllHotColdDisposable);
 
+    // 快8 温度分类（单独列出热/温/冷号码清单，不含温度盘网格）
+    let kl8TempClassDisposable = vscode.commands.registerCommand('myPlugin.kl8TempClass', async () => {
+        let history = [];
+        try {
+            const cfg = LOTTERY_TYPES.find(c => c.key === 'kl8');
+            if (cfg) history = loadLotteryData(cfg);
+        } catch (e) { history = []; }
+        if (!history.length) { vscode.window.showWarningMessage('快乐8数据为空，请先刷新数据'); return; }
+        const panel = vscode.window.createWebviewPanel(
+            'kl8TempClass', '快8 温度分类（热/温/冷 号码清单）', vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getKl8TempClassHtml(history);
+    });
+    context.subscriptions.push(kl8TempClassDisposable);
+
     // 快乐8 热温冷分析 + 智能选号（热度Z分数 + 重号延续 + 8区均衡 + 形态约束）
     let kl8HotColdDisposable = vscode.commands.registerCommand('myPlugin.kl8HotCold', async () => {
         let history = [];
@@ -2828,6 +2844,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🎱 快8历史跟随', 'myPlugin.kl8Follow', '🎱'),
                 this.createItem('🔥 快8热温冷选号', 'myPlugin.kl8HotCold', '🔥'),
                 this.createItem('📊 快8冷热总榜', 'myPlugin.kl8AllHotCold', '📊'),
+                this.createItem('🌡️ 快8温度分类', 'myPlugin.kl8TempClass', '🌡️'),
                 this.createItem('🛤️ 012路趋势', 'myPlugin.roadAnalysis', '🛤️'),
                 this.createItem('🧩 排3/3D 形态分析', 'myPlugin.pl3FormType', '🧩'),
                 this.createItem('📊 排3/排五/3D 冷热总榜', 'myPlugin.digitHotCold', '📊'),
@@ -13562,6 +13579,138 @@ renderDetail();
 
 document.getElementById('inRecent').addEventListener('change',renderChart);
 document.getElementById('inDetail').addEventListener('change',renderDetail);
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 快8 温度分类（独立功能）：把 80 个号按温度分成 热 / 温 / 冷 三大盘单独列出，不含温度盘网格
+ * 数据来源与快8冷热总榜一致（全量历史 Z 分数），只是展示形式改为分类清单
+ */
+function getKl8TempClassHtml(history) {
+    const N = history.length;
+    const cnt = {}, miss = {}, lastSeen = {}, prev = {};
+    for (let n = 1; n <= 80; n++) { cnt[n]=0; miss[n]=N; lastSeen[n]=''; prev[n]=-1; }
+    for (let i = 0; i < N; i++) {
+        const r = history[i]; const nums = r.num || [];
+        for (const x of nums) {
+            if (x < 1 || x > 80) continue;
+            cnt[x]++; lastSeen[x] = r.period; prev[x] = i;
+        }
+    }
+    for (let n = 1; n <= 80; n++) miss[n] = prev[n] < 0 ? N : N - 1 - prev[n];
+    const exp = N * 0.25, sd = Math.sqrt(N * 0.25 * 0.75);
+    const z = {}; for (let n = 1; n <= 80; n++) z[n] = (cnt[n] - exp) / sd;
+    const bucketOf = v => (v >= 1 ? 'veryHot' : (v >= 0.5 ? 'hot' : (v > -0.5 ? 'warm' : (v > -1 ? 'cold' : 'veryCold'))));
+    const stats = [];
+    for (let n = 1; n <= 80; n++) {
+        stats.push({ n, c: cnt[n], z: +z[n].toFixed(2), miss: miss[n], rate: +(cnt[n]/N*100).toFixed(2), last: lastSeen[n]||'-', b: bucketOf(z[n]) });
+    }
+    const hot = stats.filter(s => s.z >= 0.5).sort((a,b) => b.z - a.z);             // 热（含很热），Z 降序
+    const warm = stats.filter(s => s.z > -0.5 && s.z < 0.5).sort((a,b) => Math.abs(a.z) - Math.abs(b.z));  // 温，|Z| 升序
+    const cold = stats.filter(s => s.z <= -0.5).sort((a,b) => a.z - b.z);           // 冷（含很冷），Z 升序
+    const dataJson = JSON.stringify({
+        N, exp: +exp.toFixed(2), sd: +sd.toFixed(2),
+        lastPeriod: history[N-1] ? history[N-1].period : '-', firstPeriod: history[0] ? history[0].period : '-',
+        hot, warm, cold
+    });
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>快8 温度分类（热 / 温 / 冷 号码清单）</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#0a0e1a;color:#ddd;font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-size:13px;padding:16px;}
+h2{color:#8ec5ff;font-size:20px;margin-bottom:6px;}
+.meta{color:#888;font-size:12px;margin-bottom:14px;line-height:1.8;}
+.panel{background:rgba(20,30,50,0.5);border:1px solid rgba(120,180,255,0.15);border-radius:8px;padding:14px;margin-bottom:14px;max-width:1200px;}
+.panel h3{font-size:16px;margin-bottom:10px;display:flex;align-items:center;gap:8px;}
+.panel .cnt{color:#aaa;font-size:13px;font-weight:normal;}
+.panel .sub{color:#888;font-size:12px;margin-bottom:8px;}
+.note{background:rgba(142,197,255,0.08);border:1px solid rgba(142,197,255,0.2);border-radius:8px;padding:10px 14px;color:#aaa;font-size:12px;line-height:1.8;margin-top:8px;}
+.note b{color:#8ec5ff;}
+.ball{display:inline-block;min-width:30px;height:30px;line-height:30px;border-radius:50%;text-align:center;font-size:13px;font-weight:bold;color:#fff;margin:3px;cursor:default;}
+.ball.vhot{background:linear-gradient(135deg,#c0392b,#e74c3c);}
+.ball.hot{background:linear-gradient(135deg,#e74c3c,#f08080);}
+.ball.warm{background:linear-gradient(135deg,#f39c12,#feca57);}
+.ball.cold{background:linear-gradient(135deg,#2980b9,#5dade2);}
+.ball.vcold{background:linear-gradient(135deg,#1f618d,#2980b9);}
+.ball:hover{transform:scale(1.15);box-shadow:0 0 8px rgba(255,255,255,0.4);}
+.group{display:flex;flex-wrap:wrap;align-items:center;gap:2px;margin-bottom:10px;}
+.subtag{display:inline-block;font-size:11px;color:#aaa;margin:6px 8px 4px 0;}
+summary{cursor:pointer;color:#8ec5ff;font-size:12px;margin:8px 0 4px;}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:10px;}
+@media(max-width:900px){.grid3{grid-template-columns:1fr;}}
+.stat-card{background:#252526;border:1px solid #3c3c3c;border-radius:8px;padding:10px 14px;text-align:center;}
+.stat-card .big{font-size:24px;font-weight:bold;}
+.stat-card .lb{font-size:11px;color:#888;margin-top:4px;}
+</style>
+</head>
+<body>
+<h2>🌡️ 快8 温度分类（热 / 温 / 冷 号码清单）</h2>
+<div class="meta" id="meta"></div>
+
+<div class="grid3" id="summary"></div>
+
+<div class="panel" style="border-color:rgba(231,76,60,0.4);">
+    <h3>🔥 热号盘 <span class="cnt">（Z ≥ 0.5，共 <b id="hotN"></b> 个）</span></h3>
+    <div class="sub">出现次数明显高于理论期望的号码；Z 越大越热。已按 Z 从高到低排序。</div>
+    <div class="subtag">很热 Z≥1.0：</div>
+    <div class="group" id="veryHotG"></div>
+    <div class="subtag">热 0.5~1.0：</div>
+    <div class="group" id="hotOnlyG"></div>
+</div>
+
+<div class="panel" style="border-color:rgba(254,202,87,0.4);">
+    <h3>🌤 温号盘 <span class="cnt">（-0.5 &lt; Z &lt; 0.5，共 <b id="warmN"></b> 个）</span></h3>
+    <div class="sub">出现次数接近理论期望的号码；|Z| 越小越接近理论值。已按 |Z| 从小到大排序。</div>
+    <div class="group" id="warmG"></div>
+</div>
+
+<div class="panel" style="border-color:rgba(52,152,219,0.4);">
+    <h3>❄️ 冷号盘 <span class="cnt">（Z ≤ -0.5，共 <b id="coldN"></b> 个）</span></h3>
+    <div class="sub">出现次数明显低于理论期望的号码；Z 越小（负得越多）越冷。已按 Z 从低到高排序。</div>
+    <div class="subtag">冷 -1.0~-0.5：</div>
+    <div class="group" id="coldOnlyG"></div>
+    <div class="subtag">很冷 Z≤-1.0：</div>
+    <div class="group" id="veryColdG"></div>
+</div>
+
+<div class="note">
+    <b>口径说明：</b><br>
+    · 数据来源：快8全量历史，每号每期开出概率 <b>25%</b>（20/80），Z = (出现次数 − 期望) / 标准差。<br>
+    · 期望 = N × 0.25，标准差 = √(N × 0.25 × 0.75)；Z≥0.5 为热，|Z|&lt;0.5 为温，Z≤-0.5 为冷。<br>
+    · 理论分布（正态）：很热约 16%、热约 22%、温约 38%、冷约 22%、很冷约 16%。<br>
+    · 鼠标悬停号码球可看：出现次数、出现率、Z 值、当前遗漏、上次出现期号。<br>
+    · ⚠️ 每期独立随机开奖，温度只是历史统计，对下期无预测效力。
+</div>
+
+<script>
+var D = ${dataJson};
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function pad2(n){return n<10?'0'+n:''+n;}
+function ball(s){
+    return '<span class="ball '+s.b+'" title="'+pad2(s.n)+' 号：出现 '+s.c+' 次（'+s.rate+'%）\\nZ='+s.z+' · 当前遗漏 '+s.miss+' 期\\n上次出现 '+esc(s.last)+'">'+pad2(s.n)+'</span>';
+}
+document.getElementById('meta').innerHTML='统计区间：<b>'+D.firstPeriod+'</b> ~ <b>'+D.lastPeriod+'</b>（共 <b>'+D.N+'</b> 期）· 每号概率 25% · 期望 <b>'+D.exp+'</b> 次/号 · 标准差 <b>'+D.sd+'</b>';
+
+var hotN=D.hot.length, warmN=D.warm.length, coldN=D.cold.length;
+document.getElementById('hotN').textContent=hotN;
+document.getElementById('warmN').textContent=warmN;
+document.getElementById('coldN').textContent=coldN;
+
+document.getElementById('summary').innerHTML=
+    '<div class="stat-card"><div class="big" style="color:#e74c3c;">'+hotN+'</div><div class="lb">🔥 热号（'+(hotN/80*100).toFixed(1)+'%）· 理论 38%</div></div>'+
+    '<div class="stat-card"><div class="big" style="color:#feca57;">'+warmN+'</div><div class="lb">🌤 温号（'+(warmN/80*100).toFixed(1)+'%）· 理论 38%</div></div>'+
+    '<div class="stat-card"><div class="big" style="color:#3498db;">'+coldN+'</div><div class="lb">❄️ 冷号（'+(coldN/80*100).toFixed(1)+'%）· 理论 24%</div></div>';
+
+document.getElementById('veryHotG').innerHTML=D.hot.filter(function(s){return s.b==='veryHot';}).map(ball).join('')||'<span class="subtag">无</span>';
+document.getElementById('hotOnlyG').innerHTML=D.hot.filter(function(s){return s.b==='hot';}).map(ball).join('')||'<span class="subtag">无</span>';
+document.getElementById('warmG').innerHTML=D.warm.map(ball).join('')||'<span class="subtag">无</span>';
+document.getElementById('coldOnlyG').innerHTML=D.cold.filter(function(s){return s.b==='cold';}).map(ball).join('')||'<span class="subtag">无</span>';
+document.getElementById('veryColdG').innerHTML=D.cold.filter(function(s){return s.b==='veryCold';}).map(ball).join('')||'<span class="subtag">无</span>';
 </script>
 </body>
 </html>`;
