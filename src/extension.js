@@ -1960,6 +1960,38 @@ function activate(context) {
     });
     context.subscriptions.push(pl3FormTypeDisposable);
 
+    // ========== 排3 / 排五 / 福彩3D 冷热总榜（10号小盘） ==========
+    let digitHotColdDisposable = vscode.commands.registerCommand('myPlugin.digitHotCold', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎯 排列三', value: 'pl3', pick: 3, description: '百/十/个 位 0-9 · 全位合计' },
+                { label: '🎰 排列五', value: 'pl5', pick: 5, description: '万/千/百/十/个 位 0-9 · 全位合计' },
+                { label: '🎁 福彩3D', value: 'fc3d', pick: 3, description: '百/十/个 位 0-9 · 全位合计' }
+            ],
+            { placeHolder: '选择要查看冷热总榜的彩种' }
+        );
+        if (!pick) return;
+        const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+        if (!cfg) return;
+        let history = [];
+        try {
+            history = loadLotteryData(cfg); // 旧→新
+            if (history.length === 0) { vscode.window.showWarningMessage(cfg.name + '数据为空，请先刷新数据'); return; }
+        } catch (e) { vscode.window.showWarningMessage('读取' + cfg.name + '数据失败，请先刷新数据'); return; }
+        const panel = vscode.window.createWebviewPanel(
+            'digitHotCold', cfg.name + ' 冷热总榜', vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.onDidReceiveMessage(async (message) => {
+            if (message.command === 'copy') {
+                await vscode.env.clipboard.writeText(message.text);
+                panel.webview.postMessage({ command: 'copySuccess' });
+            }
+        });
+        panel.webview.html = getDigitHotColdHtml({ name: cfg.name, pick: pick.pick }, history);
+    });
+    context.subscriptions.push(digitHotColdDisposable);
+
     // ========== 排三口诀工具 ==========
     let pl3FormulaDisposable = vscode.commands.registerCommand('myPlugin.pl3Formula', async () => {
         // 先加载最新一期数据用于实战推导
@@ -2798,6 +2830,7 @@ class LotteryTreeDataProvider {
                 this.createItem('📊 快8冷热总榜', 'myPlugin.kl8AllHotCold', '📊'),
                 this.createItem('🛤️ 012路趋势', 'myPlugin.roadAnalysis', '🛤️'),
                 this.createItem('🧩 排3/3D 形态分析', 'myPlugin.pl3FormType', '🧩'),
+                this.createItem('📊 排3/排五/3D 冷热总榜', 'myPlugin.digitHotCold', '📊'),
                 this.createItem('📜 排三口诀', 'myPlugin.pl3Formula', '📜'),
                 this.createItem('🎲 排五口诀', 'myPlugin.pl5Formula', '🎲'),
                 this.createItem('🎁 3D口诀', 'myPlugin.fc3dFormula', '🎁'),
@@ -13190,6 +13223,345 @@ try{
     if(errBox)errBox.innerHTML='<div style="color:#e74c3c;font-size:13px;">❌ 选号脚本出错：'+String((err&&err.message)||err)+'</div>';
     if(window.console&&console.error)console.error(err);
 }
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 排3 / 排五 / 福彩3D 冷热总榜（10 号小盘：0-9，全位合计含重复）
+ * @param {Object} cfg - { name, pick(每期开出个数), topN }
+ * @param {Array} rows - 全量历史（旧→新），行含 period/date/num
+ */
+function getDigitHotColdHtml(cfg, rows) {
+    const N = rows.length;
+    const PICK = cfg.pick, SIZE = 10, TOP = cfg.topN || 5, NAME = cfg.name;
+    const cnt = {}, miss = {}, maxMiss = {}, lastSeen = {}, firstSeen = {}, prev = {};
+    for (let n = 0; n <= 9; n++) { cnt[n]=0; miss[n]=N; maxMiss[n]=0; lastSeen[n]=''; firstSeen[n]=''; prev[n]=-1; }
+    for (let i = 0; i < N; i++) {
+        const r = rows[i]; const nums = (r.num || []).slice(0, PICK);
+        for (const x of nums) {
+            if (x < 0 || x > 9) continue;
+            cnt[x]++;
+            if (firstSeen[x] === '') firstSeen[x] = r.period;
+            lastSeen[x] = r.period;
+            const gap = prev[x] < 0 ? i : i - prev[x] - 1;
+            if (gap > maxMiss[x]) maxMiss[x] = gap;
+            prev[x] = i;
+        }
+    }
+    for (let n = 0; n <= 9; n++) { miss[n] = prev[n] < 0 ? N : N - 1 - prev[n]; if (miss[n] > maxMiss[n]) maxMiss[n] = miss[n]; }
+    const p = PICK / SIZE, exp = N * p, sd = Math.sqrt(N * p * (1 - p));
+    const z = {};
+    for (let n = 0; n <= 9; n++) z[n] = (cnt[n] - exp) / sd;
+    const bucketOf = v => (v >= 1 ? 'veryHot' : (v >= 0.5 ? 'hot' : (v > -0.5 ? 'warm' : (v > -1 ? 'cold' : 'veryCold'))));
+    const bucket = { veryHot:0, hot:0, warm:0, cold:0, veryCold:0 };
+    for (let n = 0; n <= 9; n++) bucket[bucketOf(z[n])]++;
+    const R50 = Math.min(50, N);
+    const r50 = {}; for (let n=0;n<=9;n++) r50[n]=0;
+    for (let i = N - R50; i < N; i++) { const nums=(rows[i].num||[]).slice(0,PICK); for (const x of nums) if (x>=0&&x<=9) r50[x]++; }
+    const lastDraw = ((rows[N-1] && rows[N-1].num) || []).slice(0, PICK);
+    const stats = [];
+    for (let n = 0; n <= 9; n++) {
+        stats.push({ n, c: cnt[n], z: +z[n].toFixed(2), r50: r50[n], miss: miss[n], maxMiss: maxMiss[n],
+            rate: +(cnt[n]/N*100).toFixed(2), last: lastSeen[n]||'-', first: firstSeen[n]||'-', b: bucketOf(z[n]) });
+    }
+    const RECENT_MAX = Math.min(200, N);
+    const recent = [];
+    for (let i = N - RECENT_MAX; i < N; i++) {
+        const r = rows[i]; const nums = (r.num||[]).slice(0,PICK);
+        let rh=0,rw=0,rc=0;
+        for (const x of nums) { const b=bucketOf(z[x]); if (b==='veryHot'||b==='hot') rh++; else if (b==='warm') rw++; else rc++; }
+        recent.push({ p: r.period, h: rh, w: rw, c: rc, n: nums.slice() });
+    }
+    const byCntDesc = stats.slice().sort((a,b)=>b.c-a.c);
+    const byCntAsc = stats.slice().sort((a,b)=>a.c-b.c);
+    const byWarmAsc = stats.filter(s=>s.b==='warm').sort((a,b)=>Math.abs(a.z)-Math.abs(b.z));
+    const rankHot={}, rankWarm={}, rankCold={};
+    byCntDesc.forEach((s,i)=>rankHot[s.n]=i+1);
+    byCntAsc.forEach((s,i)=>rankCold[s.n]=i+1);
+    byWarmAsc.forEach((s,i)=>rankWarm[s.n]=i+1);
+    const OWN={veryHot:'hot',hot:'hot',warm:'warm',cold:'cold',veryCold:'cold'};
+    const OWN_CN={hot:'热号榜',warm:'温号榜',cold:'冷号榜'};
+    stats.forEach(s=>{ const own=OWN[s.b]; s.own=own; s.ownCn=OWN_CN[own];
+        s.rankHot=rankHot[s.n]||0; s.rankWarm=rankWarm[s.n]||0; s.rankCold=rankCold[s.n]||0;
+        s.ownRank=own==='hot'?s.rankHot:(own==='warm'?s.rankWarm:s.rankCold);
+        s.ownIn=s.ownRank>0&&s.ownRank<=TOP; });
+    const dataJson = JSON.stringify({ N, exp:+exp.toFixed(2), sd:+sd.toFixed(2), r50N:R50, lastDraw,
+        lastPeriod: rows[N-1]?rows[N-1].period:'-', firstPeriod: rows[0]?rows[0].period:'-',
+        stats, recent, bucket, pick:PICK, topN:TOP, name:NAME });
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>${NAME} 冷热总榜</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#0a0e1a;color:#ddd;font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-size:13px;padding:16px;}
+h2{color:#8ec5ff;font-size:20px;margin-bottom:6px;}
+.meta{color:#888;font-size:12px;margin-bottom:14px;line-height:1.8;}
+.panel{background:rgba(20,30,50,0.5);border:1px solid rgba(120,180,255,0.15);border-radius:8px;padding:14px;margin-bottom:14px;max-width:1200px;}
+.panel h3{color:#feca57;font-size:15px;margin-bottom:10px;}
+.ctrl{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px;}
+.ctrl .lb{color:#8ec5ff;font-size:12px;}
+select{background:#2d2d30;color:#ddd;border:1px solid #555;border-radius:5px;padding:5px 9px;font-size:13px;}
+table{width:100%;border-collapse:collapse;margin-bottom:8px;}
+th,td{border:1px solid #444;padding:6px 9px;text-align:center;font-size:12px;}
+th{background:#2d2d30;color:#8ec5ff;}
+.note{background:rgba(142,197,255,0.08);border:1px solid rgba(142,197,255,0.2);border-radius:8px;padding:10px 14px;color:#aaa;font-size:12px;line-height:1.8;margin-top:8px;}
+.note b{color:#8ec5ff;}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:#bbb;align-items:center;}
+.legend span{display:flex;align-items:center;gap:5px;}
+.dot{display:inline-block;width:14px;height:14px;border-radius:3px;}
+.vhot{background:#c0392b;} .hot{background:#e74c3c;} .warm{background:#feca57;} .cold{background:#3498db;} .vcold{background:#1f618d;}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+@media(max-width:900px){.grid3{grid-template-columns:1fr;}}
+.tag{display:inline-block;padding:1px 7px;border-radius:3px;font-size:11px;color:#fff;}
+.tag.vhot{background:#c0392b;} .tag.hot{background:#e74c3c;} .tag.warm{background:#f39c12;} .tag.cold{background:#2980b9;} .tag.vcold{background:#1f618d;}
+tbody tr.in{background:rgba(254,202,87,0.07);}
+.scroll{max-height:360px;overflow-y:auto;border:1px solid rgba(120,180,255,0.1);border-radius:6px;}
+.scroll thead th{position:sticky;top:0;z-index:2;}
+.disk{display:flex;gap:4px;flex-wrap:wrap;margin:8px 0;}
+.cell{width:92px;height:70px;border-radius:6px;text-align:center;font-size:20px;font-weight:bold;padding-top:4px;}
+.cell .c{display:block;font-size:12px;font-weight:normal;opacity:0.9;}
+.cell .z{display:block;font-size:11px;opacity:0.75;}
+.cell .o{display:block;font-size:11px;font-weight:normal;opacity:0.85;}
+.ball{display:inline-block;min-width:24px;height:24px;line-height:24px;border-radius:50%;text-align:center;font-size:13px;font-weight:bold;color:#fff;margin:1px 2px;}
+.ball.tb.vhot{background:linear-gradient(135deg,#c0392b,#e74c3c);}
+.ball.tb.hot{background:rgba(231,76,60,0.5);border:1px solid rgba(231,76,60,0.85);color:#ffd5d0;}
+.ball.tb.warm{background:rgba(254,202,87,0.32);border:1px solid rgba(254,202,87,0.7);color:#ffe9a8;}
+.ball.tb.cold{background:rgba(52,152,219,0.35);border:1px solid rgba(52,152,219,0.8);color:#cfe9fb;}
+.ball.tb.vcold{background:linear-gradient(135deg,#1f618d,#2980b9);}
+.ball.tb.rp{outline:2px solid #fff;outline-offset:-2px;}
+.chart{display:flex;align-items:flex-end;gap:1px;height:180px;background:rgba(0,0,0,0.22);border-radius:6px;padding:6px 6px 0;}
+.chart .bar{flex:1 1 0;height:100%;display:flex;flex-direction:column;justify-content:flex-end;min-width:2px;}
+.chart .bar:hover{filter:brightness(1.35);}
+.seg{width:100%;}
+.seg.s-hot{background:linear-gradient(180deg,#e74c3c,#c0392b);}
+.seg.s-warm{background:linear-gradient(180deg,#feca57,#f39c12);}
+.seg.s-cold{background:linear-gradient(180deg,#3498db,#2980b9);}
+.axis{display:flex;justify-content:space-between;color:#666;font-size:11px;margin-top:4px;}
+.avg{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:#aaa;margin-top:8px;}
+.avg b{color:#feca57;}
+.pred-bar{display:flex;height:30px;border-radius:6px;overflow:hidden;margin:10px 0;border:1px solid #444;}
+.pred-bar div{display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,0.5);}
+.up{color:#feca57;font-weight:bold;} .dn{color:#7fb3d5;}
+</style>
+</head>
+<body>
+<h2>📊 ${NAME} · 冷热总榜（全量历史）</h2>
+<div class="meta" id="meta"></div>
+
+<div class="panel">
+    <h3>🌡️ ${SIZE} 个号码温度盘（出现次数 / Z 值 / 归属）</h3>
+    <div class="legend">
+        <span><span class="dot vhot"></span>很热 Z≥1.0</span>
+        <span><span class="dot hot"></span>热 0.5~1.0</span>
+        <span><span class="dot warm"></span>温 -0.5~0.5</span>
+        <span><span class="dot cold"></span>冷 -1.0~-0.5</span>
+        <span><span class="dot vcold"></span>很冷 Z≤-1.0</span>
+    </div>
+    <div class="disk" id="disk"></div>
+    <div class="note">每期开 <b>${PICK}</b> 个号（全位合计，含重复），每号每期概率 <b>${(p*100).toFixed(1)}%</b>；Z = (出现次数 − 期望) / 标准差。鼠标悬停看详情。</div>
+</div>
+
+<div class="panel">
+    <h3>🧩 近 N 期号码温度明细（每期哪些号是热 / 温 / 冷）</h3>
+    <div class="ctrl">
+        <span class="lb">最近</span>
+        <select id="inDetail"><option value="10">10 期</option><option value="20" selected>20 期</option><option value="30">30 期</option><option value="50">50 期</option><option value="100">100 期</option></select>
+        <span class="legend" style="margin:0;">
+            <span><span class="ball tb vhot">0</span>很热</span>
+            <span><span class="ball tb hot">1</span>热</span>
+            <span><span class="ball tb warm">2</span>温</span>
+            <span><span class="ball tb cold">3</span>冷</span>
+            <span><span class="ball tb vcold">4</span>很冷</span>
+            <span><span class="ball tb warm rp">5</span>白框=重号</span>
+        </span>
+    </div>
+    <div class="scroll"><table><thead><tr><th style="width:90px;">期号</th><th>开奖号码（颜色=该号温度）</th><th style="width:40px;">热</th><th style="width:40px;">温</th><th style="width:40px;">冷</th></tr></thead><tbody id="detailBody"></tbody></table></div>
+    <div class="avg" id="detailInfo"></div>
+    <div class="note">号码球颜色 = 该号在<b>全量历史</b>中的温度档；白框 = 与上期相同的号码。<b>最新一期在最上方</b>。</div>
+</div>
+
+<div class="panel">
+    <h3>📉 最近 N 期开奖的热温冷占比</h3>
+    <div class="ctrl">
+        <span class="lb">最近</span>
+        <select id="inRecent"><option value="20">20 期</option><option value="30">30 期</option><option value="50" selected>50 期</option><option value="100">100 期</option><option value="200">200 期</option></select>
+        <span class="lb" style="color:#aaa;">每根柱 = 一期 ${PICK} 个号，自下而上：热(红) / 温(黄) / 冷(蓝)</span>
+    </div>
+    <div class="chart" id="chart"></div>
+    <div class="axis"><span id="axL"></span><span id="axR"></span></div>
+    <div class="avg" id="recentAvg"></div>
+    <div class="note">随机基准：每期 ${PICK} 个号里各档期望 = ${PICK} × 总榜占比（热 ${(PICK*(bucket.veryHot+bucket.hot)/SIZE).toFixed(1)} / 温 ${(PICK*bucket.warm/SIZE).toFixed(1)} / 冷 ${(PICK*(bucket.cold+bucket.veryCold)/SIZE).toFixed(1)}）。</div>
+</div>
+
+<div class="panel">
+    <h3>🔮 下一期热温冷占比 · 智能预测</h3>
+    <div class="ctrl" style="margin-bottom:2px;"><span class="lb" style="color:#aaa;">模型：长期基准 + 近期趋势(指数加权) + 动量(一阶自相关ρ) → 归一化到 ${PICK} 个号</span></div>
+    <div class="pred-bar" id="fcBar"></div>
+    <div class="avg" id="fcNum"></div>
+    <div class="avg" id="fcInt"></div>
+    <table><thead><tr><th>档位</th><th>长期基准</th><th>近期趋势</th><th>自相关ρ</th><th>预测个数</th></tr></thead><tbody id="fcBody"></tbody></table>
+    <div class="avg" id="fcBt"></div>
+    <div class="note">⚠️ 每期独立随机，最优无偏预测就是长期基准。模型仅供参考。</div>
+</div>
+
+<div class="grid3">
+    <div class="panel"><h3>🔥 热号榜 TOP${TOP}</h3><table><thead><tr><th>#</th><th>号</th><th>次数</th><th>出现率</th><th>Z</th><th>当前遗漏</th></tr></thead><tbody id="hotBody"></tbody></table></div>
+    <div class="panel"><h3>🌤 温号榜 TOP${TOP}</h3><table><thead><tr><th>#</th><th>号</th><th>次数</th><th>偏离理论</th><th>Z</th><th>当前遗漏</th></tr></thead><tbody id="warmBody"></tbody></table></div>
+    <div class="panel"><h3>❄️ 冷号榜 TOP${TOP}</h3><table><thead><tr><th>#</th><th>号</th><th>次数</th><th>出现率</th><th>Z</th><th>当前遗漏</th></tr></thead><tbody id="coldBody"></tbody></table></div>
+</div>
+
+<div class="panel">
+    <h3>🧾 全号码归属总表（${SIZE} 个号）</h3>
+    <div class="avg" id="ownInfo"></div>
+    <table><thead><tr><th>号</th><th>温度档</th><th>归属榜</th><th>榜内名次</th><th>次数</th><th>偏离理论</th><th>Z</th><th>当前遗漏</th><th>最大遗漏</th></tr></thead><tbody id="ownBody"></tbody></table>
+    <div class="note">黄底行 = 进入该榜 TOP${TOP}。</div>
+</div>
+
+<div class="panel">
+    <h3>⏳ 当前遗漏榜 TOP${TOP}</h3>
+    <table><thead><tr><th>#</th><th>号</th><th>当前遗漏</th><th>历史最大</th><th>次数</th><th>Z</th><th>上次出现</th></tr></thead><tbody id="missBody"></tbody></table>
+</div>
+
+<div class="panel">
+    <h3>📈 冷热分布（按 Z 档统计号码个数）</h3>
+    <div id="bucketBox"></div>
+    <div class="note">理论：Z≥1 与 Z≤-1 各约 16%，-0.5~0.5 约 38%（正态分布）。</div>
+</div>
+
+<script>
+var D=${dataJson};
+var STATS=D.stats;
+var BCLS={veryHot:'vhot',hot:'hot',warm:'warm',cold:'cold',veryCold:'vcold'};
+var BCN={veryHot:'很热',hot:'热',warm:'温',cold:'冷',veryCold:'很冷'};
+var FCKEYS=['h','w','c'], FCNAME={h:'热',w:'温',c:'冷'}, curArr=null;
+var BMAP=null, ZMAP=null;
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function rowsHtml(arr,extra){var h='';arr.forEach(function(s,i){h+='<tr><td>'+(i+1)+'</td><td><span class="ball tb '+BCLS[s.b]+'">'+s.n+'</span></td><td>'+s.c+'</td><td>'+s.rate+'%</td><td>'+s.z+'</td><td>'+s.miss+'</td>'+(extra?'<td>'+esc(s.last)+'</td>':'')+'</tr>';});return h;}
+
+document.getElementById('meta').innerHTML='统计区间：<b>'+D.firstPeriod+'</b> ~ <b>'+D.lastPeriod+'</b>（共 <b>'+D.N+'</b> 期）· 每期开 <b>'+D.pick+'</b> 个号 · 每号概率 <b>'+(D.pick/10*100).toFixed(1)+'%</b> · 期望 <b>'+D.exp+'</b> 次/号 · 标准差 <b>'+D.sd+'</b>';
+
+(function(){
+    BMAP={};ZMAP={};STATS.forEach(function(s){BMAP[s.n]=s.b;ZMAP[s.n]=s.z;});
+    var OWNSHORT={hot:'热',warm:'温',cold:'冷'};
+    var h='';
+    STATS.forEach(function(s){
+        h+='<div class="cell '+BCLS[s.b]+'" title="'+s.n+' 号：出现 '+s.c+' 次（'+s.rate+'%，Z='+s.z+'）&#10;当前遗漏 '+s.miss+' 期 · 最大遗漏 '+s.maxMiss+' 期&#10;上次 '+s.last+' · 首次 '+s.first+'&#10;归属：'+s.ownCn+' '+(s.ownIn?('第'+s.ownRank+'名'):'未入TOP'+D.topN)+'">'
+          +s.n+'<span class="c">'+s.c+'次</span><span class="z">Z '+s.z+'</span>'
+          +'<span class="o">'+OWNSHORT[s.own]+(s.ownIn?('#'+s.ownRank):'')+'</span></div>';
+    });
+    document.getElementById('disk').innerHTML=h;
+})();
+
+document.getElementById('hotBody').innerHTML=rowsHtml(STATS.slice().sort(function(a,b){return b.c-a.c;}).slice(0,D.topN),false);
+document.getElementById('coldBody').innerHTML=rowsHtml(STATS.slice().sort(function(a,b){return a.c-b.c;}).slice(0,D.topN),false);
+var wh='';
+STATS.filter(function(s){return s.b==='warm';}).sort(function(a,b){return Math.abs(a.z)-Math.abs(b.z);}).slice(0,D.topN).forEach(function(s,i){
+    var diff=s.c-D.exp;
+    wh+='<tr><td>'+(i+1)+'</td><td><span class="ball tb warm">'+s.n+'</span></td><td>'+s.c+'</td><td>'+(diff>=0?'+':'')+diff.toFixed(0)+'</td><td>'+s.z+'</td><td>'+s.miss+'</td></tr>';
+});
+document.getElementById('warmBody').innerHTML=wh;
+
+(function(){
+    var oh='',inCnt={hot:0,warm:0,cold:0},ownCnt={hot:0,warm:0,cold:0};
+    STATS.forEach(function(s){
+        ownCnt[s.own]++;if(s.ownIn)inCnt[s.own]++;
+        var diff=s.c-D.exp;
+        oh+='<tr'+(s.ownIn?' class="in"':'')+'><td><span class="ball tb '+BCLS[s.b]+'">'+s.n+'</span></td>'
+          +'<td><span class="tag '+BCLS[s.b]+'">'+BCN[s.b]+'</span></td><td>'+s.ownCn+'</td>'
+          +'<td><b style="color:'+(s.ownIn?'#feca57':'#666')+';">'+(s.ownIn?('#'+s.ownRank):'—')+'</b></td>'
+          +'<td>'+s.c+'</td><td>'+(diff>=0?'+':'')+diff.toFixed(0)+'</td><td>'+s.z+'</td><td>'+s.miss+'</td><td>'+s.maxMiss+'</td></tr>';
+    });
+    document.getElementById('ownBody').innerHTML=oh;
+    document.getElementById('ownInfo').innerHTML='热号榜 '+ownCnt.hot+' 个（TOP'+D.topN+' '+inCnt.hot+'） · 温号榜 '+ownCnt.warm+' 个（TOP'+D.topN+' '+inCnt.warm+'） · 冷号榜 '+ownCnt.cold+' 个（TOP'+D.topN+' '+inCnt.cold+'）';
+})();
+
+document.getElementById('missBody').innerHTML=(function(){
+    var h='';STATS.slice().sort(function(a,b){return b.miss-a.miss;}).slice(0,D.topN).forEach(function(s,i){
+        h+='<tr><td>'+(i+1)+'</td><td><span class="ball tb '+BCLS[s.b]+'">'+s.n+'</span></td><td><b class="up">'+s.miss+'</b></td><td>'+s.maxMiss+'</td><td>'+s.c+'</td><td>'+s.z+'</td><td>'+esc(s.last)+'</td></tr>';
+    });return h;
+})();
+
+(function(){
+    var h='<table><thead><tr><th>档位</th><th>个数</th><th>占比</th><th>理论</th></tr></thead><tbody>';
+    [['veryHot','很热',15.87],['hot','热',21.97],['warm','温',38.30],['cold','冷',21.97],['veryCold','很冷',15.87]].forEach(function(r){
+        var c=D.bucket[r[0]],pc=(c/10*100).toFixed(1);
+        h+='<tr><td><span class="tag '+r[0]+'">'+r[1]+'</span></td><td>'+c+'</td><td>'+pc+'%</td><td>'+r[2]+'%</td></tr>';
+    });
+    h+='</tbody></table>';document.getElementById('bucketBox').innerHTML=h;
+})();
+
+function renderChart(){
+    var maxLen=D.recent.length;
+    var n=parseInt(document.getElementById('inRecent').value,10)||50;
+    if(n>maxLen)n=maxLen;
+    var arr=D.recent.slice(-n);
+    var h='';
+    arr.forEach(function(r){
+        var tp=esc(r.p)+'&#10;热'+r.h+'('+(r.h/D.pick*100).toFixed(0)+'%) · 温'+r.w+'('+(r.w/D.pick*100).toFixed(0)+'%) · 冷'+r.c+'('+(r.c/D.pick*100).toFixed(0)+'%)&#10;号码：'+r.n.join(' ');
+        h+='<div class="bar" title="'+tp+'"><div class="seg s-cold" style="height:'+(r.c/D.pick*100)+'%;"></div><div class="seg s-warm" style="height:'+(r.w/D.pick*100)+'%;"></div><div class="seg s-hot" style="height:'+(r.h/D.pick*100)+'%;"></div></div>';
+    });
+    document.getElementById('chart').innerHTML=h;
+    document.getElementById('axL').textContent='◀ '+(arr[0]?arr[0].p:'');
+    document.getElementById('axR').textContent=(arr[arr.length-1]?arr[arr.length-1].p:'')+' ▶';
+    var th=0,tw=0,tc=0;arr.forEach(function(r){th+=r.h;tw+=r.w;tc+=r.c;});
+    var m=arr.length;
+    document.getElementById('recentAvg').innerHTML='最近 <b>'+m+'</b> 期平均：热 <b>'+(th/m).toFixed(2)+'</b> ('+(th/m/D.pick*100).toFixed(1)+'%) · 温 <b>'+(tw/m).toFixed(2)+'</b> ('+(tw/m/D.pick*100).toFixed(1)+'%) · 冷 <b>'+(tc/m).toFixed(2)+'</b> ('+(tc/m/D.pick*100).toFixed(1)+'%)';
+    curArr=arr;renderForecast();
+}
+
+function baseMix(){var tot=D.bucket.veryHot+D.bucket.hot+D.bucket.warm+D.bucket.cold+D.bucket.veryCold;return{h:D.pick*(D.bucket.veryHot+D.bucket.hot)/tot,w:D.pick*D.bucket.warm/tot,c:D.pick*(D.bucket.cold+D.bucket.veryCold)/tot};}
+function seqStats(seq,k){var n=seq.length,i,s=0;for(i=0;i<n;i++)s+=seq[i][k];var mu=s/n,num=0,den=0;for(i=1;i<n;i++)num+=(seq[i][k]-mu)*(seq[i-1][k]-mu);for(i=0;i<n;i++)den+=(seq[i][k]-mu)*(seq[i][k]-mu);return{mu:mu,rho:den>0?num/den:0};}
+function ewmaOf(seq,k,lam){var sw=0,w=0,pp=1,i;for(i=seq.length-1;i>=0;i--){sw+=seq[i][k]*pp;w+=pp;pp*=lam;}return sw/w;}
+function forecastOne(seq){var base=baseMix(),out={},parts={};var lam=Math.pow(0.5,1/Math.max(3,Math.round(seq.length/3)));FCKEYS.forEach(function(k){var st=seqStats(seq,k),ew=ewmaOf(seq,k,lam),last=seq[seq.length-1][k];var drift=ew-base[k],mom=st.rho*(last-base[k]);out[k]=base[k]+0.5*drift+0.5*mom;parts[k]={base:base[k],ew:ew,rho:st.rho,last:last};});var sum=0;FCKEYS.forEach(function(k){out[k]=Math.max(0,out[k]);sum+=out[k];});FCKEYS.forEach(function(k){out[k]=out[k]*D.pick/sum;});return{pred:out,parts:parts,base:base};}
+function roundToPick(p){var raw=FCKEYS.map(function(k){return p[k];}),bs=raw.map(function(v){return Math.floor(v);});var rest=D.pick-bs[0]-bs[1]-bs[2];var order=[0,1,2].sort(function(a,b){return (raw[b]-bs[b])-(raw[a]-bs[a]);});for(var i=0;rest>0; i++,rest--)bs[order[i%3]]++;return{h:bs[0],w:bs[1],c:bs[2]};}
+function backtest(arr){var base=baseMix(),em=[],eb=[],es=[];for(var t=10;t<arr.length;t++){var f=forecastOne(arr.slice(0,t));FCKEYS.forEach(function(k){var e=f.pred[k]-arr[t][k];em.push(Math.abs(e));es.push(e*e);eb.push(Math.abs(base[k]-arr[t][k]));});}if(!em.length)return null;var mean=function(a){var s=0;for(var i=0;i<a.length;i++)s+=a[i];return s/a.length;};return{mae:mean(em),maeBase:mean(eb),rmse:Math.sqrt(mean(es)),n:em.length/3};}
+function renderForecast(){
+    var arr=curArr;if(!arr||arr.length<3){document.getElementById('fcBt').innerHTML='<span style="color:#888;">样本不足</span>';return;}
+    var f=forecastOne(arr),bt=backtest(arr);
+    var cls={h:'s-hot',w:'s-warm',c:'s-cold'},col={h:'#ff9b91',w:'#feca57',c:'#9fd0f0'};
+    var barHtml='';FCKEYS.forEach(function(k){var pc=f.pred[k]/D.pick*100;if(pc>=3)barHtml+='<div class="'+cls[k]+'" style="width:'+pc.toFixed(2)+'%;">'+FCNAME[k]+f.pred[k].toFixed(1)+'</div>';});
+    document.getElementById('fcBar').innerHTML=barHtml;
+    var nh='';FCKEYS.forEach(function(k){var pc=f.pred[k]/D.pick*100;nh+='<span style="color:'+col[k]+';">'+FCNAME[k]+'<b>'+f.pred[k].toFixed(2)+'</b>个 ('+pc.toFixed(1)+'%)</span>';});
+    document.getElementById('fcNum').innerHTML=nh;
+    var ri=roundToPick(f.pred);
+    document.getElementById('fcInt').innerHTML='取整建议(共'+D.pick+'个)：热 <b>'+ri.h+'</b> · 温 <b>'+ri.w+'</b> · 冷 <b>'+ri.c+'</b> ｜ 上期：热'+f.parts.h.last+'·温'+f.parts.w.last+'·冷'+f.parts.c.last;
+    var tb='';FCKEYS.forEach(function(k){var pp=f.parts[k];tb+='<tr><td><b style="color:'+col[k]+';">'+FCNAME[k]+'</b></td><td>'+pp.base.toFixed(2)+'</td><td>'+pp.ew.toFixed(2)+'</td><td>'+pp.rho.toFixed(3)+'</td><td><b style="color:#feca57;">'+f.pred[k].toFixed(2)+'</b></td></tr>';});
+    document.getElementById('fcBody').innerHTML=tb;
+    if(!bt){document.getElementById('fcBt').innerHTML='<span style="color:#888;">样本不足，无法回测</span>';return;}
+    var diff=(bt.maeBase-bt.mae)/bt.maeBase*100;
+    var verdict=diff>1?'<span class="up">模型略优 '+diff.toFixed(1)+'%</span>':(diff<-1?'<span class="dn">不如基准 '+Math.abs(diff).toFixed(1)+'%</span>':'持平(差'+diff.toFixed(1)+'%)');
+    document.getElementById('fcBt').innerHTML='回测('+bt.n+'期)：模型 MAE <b>'+bt.mae.toFixed(2)+'</b> vs 基准 <b>'+bt.maeBase.toFixed(2)+'</b> · RMSE <b>'+bt.rmse.toFixed(2)+'</b> → '+verdict;
+}
+renderChart();
+
+function renderDetail(){
+    var n=parseInt(document.getElementById('inDetail').value,10)||20;
+    var arr=D.recent.slice(-n);
+    var h='',th=0,tw=0,tc=0,rep=0;
+    for(var k=arr.length-1;k>=0;k--){
+        var r=arr[k],prev=(k>0?arr[k-1]:null),ps={};
+        if(prev)prev.n.forEach(function(x){ps[x]=1;});
+        var nums=r.n.slice();
+        h+='<tr'+(k===arr.length-1?' style="background:rgba(254,202,87,0.07);"':'')+'><td>'+esc(r.p)+(k===arr.length-1?'<span style="color:#feca57;font-size:10px;"> 最新</span>':'')+'</td><td style="text-align:left;">';
+        nums.forEach(function(x){
+            var b=BMAP[x]||'warm',isRp=ps[x]?1:0;if(isRp)rep++;
+            h+='<span class="ball tb '+BCLS[b]+(isRp?' rp':'')+'" title="'+x+'号 '+BCN[b]+'(Z'+ZMAP[x]+')">'+x+'</span>';
+        });
+        h+='</td><td style="color:#ff9b91;"><b>'+r.h+'</b></td><td style="color:#feca57;"><b>'+r.w+'</b></td><td style="color:#9fd0f0;"><b>'+r.c+'</b></td></tr>';
+        th+=r.h;tw+=r.w;tc+=r.c;
+    }
+    document.getElementById('detailBody').innerHTML=h;
+    var tot=th+tw+tc,m=arr.length;
+    document.getElementById('detailInfo').innerHTML='近 <b>'+m+'</b> 期共 <b>'+tot+'</b> 个出号：热 <b>'+th+'</b> ('+(th/tot*100).toFixed(1)+'%) · 温 <b>'+tw+'</b> ('+(tw/tot*100).toFixed(1)+'%) · 冷 <b>'+tc+'</b> ('+(tc/tot*100).toFixed(1)+'%) · 重号 '+rep+' 个 (均 '+(m>1?(rep/(m-1)).toFixed(2):'0')+' 个/期)';
+}
+renderDetail();
+
+document.getElementById('inRecent').addEventListener('change',renderChart);
+document.getElementById('inDetail').addEventListener('change',renderDetail);
 </script>
 </body>
 </html>`;
