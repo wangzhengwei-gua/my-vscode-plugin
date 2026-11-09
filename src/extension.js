@@ -13841,11 +13841,9 @@ function classify(combo){
 }
 function balls(combo){
     var cnt={}; combo.forEach(function(d){cnt[d]=(cnt[d]||0)+1;});
-    var seen={};
     var h='';
     combo.forEach(function(d){
-        var cls = (cnt[d]>1 && !seen[d]) ? 'r' : '';
-        if(cnt[d]>1) seen[d]=1;
+        var cls = cnt[d]>1 ? 'r' : '';
         h+='<span class="ball '+cls+'">'+d+'</span>';
     });
     return h;
@@ -13898,7 +13896,7 @@ function render(){
     });
     var lh='';
     order.forEach(function(k){
-        if(!groups[k]) return;
+        if(!groups[k] || !groups[k].list.length) return;
         var g=groups[k];
         lh+='<div style="width:100%;margin:12px 0 4px;color:#feca57;font-weight:bold;border-bottom:1px solid #333;padding-bottom:4px;">'+g.name+'（'+g.list.length+' 个组合 · '+g.d+' 注直选）</div>';
         g.list.forEach(function(c){
@@ -13912,7 +13910,10 @@ function render(){
         g.list.forEach(function(c){ lh+='<span class="combo">'+balls(c)+'<span class="n">'+directNotes(c)+'注</span></span>'; });
     });
     document.getElementById('comboList').innerHTML=lh||'<div class="empty">无组合</div>';
-    document.getElementById('noteBox').innerHTML='每个组合括号内为直选注数；<span class="ball r">红球</span>=重复数字，<span class="ball">蓝球</span>=不同数字。直选总注数 = 10<sup>'+digits+'</sup> = '+Math.pow(10,digits).toLocaleString()+' 对所有和值之和。';
+    document.getElementById('noteBox').innerHTML='每个组合括号内为直选注数；<span class="ball r">红球</span>=重复数字，<span class="ball">蓝球</span>=不同数字。'
+      +'<br><b>单式(豹子)只在和值能被 '+digits+' 整除时存在</b>（'+digits+' 位全同：和值 = 数字×'+digits+'，即 '+
+      (digits===3?'0/3/6/9/12/15/18/21/24/27':'0/5/10/15/20/25/30/35/40/45')+'），其他和值没有单式属正常。'
+      +'<br>直选总注数 = 10<sup>'+digits+'</sup> = '+Math.pow(10,digits).toLocaleString()+' 对所有和值之和。';
 }
 document.getElementById('btnQuery').addEventListener('click',render);
 document.getElementById('selType').addEventListener('change',function(){
