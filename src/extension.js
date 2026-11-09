@@ -1529,6 +1529,16 @@ function activate(context) {
     });
     context.subscriptions.push(kl8TempClassDisposable);
 
+    // 和值组合查询（排三/3D/排五）
+    let sumQueryDisposable = vscode.commands.registerCommand('myPlugin.sumQuery', () => {
+        const panel = vscode.window.createWebviewPanel(
+            'sumQuery', '和值组合查询（排三/3D/排五）', vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getSumQueryHtml();
+    });
+    context.subscriptions.push(sumQueryDisposable);
+
     // 快乐8 热温冷分析 + 智能选号（热度Z分数 + 重号延续 + 8区均衡 + 形态约束）
     let kl8HotColdDisposable = vscode.commands.registerCommand('myPlugin.kl8HotCold', async () => {
         let history = [];
@@ -2845,6 +2855,7 @@ class LotteryTreeDataProvider {
                 this.createItem('🔥 快8热温冷选号', 'myPlugin.kl8HotCold', '🔥'),
                 this.createItem('📊 快8冷热总榜', 'myPlugin.kl8AllHotCold', '📊'),
                 this.createItem('🌡️ 快8温度分类', 'myPlugin.kl8TempClass', '🌡️'),
+                this.createItem('🔢 和值组合查询', 'myPlugin.sumQuery', '🔢'),
                 this.createItem('🛤️ 012路趋势', 'myPlugin.roadAnalysis', '🛤️'),
                 this.createItem('🧩 排3/3D 形态分析', 'myPlugin.pl3FormType', '🧩'),
                 this.createItem('📊 排3/排五/3D 冷热总榜', 'myPlugin.digitHotCold', '📊'),
@@ -13711,6 +13722,185 @@ document.getElementById('hotOnlyG').innerHTML=D.hot.filter(function(s){return s.
 document.getElementById('warmG').innerHTML=D.warm.map(ball).join('')||'<span class="subtag">无</span>';
 document.getElementById('coldOnlyG').innerHTML=D.cold.filter(function(s){return s.b==='cold';}).map(ball).join('')||'<span class="subtag">无</span>';
 document.getElementById('veryColdG').innerHTML=D.cold.filter(function(s){return s.b==='veryCold';}).map(ball).join('')||'<span class="subtag">无</span>';
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 和值组合查询（排三/3D/排五）：输入和值 → 列出所有组选组合 + 直选注数 + 分类统计
+ */
+function getSumQueryHtml() {
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>和值组合查询（排三 / 3D / 排五）</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#0a0e1a;color:#ddd;font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-size:13px;padding:16px;}
+h2{color:#8ec5ff;font-size:20px;margin-bottom:10px;}
+.ctrl{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px;}
+.ctrl .lb{color:#8ec5ff;font-size:12px;}
+select,input[type=number]{background:#2d2d30;color:#ddd;border:1px solid #555;border-radius:5px;padding:6px 10px;font-size:13px;}
+input[type=number]{width:90px;}
+button{background:#0e639c;color:#fff;border:none;border-radius:5px;padding:7px 16px;font-size:13px;cursor:pointer;}
+button:hover{background:#1177bb;}
+.panel{background:rgba(20,30,50,0.5);border:1px solid rgba(120,180,255,0.15);border-radius:8px;padding:14px;margin-bottom:14px;max-width:1200px;}
+.panel h3{color:#feca57;font-size:15px;margin-bottom:10px;}
+.sub{color:#888;font-size:12px;margin-bottom:8px;line-height:1.7;}
+.note{background:rgba(142,197,255,0.08);border:1px solid rgba(142,197,255,0.2);border-radius:8px;padding:10px 14px;color:#aaa;font-size:12px;line-height:1.8;margin-top:8px;}
+.note b{color:#8ec5ff;}
+.stat-row{display:flex;gap:16px;flex-wrap:wrap;margin:8px 0;font-size:13px;}
+.stat-row b{color:#feca57;}
+.ball{display:inline-block;min-width:26px;height:26px;line-height:26px;border-radius:50%;text-align:center;font-size:12px;font-weight:bold;color:#fff;margin:2px;background:linear-gradient(135deg,#3498db,#2980b9);}
+.ball.r{background:linear-gradient(135deg,#e74c3c,#c0392b);}   /* 重复数字标红 */
+.group{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 12px;align-items:center;}
+.combo{display:inline-flex;align-items:center;gap:1px;background:rgba(255,255,255,0.04);border:1px solid #333;border-radius:6px;padding:3px 5px;}
+.combo .n{font-size:11px;color:#888;margin-left:4px;}
+table{width:100%;border-collapse:collapse;margin-top:6px;}
+th,td{border:1px solid #444;padding:5px 9px;text-align:center;font-size:12px;}
+th{background:#2d2d30;color:#8ec5ff;}
+.empty{color:#666;font-size:13px;padding:20px;text-align:center;}
+</style>
+</head>
+<body>
+<h2>🔢 和值组合查询（排三 / 福彩3D / 排列五）</h2>
+<div class="ctrl">
+    <span class="lb">彩种：</span>
+    <select id="selType">
+        <option value="3">排列三 / 福彩3D（3 位）</option>
+        <option value="5">排列五（5 位）</option>
+    </select>
+    <span class="lb">和值：</span>
+    <input type="number" id="inSum" value="11" min="0" max="27">
+    <button id="btnQuery">🔍 查询</button>
+    <span class="sub" id="rangeTip"></span>
+</div>
+
+<div class="panel" id="resultPanel" style="display:none;">
+    <h3 id="resultTitle"></h3>
+    <div class="stat-row" id="statRow"></div>
+    <div class="sub" id="classBox"></div>
+    <div class="group" id="comboList"></div>
+    <div class="note" id="noteBox"></div>
+</div>
+
+<div class="panel">
+    <h3>📋 说明</h3>
+    <div class="sub">
+        · <b>排列三 / 福彩3D</b>：3 位数字（百/十/个），每位 0-9，和值范围 0~27。<br>
+        · <b>排列五</b>：5 位数字（万/千/百/十/个），每位 0-9，和值范围 0~45。<br>
+        · <b>组选组合</b>：按非递减排列（不区分位置），如 029 涵盖 029/092/209/290/902/920 共 6 注直选。<br>
+        · <b>直选注数</b>：该组合的所有排列数 = 位数的阶乘 ÷ 各重复数字个数的阶乘乘积。<br>
+        · 重复数字用<span class="ball r">红</span>球标注，不同数字用<span class="ball">蓝</span>球标注。
+    </div>
+</div>
+
+<script>
+function fact(n){var r=1;for(var i=2;i<=n;i++)r*=i;return r;}
+// 枚举非递减组合（digits 位，和值为 sum）
+function enumCombos(digits, sum){
+    var res=[];
+    function rec(pos, start, cur, path){
+        if(pos===digits){ if(cur===sum) res.push(path.slice()); return; }
+        var remain=digits-pos;
+        for(var d=start; d<=9; d++){
+            var minSum=cur + d*remain;
+            var maxSum=cur + d*remain + (9-d)*(remain-1); // 后续最大
+            if(minSum>sum) break;
+            if(cur + d + 9*(remain-1) < sum) continue;
+            path.push(d);
+            rec(pos+1, d, cur+d, path);
+            path.pop();
+        }
+    }
+    rec(0,0,0,[]);
+    return res;
+}
+// 直选注数 = digits! / ∏(count[d]!)
+function directNotes(combo){
+    var cnt={};
+    combo.forEach(function(d){ cnt[d]=(cnt[d]||0)+1; });
+    var den=1;
+    for(var k in cnt) den*=fact(cnt[k]);
+    return fact(combo.length)/den;
+}
+// 分类（按重复模式）
+function classify(combo){
+    var cnt={};
+    combo.forEach(function(d){ cnt[d]=(cnt[d]||0)+1; });
+    var counts=Object.values(cnt).sort(function(a,b){return b-a;});
+    var key=counts.join('');
+    var names3={'3':'豹子(三同)','21':'组三(两同)','111':'组六(三不同)'};
+    var names5={'5':'五同','41':'四同一','32':'三同+两同','311':'三同+两不同','221':'两对+一','2111':'一对+三不同','11111':'全不同'};
+    var map=combo.length===3?names3:names5;
+    return {key:key, name:map[key]||key};
+}
+function balls(combo){
+    var cnt={}; combo.forEach(function(d){cnt[d]=(cnt[d]||0)+1;});
+    var seen={};
+    var h='';
+    combo.forEach(function(d){
+        var cls = (cnt[d]>1 && !seen[d]) ? 'r' : '';
+        if(cnt[d]>1) seen[d]=1;
+        h+='<span class="ball '+cls+'">'+d+'</span>';
+    });
+    return h;
+}
+function render(){
+    var digits=parseInt(document.getElementById('selType').value,10);
+    var sum=parseInt(document.getElementById('inSum').value,10);
+    if(isNaN(sum)){ document.getElementById('resultPanel').style.display='none'; return; }
+    var maxSum=digits*9;
+    document.getElementById('rangeTip').textContent='和值范围 0 ~ '+maxSum;
+    if(sum<0 || sum>maxSum){
+        document.getElementById('resultPanel').style.display='block';
+        document.getElementById('resultTitle').textContent='和值 '+sum+' 超出范围（'+digits+' 位最大和值 '+maxSum+'）';
+        document.getElementById('statRow').innerHTML=''; document.getElementById('classBox').innerHTML='';
+        document.getElementById('comboList').innerHTML='<div class="empty">无有效组合</div>';
+        document.getElementById('noteBox').innerHTML=''; return;
+    }
+    var combos=enumCombos(digits, sum);
+    var totalDirect=0;
+    var classes={};
+    combos.forEach(function(c){
+        var dn=directNotes(c);
+        totalDirect+=dn;
+        var cls=classify(c);
+        classes[cls.name]=classes[cls.name]||{n:0,d:0};
+        classes[cls.name].n++; classes[cls.name].d+=dn;
+    });
+    document.getElementById('resultPanel').style.display='block';
+    document.getElementById('resultTitle').textContent=(digits===3?'排列三/3D':'排列五')+' · 和值 '+sum+' 的组合';
+    document.getElementById('statRow').innerHTML=
+        '组选组合 <b>'+combos.length+'</b> 个 · 直选 <b>'+totalDirect.toLocaleString()+'</b> 注 · '+(digits===3?'理论占比 '+(totalDirect/1000*100).toFixed(2)+'%':'理论占比 '+(totalDirect/100000*100).toFixed(2)+'%');
+    // 分类
+    var ch='<b>分类统计：</b><br>';
+    Object.keys(classes).sort().forEach(function(name){
+        var c=classes[name];
+        ch+='· '+name+'：'+c.n+' 个组合 · '+c.d+' 注直选<br>';
+    });
+    document.getElementById('classBox').innerHTML=ch;
+    // 组合列表
+    var lh='';
+    combos.forEach(function(c){
+        lh+='<span class="combo">'+balls(c)+'<span class="n">'+directNotes(c)+'注</span></span>';
+    });
+    document.getElementById('comboList').innerHTML=lh||'<div class="empty">无组合</div>';
+    document.getElementById('noteBox').innerHTML='每个组合括号内为直选注数；<span class="ball r">红球</span>=重复数字，<span class="ball">蓝球</span>=不同数字。直选总注数 = 10<sup>'+digits+'</sup> = '+Math.pow(10,digits).toLocaleString()+' 对所有和值之和。';
+}
+document.getElementById('btnQuery').addEventListener('click',render);
+document.getElementById('selType').addEventListener('change',function(){
+    var d=parseInt(this.value,10);
+    document.getElementById('inSum').max=d*9;
+    var cur=parseInt(document.getElementById('inSum').value,10);
+    if(cur>d*9) document.getElementById('inSum').value=d*9;
+    if(cur<0) document.getElementById('inSum').value=0;
+    render();
+});
+document.getElementById('inSum').addEventListener('input',render);
+render();
 </script>
 </body>
 </html>`;

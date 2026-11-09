@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.9.11",
+    "version": "0.9.12",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -61,6 +61,7 @@
         "onCommand:myPlugin.pl3FormType",
         "onCommand:myPlugin.digitHotCold",
         "onCommand:myPlugin.kl8TempClass",
+        "onCommand:myPlugin.sumQuery",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -236,6 +237,10 @@
             {
                 "command": "myPlugin.kl8TempClass",
                 "title": "快8温度分类"
+            },
+            {
+                "command": "myPlugin.sumQuery",
+                "title": "和值组合查询"
             }
         ],
         "viewsContainers": {
