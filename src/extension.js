@@ -13769,8 +13769,9 @@ th{background:#2d2d30;color:#8ec5ff;}
 <div class="ctrl">
     <span class="lb">彩种：</span>
     <select id="selType">
-        <option value="3">排列三 / 福彩3D（3 位）</option>
-        <option value="5">排列五（5 位）</option>
+        <option value="pl3">排列三（3 位）</option>
+        <option value="fc3d">福彩3D（3 位）</option>
+        <option value="pl5">排列五（5 位）</option>
     </select>
     <span class="lb">和值：</span>
     <input type="number" id="inSum" value="11" min="0" max="27">
@@ -13789,7 +13790,8 @@ th{background:#2d2d30;color:#8ec5ff;}
 <div class="panel">
     <h3>📋 说明</h3>
     <div class="sub">
-        · <b>排列三 / 福彩3D</b>：3 位数字（百/十/个），每位 0-9，和值范围 0~27。<br>
+        · <b>排列三</b>：3 位数字（百/十/个），每位 0-9，和值范围 0~27。<br>
+        · <b>福彩3D</b>：3 位数字（百/十/个），每位 0-9，和值范围 0~27（与排列三规则相同，独立彩种）。<br>
         · <b>排列五</b>：5 位数字（万/千/百/十/个），每位 0-9，和值范围 0~45。<br>
         · <b>组选组合</b>：按非递减排列（不区分位置），如 029 涵盖 029/092/209/290/902/920 共 6 注直选。<br>
         · <b>直选注数</b>：该组合的所有排列数 = 位数的阶乘 ÷ 各重复数字个数的阶乘乘积。<br>
@@ -13848,8 +13850,10 @@ function balls(combo){
     });
     return h;
 }
+var TYPE_MAP={pl3:{digits:3,name:'排列三'},fc3d:{digits:3,name:'福彩3D'},pl5:{digits:5,name:'排列五'}};
 function render(){
-    var digits=parseInt(document.getElementById('selType').value,10);
+    var info=TYPE_MAP[document.getElementById('selType').value];
+    var digits=info.digits, name=info.name;
     var sum=parseInt(document.getElementById('inSum').value,10);
     if(isNaN(sum)){ document.getElementById('resultPanel').style.display='none'; return; }
     var maxSum=digits*9;
@@ -13872,7 +13876,7 @@ function render(){
         classes[cls.name].n++; classes[cls.name].d+=dn;
     });
     document.getElementById('resultPanel').style.display='block';
-    document.getElementById('resultTitle').textContent=(digits===3?'排列三/3D':'排列五')+' · 和值 '+sum+' 的组合';
+    document.getElementById('resultTitle').textContent=name+' · 和值 '+sum+' 的组合';
     document.getElementById('statRow').innerHTML=
         '组选组合 <b>'+combos.length+'</b> 个 · 直选 <b>'+totalDirect.toLocaleString()+'</b> 注 · '+(digits===3?'理论占比 '+(totalDirect/1000*100).toFixed(2)+'%':'理论占比 '+(totalDirect/100000*100).toFixed(2)+'%');
     // 分类
@@ -13892,7 +13896,8 @@ function render(){
 }
 document.getElementById('btnQuery').addEventListener('click',render);
 document.getElementById('selType').addEventListener('change',function(){
-    var d=parseInt(this.value,10);
+    var info=TYPE_MAP[this.value];
+    var d=info.digits;
     document.getElementById('inSum').max=d*9;
     var cur=parseInt(document.getElementById('inSum').value,10);
     if(cur>d*9) document.getElementById('inSum').value=d*9;
