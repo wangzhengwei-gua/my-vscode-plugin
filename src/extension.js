@@ -13758,6 +13758,13 @@ button:hover{background:#1177bb;}
 .group{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 12px;align-items:center;}
 .combo{display:inline-flex;align-items:center;gap:1px;background:rgba(255,255,255,0.04);border:1px solid #333;border-radius:6px;padding:3px 5px;}
 .combo .n{font-size:11px;color:#888;margin-left:4px;}
+.combo-item{display:inline-block;background:rgba(255,255,255,0.04);border:1px solid #333;border-radius:6px;padding:6px 8px;margin:4px;vertical-align:top;}
+.combo-head{margin-bottom:6px;font-size:12px;color:#bbb;}
+.combo-head .n{color:#888;margin-left:6px;}
+.perms{display:flex;flex-wrap:wrap;gap:4px;}
+.perm{display:inline-flex;gap:1px;padding:2px 4px;background:rgba(0,0,0,0.25);border-radius:4px;}
+.ball.s{min-width:22px;height:22px;line-height:22px;font-size:11px;margin:0;}
+.perm-note{color:#666;font-size:11px;padding:4px;}
 table{width:100%;border-collapse:collapse;margin-top:6px;}
 th,td{border:1px solid #444;padding:5px 9px;text-align:center;font-size:12px;}
 th{background:#2d2d30;color:#8ec5ff;}
@@ -13848,6 +13855,21 @@ function balls(combo){
     });
     return h;
 }
+// 展开一个组选组合为所有不重复的直选排列（去重，按字典序）
+function permute(arr){
+    var res=[];
+    function rec(a, rest){
+        if(!rest.length){ res.push(a.slice()); return; }
+        var seen={};
+        for(var i=0;i<rest.length;i++){
+            if(seen[rest[i]]) continue; seen[rest[i]]=1;
+            rec(a.concat([rest[i]]), rest.slice(0,i).concat(rest.slice(i+1)));
+        }
+    }
+    rec([], arr.slice());
+    res.sort();
+    return res;
+}
 var TYPE_MAP={pl3:{digits:3,name:'排列三'},fc3d:{digits:3,name:'福彩3D'},pl5:{digits:5,name:'排列五'}};
 function render(){
     var info=TYPE_MAP[document.getElementById('selType').value];
@@ -13900,7 +13922,17 @@ function render(){
         var g=groups[k];
         lh+='<div style="width:100%;margin:12px 0 4px;color:#feca57;font-weight:bold;border-bottom:1px solid #333;padding-bottom:4px;">'+g.name+'（'+g.list.length+' 个组合 · '+g.d+' 注直选）</div>';
         g.list.forEach(function(c){
-            lh+='<span class="combo">'+balls(c)+'<span class="n">'+directNotes(c)+'注</span></span>';
+            var dn=directNotes(c);
+            var perms=permute(c);
+            var ph='';
+            if(perms.length<=24){
+                perms.forEach(function(p){
+                    ph+='<span class="perm">'+p.map(function(d){return '<span class="ball s">'+d+'</span>';}).join('')+'</span>';
+                });
+            } else {
+                ph='<span class="perm-note">该组合 '+dn+' 注直选，数量较多未展开（组选见左侧）</span>';
+            }
+            lh+='<div class="combo-item"><div class="combo-head">组选 '+balls(c)+'<span class="n">'+dn+' 注直选</span></div><div class="perms">'+ph+'</div></div>';
         });
     });
     Object.keys(groups).forEach(function(k){
