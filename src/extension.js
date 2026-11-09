@@ -13834,8 +13834,8 @@ function classify(combo){
     combo.forEach(function(d){ cnt[d]=(cnt[d]||0)+1; });
     var counts=Object.values(cnt).sort(function(a,b){return b-a;});
     var key=counts.join('');
-    var names3={'3':'豹子(三同)','21':'组三(两同)','111':'组六(三不同)'};
-    var names5={'5':'五同','41':'四同一','32':'三同+两同','311':'三同+两不同','221':'两对+一','2111':'一对+三不同','11111':'全不同'};
+    var names3={'3':'单式(豹子)','21':'组三(两同)','111':'组六(三不同)'};
+    var names5={'5':'单式(五同)','41':'四同一','32':'三同+两同','311':'三同+两不同','221':'两对+一','2111':'一对+三不同','11111':'全不同'};
     var map=combo.length===3?names3:names5;
     return {key:key, name:map[key]||key};
 }
@@ -13886,10 +13886,30 @@ function render(){
         ch+='· '+name+'：'+c.n+' 个组合 · '+c.d+' 注直选<br>';
     });
     document.getElementById('classBox').innerHTML=ch;
-    // 组合列表
-    var lh='';
+    // 组合列表：按分类分组显示（单式/组三/组六 …）
+    var ORDER3=['3','21','111'], ORDER5=['5','41','32','311','221','2111','11111'];
+    var order=digits===3?ORDER3:ORDER5;
+    var groups={};
     combos.forEach(function(c){
-        lh+='<span class="combo">'+balls(c)+'<span class="n">'+directNotes(c)+'注</span></span>';
+        var cls=classify(c);
+        if(!groups[cls.key]) groups[cls.key]={name:cls.name,list:[],d:0};
+        groups[cls.key].list.push(c);
+        groups[cls.key].d+=directNotes(c);
+    });
+    var lh='';
+    order.forEach(function(k){
+        if(!groups[k]) return;
+        var g=groups[k];
+        lh+='<div style="width:100%;margin:12px 0 4px;color:#feca57;font-weight:bold;border-bottom:1px solid #333;padding-bottom:4px;">'+g.name+'（'+g.list.length+' 个组合 · '+g.d+' 注直选）</div>';
+        g.list.forEach(function(c){
+            lh+='<span class="combo">'+balls(c)+'<span class="n">'+directNotes(c)+'注</span></span>';
+        });
+    });
+    Object.keys(groups).forEach(function(k){
+        if(order.indexOf(k)>=0) return;
+        var g=groups[k];
+        lh+='<div style="width:100%;margin:12px 0 4px;color:#feca57;font-weight:bold;border-bottom:1px solid #333;padding-bottom:4px;">'+g.name+'（'+g.list.length+' 个 · '+g.d+' 注）</div>';
+        g.list.forEach(function(c){ lh+='<span class="combo">'+balls(c)+'<span class="n">'+directNotes(c)+'注</span></span>'; });
     });
     document.getElementById('comboList').innerHTML=lh||'<div class="empty">无组合</div>';
     document.getElementById('noteBox').innerHTML='每个组合括号内为直选注数；<span class="ball r">红球</span>=重复数字，<span class="ball">蓝球</span>=不同数字。直选总注数 = 10<sup>'+digits+'</sup> = '+Math.pow(10,digits).toLocaleString()+' 对所有和值之和。';
