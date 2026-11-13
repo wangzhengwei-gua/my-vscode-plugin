@@ -2,7 +2,7 @@
     "name": "my-vscode-plugin",
     "displayName": "My VSCode Plugin",
     "description": "我的第一个 VSCode 插件",
-    "version": "0.9.16",
+    "version": "0.9.17",
     "publisher": "wangzhengwei",
     "icon": "images/icon.png",
     "license": "MIT",
@@ -62,6 +62,7 @@
         "onCommand:myPlugin.digitHotCold",
         "onCommand:myPlugin.kl8TempClass",
         "onCommand:myPlugin.sumQuery",
+        "onCommand:myPlugin.posFollow",
         "onView:lotteryMenu"
     ],
     "contributes": {
@@ -241,6 +242,10 @@
             {
                 "command": "myPlugin.sumQuery",
                 "title": "和值组合查询"
+            },
+            {
+                "command": "myPlugin.posFollow",
+                "title": "每位跟随下一期"
             }
         ],
         "viewsContainers": {

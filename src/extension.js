@@ -1539,6 +1539,32 @@ function activate(context) {
     });
     context.subscriptions.push(sumQueryDisposable);
 
+    // 每位跟随下一期（排三/3D/排五）
+    let posFollowDisposable = vscode.commands.registerCommand('myPlugin.posFollow', async () => {
+        const pick = await vscode.window.showQuickPick(
+            [
+                { label: '🎯 排列三', value: 'pl3', digits: 3, description: '百/十/个 位 0-9' },
+                { label: '🎁 福彩3D', value: 'fc3d', digits: 3, description: '百/十/个 位 0-9' },
+                { label: '🎰 排列五', value: 'pl5', digits: 5, description: '万/千/百/十/个 位 0-9' }
+            ],
+            { placeHolder: '选择彩种查看「每位跟随下一期」统计' }
+        );
+        if (!pick) return;
+        const cfg = LOTTERY_TYPES.find(c => c.key === pick.value);
+        if (!cfg) return;
+        let history = [];
+        try {
+            history = loadLotteryData(cfg);
+            if (!history.length) { vscode.window.showWarningMessage(cfg.name + '数据为空，请先刷新数据'); return; }
+        } catch (e) { vscode.window.showWarningMessage('读取' + cfg.name + '数据失败'); return; }
+        const panel = vscode.window.createWebviewPanel(
+            'posFollow', cfg.name + ' · 每位跟随下一期', vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        panel.webview.html = getPosFollowHtml({ name: cfg.name, digits: pick.digits }, history);
+    });
+    context.subscriptions.push(posFollowDisposable);
+
     // 快乐8 热温冷分析 + 智能选号（热度Z分数 + 重号延续 + 8区均衡 + 形态约束）
     let kl8HotColdDisposable = vscode.commands.registerCommand('myPlugin.kl8HotCold', async () => {
         let history = [];
@@ -2856,6 +2882,7 @@ class LotteryTreeDataProvider {
                 this.createItem('📊 快8冷热总榜', 'myPlugin.kl8AllHotCold', '📊'),
                 this.createItem('🌡️ 快8温度分类', 'myPlugin.kl8TempClass', '🌡️'),
                 this.createItem('🔢 和值组合查询', 'myPlugin.sumQuery', '🔢'),
+                this.createItem('🔁 每位跟随下一期', 'myPlugin.posFollow', '🔁'),
                 this.createItem('🛤️ 012路趋势', 'myPlugin.roadAnalysis', '🛤️'),
                 this.createItem('🧩 排3/3D 形态分析', 'myPlugin.pl3FormType', '🧩'),
                 this.createItem('📊 排3/排五/3D 冷热总榜', 'myPlugin.digitHotCold', '📊'),
@@ -13958,6 +13985,187 @@ document.getElementById('selType').addEventListener('change',function(){
     render();
 });
 document.getElementById('inSum').addEventListener('input',render);
+render();
+</script>
+</body>
+</html>`;
+}
+
+/**
+ * 每位跟随下一期（排三/3D/排五）：以最新一期（或自定义）号码为种子，
+ * 对每一位统计历史中该位=该值的所有期，看其「下一期」的奇偶/大小占比 + 数字频次 + 号码清单
+ */
+function getPosFollowHtml(cfg, rows) {
+    // rows: 旧→新
+    const N = rows.length;
+    const digits = cfg.digits;
+    const POS = digits === 3 ? ['百位','十位','个位'] : ['万位','千位','百位','十位','个位'];
+    const latest = rows[N-1] || { period: '-', num: [] };
+    const dataJson = JSON.stringify({
+        N, digits, pos: POS,
+        latestPeriod: latest.period,
+        latestNum: (latest.num || []).slice(0, digits),
+        history: rows.map(r => ({ p: r.period, n: (r.num || []).slice(0, digits) }))
+    });
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>${cfg.name} · 每位跟随下一期</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#0a0e1a;color:#ddd;font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-size:13px;padding:16px;}
+h2{color:#8ec5ff;font-size:20px;margin-bottom:6px;}
+.meta{color:#888;font-size:12px;margin-bottom:12px;line-height:1.8;}
+.ctrl{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;}
+.ctrl .lb{color:#8ec5ff;font-size:12px;}
+input[type=text]{background:#2d2d30;color:#ddd;border:1px solid #555;border-radius:5px;padding:6px 10px;font-size:13px;width:120px;}
+button{background:#0e639c;color:#fff;border:none;border-radius:5px;padding:7px 14px;font-size:13px;cursor:pointer;}
+button:hover{background:#1177bb;}
+.panel{background:rgba(20,30,50,0.5);border:1px solid rgba(120,180,255,0.15);border-radius:8px;padding:14px;margin-bottom:14px;max-width:1300px;}
+.panel h3{color:#feca57;font-size:15px;margin-bottom:8px;}
+.sub{color:#aaa;font-size:12px;margin-bottom:8px;line-height:1.7;}
+.note{background:rgba(142,197,255,0.08);border:1px solid rgba(142,197,255,0.2);border-radius:8px;padding:10px 14px;color:#aaa;font-size:12px;line-height:1.8;margin-top:8px;}
+.note b{color:#8ec5ff;}
+.ball{display:inline-block;min-width:24px;height:24px;line-height:24px;border-radius:50%;text-align:center;font-size:12px;font-weight:bold;color:#fff;margin:1px;background:linear-gradient(135deg,#3498db,#2980b9);}
+.ball.seed{background:linear-gradient(135deg,#f39c12,#feca57);}
+.ball.odd{background:linear-gradient(135deg,#e74c3c,#c0392b);}
+.ball.even{background:linear-gradient(135deg,#3498db,#2980b9);}
+.ball.big{background:linear-gradient(135deg,#9b59b6,#8e44ad);}
+.ball.small{background:linear-gradient(135deg,#1abc9c,#16a085);}
+table{width:100%;border-collapse:collapse;margin:6px 0;}
+th,td{border:1px solid #444;padding:5px 7px;text-align:center;font-size:12px;}
+th{background:#2d2d30;color:#8ec5ff;}
+td .up{color:#feca57;font-weight:bold;}
+.scroll{max-height:280px;overflow-y:auto;border:1px solid #333;border-radius:6px;margin-top:6px;}
+.scroll thead th{position:sticky;top:0;z-index:2;}
+.stat-row{display:flex;gap:16px;flex-wrap:wrap;margin:4px 0 8px;font-size:12px;color:#bbb;}
+.stat-row b{color:#feca57;}
+.pos-block{border-left:3px solid #feca57;padding-left:12px;margin-bottom:16px;}
+.pos-title{font-size:14px;color:#feca57;font-weight:bold;margin-bottom:6px;}
+.freq-bar{display:inline-block;height:14px;background:#feca57;border-radius:2px;vertical-align:middle;margin:0 2px;}
+</style>
+</head>
+<body>
+<h2>🔁 ${cfg.name} · 每位跟随下一期统计</h2>
+<div class="meta" id="meta"></div>
+<div class="ctrl">
+    <span class="lb">种子号码（每位用空格分隔，留空用最新一期）：</span>
+    <input type="text" id="inSeed" placeholder="如 9 8 2">
+    <button id="btnQuery">🔍 统计</button>
+    <button id="btnReset">↻ 用最新一期</button>
+</div>
+<div id="result"></div>
+<div class="note">
+    <b>口径：</b>对每一位，找出历史中「该位 = 种子值」的所有期，统计它们<b>下一期</b>开奖号码的分布。<br>
+    · <b>奇偶</b>：1/3/5/7/9 奇，0/2/4/6/8 偶 · <b>大小</b>：5-9 大，0-4 小<br>
+    · 种子号码用<span class="ball seed">黄</span>球标注 · 显示所有命中期的下一期号码清单（可滚动）<br>
+    · ⚠️ 每期独立随机，历史跟随仅作统计参考，不构成预测。
+</div>
+
+<script>
+var D=${dataJson};
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function isOdd(d){return d%2===1;}
+function isBig(d){return d>=5;}
+function parseSeed(){
+    var v=document.getElementById('inSeed').value.trim();
+    if(!v) return D.latestNum.slice();
+    var parts=v.split(/[\s,]+/).map(function(x){return parseInt(x,10);}).filter(function(x){return !isNaN(x)&&x>=0&&x<=9;});
+    if(parts.length<D.digits) return D.latestNum.slice();
+    return parts.slice(0,D.digits);
+}
+function compute(seed){
+    var res=[];
+    for(var p=0;p<D.digits;p++){
+        var s=seed[p];
+        var hits=[];
+        for(var i=0;i<D.history.length-1;i++){
+            if((D.history[i].n[p]||0)===s){
+                hits.push({hp:D.history[i].p, hn:D.history[i].n, np:D.history[i+1].p, nn:D.history[i+1].n});
+            }
+        }
+        // 统计下一期
+        var perPos=[];
+        for(var q=0;q<D.digits;q++){
+            var odd=0,even=0,big=0,small=0;
+            var freq=Array(10).fill(0);
+            hits.forEach(function(h){
+                var d=h.nn[q]||0;
+                if(isOdd(d))odd++;else even++;
+                if(isBig(d))big++;else small++;
+                freq[d]++;
+            });
+            perPos.push({odd:odd,even:even,big:big,small:small,freq:freq,total:hits.length});
+        }
+        // 整体奇偶/大小形态
+        var formOE={}, formBS={};
+        hits.forEach(function(h){
+            var oe=h.nn.map(function(d){return isOdd(d)?'奇':'偶';}).join('');
+            var bs=h.nn.map(function(d){return isBig(d)?'大':'小';}).join('');
+            formOE[oe]=(formOE[oe]||0)+1;
+            formBS[bs]=(formBS[bs]||0)+1;
+        });
+        res.push({pos:p, seed:s, hits:hits, perPos:perPos, formOE:formOE, formBS:formBS, count:hits.length});
+    }
+    return res;
+}
+function ball(d, cls){return '<span class="ball '+(cls||'')+'">'+d+'</span>';}
+function pct(a,b){return b>0?(a/b*100).toFixed(1):'0.0';}
+function render(){
+    var seed=parseSeed();
+    var data=compute(seed);
+    var h='';
+    // 种子展示
+    var seedHtml=seed.map(function(d,p){return '<span class="lb">'+D.pos[p]+'：</span>'+ball(d,'seed');}).join('  ');
+    document.getElementById('meta').innerHTML='最新一期：<b>'+D.latestPeriod+'</b> → '+D.latestNum.map(function(d){return ball(d,'seed');}).join('')+'（共 '+D.N+' 期数据）';
+    data.forEach(function(r){
+        h+='<div class="pos-block"><div class="pos-title">'+D.pos[r.pos]+' = '+ball(r.seed,'seed')+'  → 历史命中 <b style="color:#feca57;">'+r.count+'</b> 期（统计它们的下一期）</div>';
+        if(r.count===0){ h+='<div class="sub">历史中该位未出现过此值，无样本。</div></div>'; return; }
+        // 各位奇偶大小表
+        h+='<table><thead><tr><th>下一期位置</th><th>奇</th><th>偶</th><th>奇占比</th><th>大</th><th>小</th><th>大占比</th></tr></thead><tbody>';
+        r.perPos.forEach(function(pp,q){
+            h+='<tr><td>'+D.pos[q]+'</td><td>'+pp.odd+'</td><td>'+pp.even+'</td><td class="up">'+pct(pp.odd,pp.total)+'%</td>'
+              +'<td>'+pp.big+'</td><td>'+pp.small+'</td><td class="up">'+pct(pp.big,pp.total)+'%</td></tr>';
+        });
+        h+='</tbody></table>';
+        // 数字频次
+        h+='<div class="sub"><b>下一期各位数字频次：</b></div>';
+        h+='<table><thead><tr><th>位置</th>'+'0123456789'.split('').map(function(d){return '<th>'+d+'</th>';}).join('')+'</tr></thead><tbody>';
+        r.perPos.forEach(function(pp,q){
+            var max=Math.max.apply(null,pp.freq)||1;
+            h+='<tr><td>'+D.pos[q]+'</td>';
+            pp.freq.forEach(function(c){
+                var w=Math.round(c/max*30);
+                h+='<td>'+c+'<div class="freq-bar" style="width:'+w+'px;"></div></td>';
+            });
+            h+='</tr>';
+        });
+        h+='</tbody></table>';
+        // 整体形态分布
+        var oeKeys=Object.keys(r.formOE).sort(function(a,b){return r.formOE[b]-r.formOE[a];});
+        var bsKeys=Object.keys(r.formBS).sort(function(a,b){return r.formBS[b]-r.formBS[a];});
+        h+='<div class="stat-row"><b>奇偶形态：</b>';
+        oeKeys.forEach(function(k){ h+='<span>'+k+'：'+r.formOE[k]+'次('+pct(r.formOE[k],r.count)+'%)</span>'; });
+        h+='</div><div class="stat-row"><b>大小形态：</b>';
+        bsKeys.forEach(function(k){ h+='<span>'+k+'：'+r.formBS[k]+'次('+pct(r.formBS[k],r.count)+'%)</span>'; });
+        h+='</div>';
+        // 命中期 → 下一期号码列表
+        h+='<div class="sub"><b>命中明细（命中期 → 下一期）：</b></div>';
+        h+='<div class="scroll"><table><thead><tr><th>#</th><th>命中期号</th><th>命中号码</th><th>下一期号</th><th>下一期号码</th><th>下期奇偶</th><th>下期大小</th></tr></thead><tbody>';
+        r.hits.slice().reverse().forEach(function(hh,idx){
+            var oe=hh.nn.map(function(d){return isOdd(d)?'奇':'偶';}).join('');
+            var bs=hh.nn.map(function(d){return isBig(d)?'大':'小';}).join('');
+            h+='<tr><td>'+(idx+1)+'</td><td>'+esc(hh.hp)+'</td><td>'+hh.hn.map(function(d){return ball(d);}).join('')+'</td>'
+              +'<td>'+esc(hh.np)+'</td><td>'+hh.nn.map(function(d){return ball(d);}).join('')+'</td><td>'+oe+'</td><td>'+bs+'</td></tr>';
+        });
+        h+='</tbody></table></div></div>';
+    });
+    document.getElementById('result').innerHTML=h;
+}
+document.getElementById('btnQuery').addEventListener('click',render);
+document.getElementById('btnReset').addEventListener('click',function(){document.getElementById('inSeed').value='';render();});
+document.getElementById('inSeed').addEventListener('keydown',function(e){if(e.key==='Enter')render();});
 render();
 </script>
 </body>
